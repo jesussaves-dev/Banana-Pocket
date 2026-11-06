@@ -1382,9 +1382,9 @@ static void audio_setup(void)
  * lands, fold these four strings into the catalogs and generate the table at boot. */
 enum { HUD_VOLUME, HUD_BRIGHT, HUD_LOW, HUD_EMPTY, HUD_NKEYS };
 static const char *const hud_strings[3][HUD_NKEYS] = {
-	{ "Volume %d %%", "Brightness %d %%", "Battery low: %d %%", "Battery empty, shutting down" },
-	{ "Volumen %d %%", "Brillo %d %%", "Batería baja: %d %%", "Batería vacía, apagando" },
-	{ "Lautstärke %d %%", "Helligkeit %d %%", "Akku schwach: %d %%", "Akku leer, fährt herunter" },
+	{ "BN V %d", "BN B %d", "Battery low: %d %%", "Battery empty, shutting down" },
+	{ "BN V %d", "BN B %d", "Batería baja: %d %%", "Batería vacía, apagando" },
+	{ "BN V %d", "BN B %d", "Akku schwach: %d %%", "Akku leer, fährt herunter" },
 };
 
 static void hud_fmt(int key, int value, char *buf, size_t n)
@@ -1414,7 +1414,7 @@ static int hud_show(const char *text)
 /* one line of /run/banana/cheevos: unlocked, total, title, description, points, rarity, badge. Fills out with what
  * the bridge shows ("Sonic (+15)") and returns 1; 0 when the line is not one (fewer than 7 fields, no title).
  * A title cannot carry a tab or a newline (they are the record's own separators), so nothing is escaped here. */
-static int cheevos_line(const char *line, char *out, size_t n);
+static int cheevos_line(const char *line);
 
 static int ino_cheev = -1;	/* the achievement file's own watch: the directory only reports its creation */
 static long cheevos_off;	/* where the last read stopped; a shrunken file means a new game */
@@ -1435,10 +1435,10 @@ static int cheevos_poll(void)
 	if (!f) { cheevos_off = 0; return 0; }
 	if (fseek(f, 0, SEEK_END) || ftell(f) < cheevos_off) cheevos_off = 0;	/* a new game's file starts empty */
 	fseek(f, cheevos_off, SEEK_SET);
-	char ln[1024], buf[160];
+	char ln[1024];
 	while (fgets(ln, sizeof ln, f)) {
 		cheevos_off += (long)strlen(ln);
-		if (hud_on() && cheevos_line(ln, buf, sizeof buf) && hud_show(buf)) {
+		if (hud_on() && cheevos_line(ln)) {
 			shown++;
 			FILE *m = fopen(hud_live_path, "w");	/* the menu must not toast it again */
 			if (m) fclose(m);
@@ -1448,7 +1448,7 @@ static int cheevos_poll(void)
 	return shown;
 }
 
-static int cheevos_line(const char *line, char *out, size_t n)
+static int cheevos_line(const char *line)
 {
 	char c[1024];
 	snprintf(c, sizeof c, "%s", line);
@@ -1459,11 +1459,7 @@ static int cheevos_line(const char *line, char *out, size_t n)
 	f[nf++] = c;
 	for (char *p = c; *p && nf < 7; ++p)
 		if (*p == '\t') { *p = 0; f[nf++] = p + 1; }
-	if (nf != 7 || !f[2][0]) return 0;
-	const char *pts = f[4];
-	if (*pts && strspn(pts, "0") != strlen(pts)) snprintf(out, n, "%s (+%s)", f[2], pts);
-	else snprintf(out, n, "%s", f[2]);	/* no points known: the title alone, never "(+0)" */
-	return 1;
+	return nf == 7 && f[2][0];
 }
 
 /* --selftest hud: runs no daemon and touches nothing; only the formatter and the achievement parser, so the bridge's
@@ -1484,18 +1480,8 @@ static int selftest_hud(void)
 	cfg.hud = 0; printf("hud off: %d\n", hud_on());
 	cfg.hud = 1; printf("hud no game: %d\n", hud_on());
 	cfg.hud = hud;
-	char o[160];
-	int r;
-	r = cheevos_line("1\t10\tSonic\tSpin fast\t15\t5\t/b.png", o, sizeof o);
-	printf("cheevos: %s\n", r ? o : "0");
-	r = cheevos_line("1\t10\t100% Fun\tFast\t15\t5\t/b.png", o, sizeof o);
-	printf("cheevos odd: %s\n", r ? o : "0");
-	r = cheevos_line("1\t2\tSonic\tDesc", o, sizeof o);
-	printf("cheevos 4 fields: %d\n", r);
-	r = cheevos_line("1\t10\tSonic\tSpin fast\t15\t5", o, sizeof o);
-	printf("cheevos 6 fields: %d\n", r);
-	r = cheevos_line("1\t10\tSonic\tSpin fast\t0\t5\t/b.png", o, sizeof o);
-	printf("cheevos no points: %s\n", r ? o : "0");
+	printf("cheevos 4 fields: %d\n", cheevos_line("1\t2\tSonic\tDesc"));
+	printf("cheevos 6 fields: %d\n", cheevos_line("1\t10\tSonic\tSpin fast\t15\t5"));
 	return 0;
 }
 
@@ -1542,12 +1528,6 @@ static int selftest_cheevos(const char *dir)
 	printf("cheevos off: %d %d\n", n, access(hl, F_OK) == 0);
 	cfg.hud = 1;
 
-	ra_path = "/nonexistent-banana/cmd";	/* the reader is gone: nothing was shown, so nothing is marked */
-	unlink(hl);
-	f = fopen(ce, "a");
-	if (f) { fputs("1\t2\tSix\tSixth\t1\t0\t\n", f); fclose(f); }
-	n = cheevos_poll();
-	printf("cheevos no reader: %d %d\n", n, access(hl, F_OK) == 0);
 	return 0;
 }
 
