@@ -60,6 +60,7 @@ chmod +x "$W/cage"
 # a clean card between scenarios
 fresh() {
     rm -rf "$W/data/retroarch" "$W/run/banana" "$W/data/banana/settings.conf" "$W/data/banana/accounts.conf"
+    rm -f "$W/data/banana/bananad.conf"
     rm -f "$W/retroarch.args" "$W/account.passed"
     mkdir -p "$W/run/banana"
     rm -f "$W/libretro"/*_libretro.so
@@ -141,11 +142,24 @@ run gba gpsp
 [ "$(cfg cheevos_enable)" = true ] && ok "cheevos on" || bad "cheevos=$(cfg cheevos_enable)"
 [ "$(cfg cheevos_username)" = someone ] && ok "the account's name" || bad "cheevos_username=$(cfg cheevos_username)"
 [ "$(cfg cheevos_badges_enable)" = true ] && ok "badges on" || bad "cheevos_badges_enable=$(cfg cheevos_badges_enable)"
-[ "$(cfg cheevos_visibility_unlock)" = false ] && ok "the unlock widget is off: bananad's line is the one the player sees" || bad "cheevos_visibility_unlock=$(cfg cheevos_visibility_unlock)"
+[ "$(cfg cheevos_visibility_unlock)" = true ] && ok "the unlock card is on: the patch gives it Banana's colours" || bad "cheevos_visibility_unlock=$(cfg cheevos_visibility_unlock)"
 has "$W/account.passed" 'cheevos_password = "secret"' && ok "the password was passed to the game" || bad "the password was not passed"
 has "$W/account.passed" 'cheevos_token = "tok"' && ok "the token was passed to the game" || bad "the token was not passed"
 has "$W/data/retroarch/retroarch.cfg" 'cheevos_password' && bad "the password was left in retroarch.cfg" || ok "the password never reached retroarch.cfg"
 [ -f "$W/run/banana/retroarch-account.cfg" ] && bad "the account file was left behind" || ok "the account file was cleaned up"
+
+echo "6b. the in-game line's switch reaches the achievement card too"
+fresh
+printf 'ra_user=someone\nra_password=secret\nra_retroarch_token=tok\n' > "$W/data/banana/accounts.conf"
+run gba gpsp
+[ "$(cfg video_font_path)" = /usr/share/banana/rnds/fonts/PixelifySans-Medium.ttf ] && ok "the OSD font is Banana's Pixelify" || bad "video_font_path=$(cfg video_font_path)"
+[ -n "$(cfg video_font_size)" ] && ok "the OSD font has a size" || bad "video_font_size is empty"
+printf 'hud = 0\n' > "$W/data/banana/bananad.conf"
+run gba gpsp
+[ "$(cfg cheevos_visibility_unlock)" = false ] && ok "hud = 0: the achievement card is off" || bad "cheevos_visibility_unlock=$(cfg cheevos_visibility_unlock)"
+printf 'hud = 1\n' > "$W/data/banana/bananad.conf"
+run gba gpsp
+[ "$(cfg cheevos_visibility_unlock)" = true ] && ok "hud = 1: the achievement card is on" || bad "cheevos_visibility_unlock=$(cfg cheevos_visibility_unlock)"
 
 echo "7. the PlayStation falls back to PCSX-ReARMed when SwanStation is not installed"
 fresh

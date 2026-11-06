@@ -230,6 +230,11 @@ set_cfg video_rotation $rot
 set_cfg screen_orientation $rot
 set_cfg video_fullscreen true
 set_cfg input_driver udev
+# Banana's own typeface on the in-game line: Pixelify is the menu's pixel font, so a volume, brightness or
+# achievement card reads as the same OS rather than as RetroArch. The size is the panel's (a 1240-wide AMOLED);
+# a card without the font falls back to RetroArch's built-in one and the line still shows.
+set_cfg video_font_path "/usr/share/banana/rnds/fonts/PixelifySans-Medium.ttf"
+set_cfg video_font_size 34
 # alsathread, not alsa (ROCKNIX's driver on this SoC): the ALSA device is written from the driver's own thread, so a
 # moment the DSP takes to accept a period cannot stall the emulation thread. The device is still "default" (bananad's
 # /run/banana/asound.conf), which is what the route is written for.
@@ -365,9 +370,12 @@ if [ -n "$u" ]; then
     # already unlocked as the game loads, and for each one as it is won) into thumbnails/cheevos/badges on the card,
     # and the patch that tells the menu about an unlock hands it that path. Off by default in RetroArch.
     set_cfg cheevos_badges_enable true
-    # RetroArch's own unlock card is off: bananad sends the same line into the game and the menu toasts it after
-    # (via /run/banana/cheevos), so leaving this on showed every achievement twice. The badge stays on for the menu.
-    set_cfg cheevos_visibility_unlock false
+    # RetroArch's own unlock card is the one the player sees, styled by the BananaOS patch (the menu's card
+    # colours, the badge, the title and the points): bananad no longer sends achievement text, it only marks
+    # /run/banana/hud-live so the menu does not toast the same unlock after the game. The in-game line's own
+    # switch turns it off with everything else -- "the screen is the game's alone" has to mean this card too.
+    hud="$(awk -F= '/^[[:space:]]*hud[[:space:]]*=/{v=$2; gsub(/[[:space:]]/,"",v)} END{print v}' /data/banana/bananad.conf 2>/dev/null)"
+    set_cfg cheevos_visibility_unlock "$(case ${hud:-1} in 0|off) echo false ;; *) echo true ;; esac)"
     printf 'cheevos_password = "%s"\ncheevos_token = "%s"\n' "$(/usr/libexec/banana/ra-secrets get ra_password)" "$(/usr/libexec/banana/ra-secrets get ra_retroarch_token)" > $RA
 elif [ -f $A ]; then
     set_cfg cheevos_enable false
