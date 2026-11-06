@@ -199,6 +199,27 @@ namespace banana
 		backupTool = bt ? bt : "/usr/libexec/banana/backup";
 		wifiConf = data + "/wifi.conf";
 		build();
+		writeOsdStyle();	// every menu start publishes the card, not only a theme change
+	}
+
+	// the in-game pill's card, in the same colours this screen's "osd" box resolves to (box()): RetroArch cannot read
+	// Banana's theme, so the menu hands the three values over whenever it applies one (the patch reads the file)
+	void Settings::writeOsdStyle()
+	{
+		SPal p = pal(light);
+		bool crisp = themeCrisp();
+		uint32_t bg = crisp ? (p.panelBody.rgba8() >> 8) & 0xffffffu : 0x211f26u;
+		uint32_t edge = crisp ? (p.edge.rgba8() >> 8) & 0xffffffu : 0xf1ede2u;
+		char style[64];
+		int n = snprintf(style, sizeof style, "bg %06x\nedge %06x\ncrisp %d\n", bg, edge, crisp ? 1 : 0);
+		if (n <= 0 || (size_t)n >= sizeof style) return;
+		std::string path = data + "/osd-style", tmp = path + ".new";
+		FILE* w = fopen(tmp.c_str(), "w");
+		if (!w) return;
+		bool ok = fwrite(style, 1, (size_t)n, w) == (size_t)n;
+		ok &= fflush(w) == 0 && fsync(fileno(w)) == 0;
+		ok &= fclose(w) == 0;
+		if (!ok || rename(tmp.c_str(), path.c_str()) != 0) unlink(tmp.c_str());
 	}
 
 	void Settings::setVariant(const std::string& value)
@@ -221,6 +242,7 @@ namespace banana
 				M = rnds::Font::load(assets + "/fonts/PixelifySans-Medium.ttf");
 			}
 		}
+		writeOsdStyle();
 	}
 
 	// time zones as POSIX TZ rules (glibc reads them from TZ with no zoneinfo files): the offset and the summer time

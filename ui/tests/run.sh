@@ -55,6 +55,12 @@ for size in 640x480 1024x768; do
     check "battery 4%: notice hidden"      # the charger on
     [ "$(grep -c 'notice Battery low: 19%' "$log")" = 2 ] || { echo "FAIL $size: the notice didn't come back after charging"; fail=1; }
     grep -q "battery 18%" "$log" && { echo "FAIL $size: a second notice in the same step"; fail=1; }
+    # the in-game pill's card: the menu publishes the colours its own "osd" box draws with, so RetroArch's pill
+    # and this screen agree (the dark palette's default card, since no theme is set here)
+    style=$FX/data/osd-style
+    [ "$(sed -n '1p' "$style" 2>/dev/null)" = "bg 211f26" ] || { echo "FAIL $size: osd-style bg '$(sed -n '1p' "$style" 2>/dev/null)'"; fail=1; }
+    [ "$(sed -n '2p' "$style" 2>/dev/null)" = "edge f1ede2" ] || { echo "FAIL $size: osd-style edge '$(sed -n '2p' "$style" 2>/dev/null)'"; fail=1; }
+    [ "$(sed -n '3p' "$style" 2>/dev/null)" = "crisp 0" ] || { echo "FAIL $size: osd-style crisp '$(sed -n '3p' "$style" 2>/dev/null)'"; fail=1; }
     # the splash is one screen now (no second panel, no console/cartridge): only -top is written for it
     for s in boot-drop boot-word boot-click; do
         f=$OUT/$size-$s-top.png

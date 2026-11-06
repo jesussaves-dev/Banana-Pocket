@@ -210,6 +210,7 @@ namespace banana
 		// the one panel's strip under the list, where the second DS screen's lines would have been
 		void footer(const std::string& text, const rnds::Color& c);
 		std::string fontsLoaded;	// the fonts R and M are (setVariant): a user theme's, or the built-in pair
+		void writeOsdStyle();	// /data/banana/osd-style: the card colours the game's pill draws with
 		struct Cached { rnds::TexPtr tex; int ox = 0, oy = 0; float w = 0; };
 		std::map<std::string, Cached> cache;
 
