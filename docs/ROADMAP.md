@@ -139,6 +139,14 @@ accessibility / in-menu log viewer / battery-time item (2026-11-04).)*
 - **Hardware Validation (`docs/RPC-TEST.md`):** In progress on physical units.
 
 ## Done
+- [x] **The pill in game (0.5.11).** The message the bridge pushed into RetroArch was its own grey box
+  bottom-left. `buildroot/patches/retroarch/0014-banana-osd.patch` (the first patch carried for a look, not a
+  fix) draws `SHOW_MSG BN V <n>` / `BN B <n>` as the menu's own card: the speaker/sun glyphs, a ten-segment
+  bar, the gold percent, the menu's geometry scaled to the panel, in the colours `banana-ui` writes to
+  `/data/banana/osd-style` when it applies a theme (so the pill follows the theme). The achievement popup is
+  restyled to match (badge, title, points; RetroArch's English header dropped) and is now the only achievement
+  channel. `run-retroarch` also sets Banana's Pixelify font as the OSD font. Every other message keeps
+  RetroArch's style; `hud = 0` silences the pill and the popup.
 - [x] **Banana Bridge (0.5.11).** While a game runs, `bananad` speaks through RetroArch's own message line: volume and
   brightness keys, a low battery (10 % and 5 %) and the shutdown at the floor, the unplugged headphones pausing the
   game, and achievements as they unlock (an inotify watch on `/run/banana/cheevos`, with `/run/banana/hud-live` so the
