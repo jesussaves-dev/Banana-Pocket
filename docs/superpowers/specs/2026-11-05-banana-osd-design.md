@@ -1,6 +1,6 @@
 # Banana OSD — the pill inside games
 
-**Status:** design, awaiting approval
+**Status:** approved
 **Date:** 2026-11-05
 **Approach chosen:** patch RetroArch's on-screen drawing (option 1 of three, picked by the operator)
 
@@ -102,7 +102,7 @@ a second volume press arrives.
 ### Following the theme
 
 The menu owns theme resolution, so it hands the answer over: when `banana-ui` applies a theme (at startup and
-whenever the theme changes in Settings) it writes `/run/banana/osd-style` — the card fill, the edge colour and
+whenever the theme changes in Settings) it writes `/data/banana/osd-style` — the card fill, the edge colour and
 the corner radius it is drawing with, plus whether the theme is `crisp` (radius 0). The patch reads that file
 once at widget init and falls back to the default dark card if it is missing or unreadable, so an older menu
 still gets a sane pill. No environment plumbing and no second parser: the daemon and the launcher stay out of it.
@@ -132,7 +132,7 @@ post-game replay.
 
 - New: `buildroot/patches/retroarch/00XX-banana-osd.patch`
 - `system/rootfs/usr/libexec/banana/run-retroarch` — font, size, `cheevos_visibility_unlock` from `hud`
-- `ui/src/settings.cpp` (or wherever the theme is applied) and `ui/src/theme.cpp` — write `/run/banana/osd-style`
+- `ui/src/settings.cpp` (or wherever the theme is applied) and `ui/src/theme.cpp` — write `/data/banana/osd-style`
 - `system/bananad/bananad.c` — the two tokens, drop achievement text formatting
 - `system/bananad/tests/hud-test.sh` — token assertions, the removed cases
 - `system/tests/run-retroarch-test.sh` — the font, visibility and `hud = 0` lines
