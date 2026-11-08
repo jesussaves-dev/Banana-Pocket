@@ -9,7 +9,7 @@
 
 namespace banana
 {
-	enum class Key { NONE, LEFT, RIGHT, UP, DOWN, A, B, X, Y, L, R, START, SELECT, MENU, WAKE, VOLUP, VOLDOWN };
+	enum class Key { NONE, LEFT, RIGHT, UP, DOWN, A, B, X, Y, L, R, START, SELECT, MENU, WAKE };
 
 	struct InputEvent
 	{

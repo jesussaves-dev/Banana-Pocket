@@ -59,7 +59,7 @@
   "Language": "Language",
   "The language of the Settings screen: English, Spanish or German. The other screens follow in a later update.": "The language of the Settings screen: English, Spanish or German. The other screens follow in a later update.",
   "Brightness": "Brightness",
-  "The panel's backlight. Select + volume anywhere, in 10% steps; F + volume in the menu too (in a game F opens RetroArch's menu).": "The panel's backlight. Select + volume anywhere, in 10% steps; F + volume in the menu too (in a game F opens RetroArch's menu).",
+  "The panel's backlight. F + volume in the menu; Select + volume in a game, in 10% steps (F opens RetroArch's menu there).": "The panel's backlight. F + volume in the menu; Select + volume in a game, in 10% steps (F opens RetroArch's menu there).",
   "Volume": "Volume",
   "The speakers or the headphones, whichever is playing. The volume keys change it anywhere.": "The speakers or the headphones, whichever is playing. The volume keys change it anywhere.",
   "Menu sounds": "Menu sounds",

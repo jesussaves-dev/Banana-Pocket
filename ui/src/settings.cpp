@@ -301,7 +301,7 @@ namespace banana
 				menu, "theme", names, values);
 		}
 		add(D, "gear", "Language", "The language of the Settings screen: English, Spanish or German. The other screens follow in a later update.", menu, "lang", { "English", "Español", "Deutsch" }, { "en", "es", "de" });
-		add(D, "picture", "Brightness", "The panel's backlight. Select + volume anywhere, in 10% steps; F + volume in the menu too (in a game F opens RetroArch's menu).", "", "",
+		add(D, "picture", "Brightness", "The panel's backlight. F + volume in the menu; Select + volume in a game, in 10% steps (F opens RetroArch's menu there).", "", "",
 			{ "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, { "100", "200", "300", "400", "500", "600", "700", "800", "900", "1000" }, Item::BRIGHTNESS);
 		add(D, "music", "Volume", "The speakers or the headphones, whichever is playing. The volume keys change it anywhere.", "", "",
 			{ "0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, { "0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100" }, Item::VOLUME);
@@ -1742,6 +1742,7 @@ namespace banana
 		case Key::L: layer = layer == 2 ? 0 : 2; return MOVED;	// the symbols
 		case Key::Y: if (pw.size() < 63) pw += ' '; return MOVED;
 		case Key::START: return keyboardKey(4, FKEYS[4].c0);
+		case Key::SELECT: close(); return CLOSED;	// SELECT toggles the search: the same press closes it
 		default: return NONE;
 		}
 	}
