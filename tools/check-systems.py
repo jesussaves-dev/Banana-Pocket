@@ -158,6 +158,17 @@ def main():
                 continue
             print("  %-12s %s" % (app, run))
 
+    # every key the image's settings.conf documents must be in settings_defaults.cpp's KEYS: one missing there is
+    # appended from the template on every boot, so the card's own value never wins
+    with open(os.path.join(ROOTFS, "etc", "banana", "settings.conf"), encoding="utf-8") as f:
+        image_keys = [ln.split("=", 1)[0].strip() for ln in f
+                      if ln.strip() and not ln.lstrip().startswith("#") and "=" in ln]
+    with open(DEFAULTS, encoding="utf-8") as f:
+        schema = set(re.findall(r'\{\s*"([a-zA-Z0-9_.]+)"\s*,', f.read()))
+    for k in image_keys:
+        if k not in schema:
+            errors.append("settings.conf: %s is not in settings_defaults.cpp" % k)
+
     # a core a Settings row offers as a default must exist too (core.<system> in settings_defaults.cpp)
     with open(DEFAULTS, encoding="utf-8") as f:
         for m in re.finditer(r'\{\s*"core\.([a-z0-9]+)",\s*"([a-z0-9_]+)"', f.read()):
