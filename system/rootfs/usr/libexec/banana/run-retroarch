@@ -330,6 +330,29 @@ else
 fi
 # A system on glcore (Dreamcast, above) cannot run the Slang preset: leave the shader off for it, the file untouched.
 [ -n "$glc" ] && set_cfg video_shader_enable false
+# Screen bezels: SkyWalker541's CC0 frames (usr/share/banana/overlays, licence beside them). Each is cut for the
+# integer scale its console lands at on this panel -- GB/GBC 160x144 at 7x (that window is 1120x1008), GBA 240x160 at
+# 5x (1200x800) -- so with a bezel on, integer scaling is forced and the emulated picture sits in the hole. The art
+# carries a 1px LCD grid, which a pixel shader would double up on: the three systems run without a shader while their
+# frame is on. Settings > RetroArch > Screen bezels (settings.conf's "bezels", on unless it is off).
+BZ=/usr/share/banana/overlays
+case $BANANA_SYSTEM in
+gb|gbc|gba) B=$BZ/$BANANA_SYSTEM.png ;;
+*)          B= ;;
+esac
+if [ "$(setting bezels)" = off ] || [ -z "$B" ] || [ ! -f "$B" ]; then
+    set_cfg input_overlay_enable false
+else
+    OC=/data/retroarch/.banana-overlay.cfg
+    printf 'overlays = 1\noverlay0_overlay = "%s"\noverlay0_full_screen = true\noverlay0_descs = 0\n' "$B" > $OC
+    set_cfg video_scale_integer true
+    set_cfg input_overlay $OC
+    set_cfg input_overlay_enable true
+    set_cfg input_overlay_opacity 1.0
+    set_cfg input_overlay_scale 1.0
+    set_cfg input_overlay_auto_scale false
+    set_cfg video_shader_enable false
+fi
 # VSync, integer scaling and the audio buffer are RetroArch's own (its menu, or /data/retroarch/retroarch.cfg): Banana
 # no longer has rows for them and does not overwrite them here. One clock still paces the emulation, and with VSync on
 # it is the panel's: `audio_sync` makes RetroArch throttle the emulation to the *audio device* instead, and the two

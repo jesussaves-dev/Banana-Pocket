@@ -319,6 +319,8 @@ namespace banana
 		add(O, "gamepad", "RetroAchievements", "Softcore: achievements unlock with save states, rewind and cheats still there. Hardcore: those are locked for the game, and the unlocks count as hardcore on retroachievements.org. RetroArch's own menu changes the same setting.",
 			"/data/retroarch/retroarch.cfg", "cheevos_hardcore_mode_enable", { "Softcore", "Hardcore" }, { "false", "true" });
 		add(O, "gamepad", "Quick resume", "On: quitting keeps where you are, and the game goes on from there next time (RetroArch's automatic save state; not in Hardcore). Off: a game starts from its title.", "/data/retroarch/retroarch.cfg", "savestate_auto_save", { "Off", "On" }, { "false", "true" });
+		add(O, "picture", "Screen bezels", "The console around Game Boy, Game Boy Color and Game Boy Advance games, with its 1px pixel grid. Every frame is cut for one integer scale, so this forces integer scaling while it is on (turn it off for a stretched picture and a shader). The grid and a pixel shader would double up, so a game's own shader waits until the frame is off. Other systems have no frame and keep their shader.",
+			menu, "bezels", { "On", "Off" }, { "on", "off" });
 		if (access("/usr/lib/libretro/mgba_libretro.so", F_OK) == 0)
 			add(O, "gamepad", "Game Boy Advance", "The emulator for GBA games. gpSP: the fastest. mGBA: the most accurate, and the one RetroAchievements accepts for hardcore.", menu, "core.gba", { "gpSP", "mGBA" }, { "gpsp", "mgba" });
 		if (access("/usr/lib/libretro/swanstation_libretro.so", F_OK) == 0)

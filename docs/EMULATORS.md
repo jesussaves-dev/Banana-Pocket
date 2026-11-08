@@ -99,6 +99,13 @@ to one of the image's **Slang** presets in `/usr/share/libretro/shaders/slang` (
 of MB of small files in exFAT's large clusters and a long first start). Slang, not GLSL: the game's video driver is
 Vulkan, whose shader backend is Slang, and a GLSL preset under it crashes RetroArch (a backend mismatch).
 
+**Screen bezels** (Settings > RetroArch, `bezels` in `banana/settings.conf`, on by default) draws SkyWalker541's CC0
+console frame — with its 1px LCD grid — around Game Boy, Game Boy Color and Game Boy Advance games
+(`/usr/share/banana/overlays`, licence beside them). Every frame's window is cut for one integer multiple (GB/GBC
+160×144 at 7×, GBA 240×160 at 5×), so the switch forces `video_scale_integer` for those three systems; the picture then
+sits in the hole. The grid and a pixel shader would double up, so a game's own shader is skipped while its frame is on;
+with the switch off, shaders and any scaling RetroArch has are left alone. No other system has a frame.
+
 RetroAchievements: the account from the first-time setup (`banana/accounts.conf`) is written into `retroarch.cfg`
 as its name, but its password and the token RetroArch gets with it go in a config appended from `/run`, never in
 `retroarch.cfg`, which file sharing shows. **Badges** are on (`cheevos_badges_enable`): the menu's achievement toast
