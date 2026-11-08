@@ -16,12 +16,10 @@ and OTA updates over Wi-Fi are done (see *Done*). Next:
 ## In progress
 
 - **The in-game pill: pick it up here (paused 2026-11-08).** The patch (`0014-banana-osd`), the
-  `/data/banana/osd-style` export, the Pixelify OSD font and the `BN V`/`BN B` tokens are in and on the unit as dev
-  builds (`/tmp/retroarch-2`, `/tmp/bananad-r`, `/data/banana-ui`, both bind mounts revert on reboot). **Verified on
-  the panel:** the volume pill and its live updates. **Not looked at yet:** the achievement card (badge, title,
-  points, no English header), an ordinary save-state message unchanged, `hud = 0` silencing pill and card with the
-  menu's own toasts still firing, and the pill's colours under a colour theme. The image on disk predates the last
-  two UI/daemon commits, so `make retroid-pocket-classic` once more before a release. Keys: brightness is F+volume in
+  `/data/banana/osd-style` export, the Pixelify OSD font and the `BN V`/`BN B` tokens ship in the image now (0.5.12).
+  **Verified on the panel:** the volume pill and its live updates. **Not looked at yet:** the achievement card (badge,
+  title, points, no English header), an ordinary save-state message unchanged, `hud = 0` silencing pill and card with
+  the menu's own toasts still firing, and the pill's colours under a colour theme. Keys: brightness is F+volume in
   the menu and Select+volume in a game (10% steps), Select is the search key (opens on the press, closes on the next
   one, and only on the search page — B is still the back key in password/network keyboards).
 - **An Android-like sleep: find and cut the 37–42 mA standby drain.** Measured on the unit with the gauge's
@@ -45,9 +43,9 @@ and OTA updates over Wi-Fi are done (see *Done*). Next:
   - **Wake side:** 57–60 ms from the kernel's resume to a drawn menu; the kernel's own resume is ~1.05 s; Wi-Fi coming
     back is the slow part (the post hook reconnects in the background). Measure it, then consider keeping the link
     associated across suspend (`sleep.d/10-wifi` currently always downs it) — "works instantly" is mostly this.
-  - The meter (`battery_charge_uah`, the awake line) is in the image (0.5.8+); the `30-usb` hook now ships in the
-    image (0.5.10), so the unit's bind-mounted copy goes away with the update. The unit runs **0.5.9, slot b**;
-    0.5.10 is published and waiting in Settings > System > Check for updates.
+  - The meter (`battery_charge_uah`, the awake line) is in the image (0.5.8+); the `30-usb` hook ships in it too
+    (0.5.10), so the unit's bind-mounted copy went away with the update. The unit runs **0.5.12, slot b**
+    (updated 2026-11-08).
 
 - **BananaTube: what is left of the YouTube work.** A1 (idle frames), A2 (cards, keyboard, thumbnail bound), B1 (player
   OSD + Y quality) and the Pocket shell all shipped in 0.5.9. Left: **captions** (Track B3 -- yt-dlp's subtitle path
@@ -123,7 +121,8 @@ Not commitments: sketches to weigh against the list above. Each one builds on so
   `settings.conf` was rewritten at 23:21. The user did not press Restore, and the file is not the 23:04 archive's copy
   (`ssh`/`adb` differ), so it was not a restore of that archive. A dropbear restart at 23:21:55 (an SSH/ADB toggle from
   the menu) is the only nearby event. Watch for a repeat: `banana-ui.log.1` tail + `/run/banana/messages`.
-- **Update packages pile up:** `/data/banana/updates` held 31 packages, 6.9 GB on 2026-11-03 -- nothing prunes them.
+- **Update packages pile up:** `/data/banana/updates` held 31 packages, 6.9 GB on 2026-11-03, and five of them
+  (0.5.6, 0.5.8, 0.5.9, 0.5.11, 0.5.12) are back on the card now -- nothing prunes them.
   Proposed: after a successful boot into the new slot, keep the two newest and delete the rest (the one just applied is
   no longer needed once its slot booted).
 - **`rcK` transfer mode wants one real card handover (0.5.10).** The shutdown path that leaves the card to a computer
@@ -131,6 +130,9 @@ Not commitments: sketches to weigh against the list above. Each one builds on so
   one to try on hardware with a real card before trusting it.
 
 ## Maintenance
+- **The repo moved:** GitHub redirects `jesussaves-ai/Banana-Pocket` to `jesussaves-dev/Banana-Pocket`. `update-check`'s
+  `REPO`, `os-release`'s `HOME_URL` and the README still name the old one; OTA works through the 301 (the release list
+  and the asset download both follow it), but switch the three in the next build.
 - **Agent DX:** `make agent-check` (quiet syntax + host compile + the fast suite, 4 lines on success) and `make agent-map` (regenerates the source map) were added 0.5.x; keep the `AGENTS.md` Source Map fresh when core files move.
 
 *(Dropped: a quick-settings/performance overlay -- performance is fine and RetroArch's own OSD (`fps_show` /
@@ -148,6 +150,19 @@ accessibility / in-menu log viewer / battery-time item (2026-11-04).)*
 - **Hardware Validation (`docs/RPC-TEST.md`):** In progress on physical units.
 
 ## Done
+- [x] **A 32x32 icon set (0.5.12).** The shelf's system icons were a mix of 128 px upscales and 32 px originals; they are
+  one 32x32 pixel-art set now -- Ben Jelter's Console Icon Pack (credited in the README), with new dedicated art for
+  GameCube, PlayStation 2 and PS Vita -- and BananaTube's tile is redrawn from scratch as the master anchor. A 32 px
+  source draws at its own size through `pixelContain`, so the whole shelf is uniform. Two tools came with it:
+  `tools/gen-icon.py` (a local ComfyUI/SDXL pixel-icon generator, img2img references included) and
+  `tools/make-blueprints.py` (deterministic blueprints that assert the 1 px outline and hard alpha).
+- [x] **Screen bezels (0.5.12).** Settings > RetroArch > Screen bezels (on by default) draws SkyWalker541's CC0 Retroid
+  Pocket Classic frames around GB/GBC/GBA games, 1 px LCD grid included. Every frame's window is cut for the integer
+  multiple its system lands at (GB/GBC 160x144 at 7x, GBA 240x160 at 5x), so a framed launch appends an integer scale
+  and the core's own aspect and skips a per-game shader (the grid would double); the switch off disables the overlay
+  even after RetroArch had saved one on, and the card's own RetroArch values are read before a framed game and written
+  back after it. `bezels` had to enter the settings schema: missing there, the boot normaliser re-appended `on` from the
+  template at every boot, and `check-systems.py` now fails on any template key the schema does not know.
 - [x] **The pill in game (0.5.11).** The message the bridge pushed into RetroArch was its own grey box
   bottom-left. `buildroot/patches/retroarch/0014-banana-osd.patch` (the first patch carried for a look, not a
   fix) draws `SHOW_MSG BN V <n>` / `BN B <n>` as the menu's own card: the speaker/sun glyphs, a ten-segment
