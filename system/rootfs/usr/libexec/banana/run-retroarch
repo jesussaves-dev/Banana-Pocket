@@ -331,27 +331,37 @@ fi
 # A system on glcore (Dreamcast, above) cannot run the Slang preset: leave the shader off for it, the file untouched.
 [ -n "$glc" ] && set_cfg video_shader_enable false
 # Screen bezels: SkyWalker541's CC0 frames (usr/share/banana/overlays, licence beside them). Each is cut for the
-# integer scale its console lands at on this panel -- GB/GBC 160x144 at 7x (that window is 1120x1008), GBA 240x160 at
-# 5x (1200x800) -- so with a bezel on, integer scaling is forced and the emulated picture sits in the hole. The art
-# carries a 1px LCD grid, which a pixel shader would double up on: the three systems run without a shader while their
-# frame is on. Settings > RetroArch > Screen bezels (settings.conf's "bezels", on unless it is off).
-BZ=/usr/share/banana/overlays
+# integer scale its console lands at on this panel -- GB/GBC 160x144 at 7x (window 1120x1008), GBA 240x160 at 5x
+# (1200x800) -- and carries the 1px LCD grid. So while a frame is on, the game has to be at the core's own aspect and
+# an integer scale, and a pixel shader waits (on top of the grid it would double up). All of it goes in a config
+# appended for this launch, not into retroarch.cfg: the switch (settings.conf's "bezels", on unless off) applies on the
+# next launch and leaves the card's own scaling and shader choices alone. Settings > RetroArch > Screen bezels.
+BZC=/run/banana/retroarch-bezel.cfg
+BZA=
+rm -f $BZC
 case $BANANA_SYSTEM in
-gb|gbc|gba) B=$BZ/$BANANA_SYSTEM.png ;;
+gb|gbc|gba) B=/usr/share/banana/overlays/$BANANA_SYSTEM.png ;;
 *)          B= ;;
 esac
-if [ "$(setting bezels)" = off ] || [ -z "$B" ] || [ ! -f "$B" ]; then
-    set_cfg input_overlay_enable false
+if [ -n "$B" ] && [ -f "$B" ] && [ "$(setting bezels)" != off ]; then
+    OV=/run/banana/banana-overlay.cfg
+    printf 'overlays = 1\noverlay0_overlay = "%s"\noverlay0_full_screen = true\noverlay0_descs = 0\n' "$B" > $OV
+    printf 'video_scale_integer = "true"\naspect_ratio_index = "22"\n' >> $BZC
+    printf 'input_overlay = "%s"\ninput_overlay_enable = "true"\ninput_overlay_opacity = "1.000000"\ninput_overlay_auto_scale = "false"\nvideo_shader_enable = "false"\n' "$OV" >> $BZC
+    BZON=1
 else
-    OC=/data/retroarch/.banana-overlay.cfg
-    printf 'overlays = 1\noverlay0_overlay = "%s"\noverlay0_full_screen = true\noverlay0_descs = 0\n' "$B" > $OC
-    set_cfg video_scale_integer true
-    set_cfg input_overlay $OC
-    set_cfg input_overlay_enable true
-    set_cfg input_overlay_opacity 1.0
-    set_cfg input_overlay_scale 1.0
-    set_cfg input_overlay_auto_scale false
-    set_cfg video_shader_enable false
+    # off (or a frame the image has not got): say so here too, because RetroArch saved the last launch's effective
+    # config back into retroarch.cfg -- whose overlay enable would otherwise turn the old frame on again
+    [ -n "$B" ] && printf 'input_overlay_enable = "false"\n' > $BZC
+fi
+[ -s $BZC ] && BZA="|$BZC"
+# RetroArch writes that effective config back when it quits (config_save_on_exit, kept so its own menu changes stick),
+# so the keys a frame overrides would land on the card and stay forced for every launch after the switch is turned
+# off. The five are read before the game and put back after it: only that launch was different.
+bk() { sed -n "s/^ *$1 *= *//p" $CFG 2>/dev/null | sed 's/^"//; s/"$//' | tail -n 1; }
+if [ -n "$BZON" ]; then
+    R_INT=$(bk video_scale_integer); R_ASP=$(bk aspect_ratio_index); R_OVL=$(bk input_overlay)
+    R_OVE=$(bk input_overlay_enable); R_SHA=$(bk video_shader_enable)
 fi
 # VSync, integer scaling and the audio buffer are RetroArch's own (its menu, or /data/retroarch/retroarch.cfg): Banana
 # no longer has rows for them and does not overwrite them here. One clock still paces the emulation, and with VSync on
@@ -444,7 +454,7 @@ while :; do
     # cage is a kiosk compositor: one application, fullscreen, and it turns the output with the panel (the
     # connector's "panel orientation" property, which wlroots reads) so RetroArch's menu, its OSD and the game
     # are all upright -- the per-driver rotation patches are not needed under it.
-    cage -- retroarch -v --config $CFG --appendconfig "$L|$RA" -L "$CORE" "$2" < $FIFO --log-file $RL &
+    cage -- retroarch -v --config $CFG --appendconfig "$L|$RA$BZA" -L "$CORE" "$2" < $FIFO --log-file $RL &
     P=$!
     # bananad's SIGUSR1 on the way out of a sleep goes here: cage re-modesets its output, because a panel its
     # driver turned off on the way down comes back dark and only a modeset clears it (Banana has no session
@@ -477,6 +487,15 @@ while :; do
     echo "run-retroarch: RetroArch could not take the audio device, starting it again ($tries)" >&2
     sleep 0.5
 done
+# the card's own values for what a frame overrode (read before the game, above); RetroArch saved its effective ones
+# on the way out, so put them back
+if [ -n "$BZON" ]; then
+    [ -n "$R_INT" ] && set_cfg video_scale_integer "$R_INT"
+    [ -n "$R_ASP" ] && set_cfg aspect_ratio_index "$R_ASP"
+    [ -n "$R_OVE" ] && set_cfg input_overlay_enable "$R_OVE"
+    [ -n "$R_OVL" ] && set_cfg input_overlay "$R_OVL"
+    [ -n "$R_SHA" ] && set_cfg video_shader_enable "$R_SHA"
+fi
 /usr/libexec/banana/ra-secrets scrub; rm -f $RA
 exec 3>&-; rm -f $FIFO /run/banana/cage.pid	# a pid file left behind names whoever gets the pid next
 set_cfg stdin_cmd_enable false

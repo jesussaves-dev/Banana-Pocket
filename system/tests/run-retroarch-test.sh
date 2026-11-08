@@ -18,13 +18,15 @@ pass=0 fail=0
 ok() { pass=$((pass + 1)); echo "  ok: $*"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $*"; }
 
-mkdir -p "$W/libexec" "$W/etc/banana" "$W/libretro" "$W/share/cores"
+mkdir -p "$W/libexec" "$W/etc/banana" "$W/libretro" "$W/share/cores" "$W/share/overlays"
+for s in gb gbc gba; do : > "$W/share/overlays/$s.png"; done
 cp "$ROOT/system/rootfs/etc/banana/retroarch.cfg" "$ROOT/system/rootfs/etc/banana/settings.conf" "$W/etc/banana/"
 cp "$ROOT/system/rootfs/usr/share/banana/cores/Flycast.opt" "$W/share/cores/"
 
 # ${W} is a mktemp path with no sed-special characters; the roots are literal strings in the launcher
 xform() {
     sed -e "s#/usr/share/banana/cores#$W/share/cores#g" \
+        -e "s#/usr/share/banana/overlays#$W/share/overlays#g" \
         -e "s#/usr/libexec/banana#$W/libexec#g" \
         -e "s#/usr/lib/libretro#$W/libretro#g" \
         -e "s#/etc/banana#$W/etc/banana#g" \
@@ -42,7 +44,7 @@ chmod +x "$W/libexec/run-retroarch" "$W/libexec/ra-secrets"
 cat > "$W/retroarch" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" > "$W/retroarch.args"
-for a in "\$@"; do case "\$a" in *retroarch-account.cfg*) cp "\${a##*|}" "$W/account.passed" 2>/dev/null ;; esac; done
+for a in "\$@"; do case "\$a" in *retroarch-account.cfg*) for f in \$(printf '%s' "\$a" | tr '|' ' '); do case "\$f" in *retroarch-account.cfg) cp "\$f" "$W/account.passed" 2>/dev/null ;; esac; done ;; esac; done
 exit 0
 EOF
 chmod +x "$W/retroarch"
@@ -64,7 +66,7 @@ fresh() {
     rm -f "$W/retroarch.args" "$W/account.passed"
     mkdir -p "$W/run/banana"
     rm -f "$W/libretro"/*_libretro.so
-    for c in gpsp gambatte swanstation pcsx_rearmed flycast; do : > "$W/libretro/${c}_libretro.so"; done
+    for c in gpsp gambatte swanstation pcsx_rearmed flycast fceumm; do : > "$W/libretro/${c}_libretro.so"; done
 }
 # run <system> <core> [settings.conf lines...]: one launch, the way banana-ui would
 run() {
@@ -87,6 +89,20 @@ run gba gpsp
 [ "$(cfg video_monitor_index)" = 1 ] && ok "one-panel video_monitor_index 1" || bad "video_monitor_index=$(cfg video_monitor_index)"
 has "$W/retroarch.args" gpsp_libretro.so && ok "the gpsp core was launched" || bad "the core was not launched"
 [ -d "$W/data/retroarch/config/SwanStation" ] && bad "a GBA run wrote SwanStation's files" || ok "no per-core files for a plain system"
+
+echo "1b. screen bezels: GB/GBC/GBA only, and only while the switch is on"
+fresh
+run gba gpsp
+B=$W/run/banana/retroarch-bezel.cfg
+has "$B" 'video_scale_integer = "true"' && ok "integer scaling is forced with a frame" || bad "integer scaling not forced"
+has "$B" 'aspect_ratio_index = "22"' && ok "the console's own aspect (core provided)" || bad "aspect not forced"
+has "$B" 'input_overlay_enable = "true"' && ok "the overlay is on" || bad "overlay not on"
+has "$W/run/banana/banana-overlay.cfg" 'overlays/gba.png' && ok "the GBA frame" || bad "wrong frame"
+has "$B" 'video_shader_enable = "false"' && ok "the shader waits behind the grid" || bad "the shader would double the grid"
+run gba gpsp 'bezels = off'
+has "$B" 'input_overlay_enable = "false"' && ok "off: the overlay is off, even after RetroArch saved it on" || bad "off did not turn the overlay off"
+run nes fceumm
+[ -f "$B" ] && bad "NES got a frame" || ok "no frame outside the three"
 
 echo "2. the PlayStation on SwanStation writes its own defaults"
 fresh

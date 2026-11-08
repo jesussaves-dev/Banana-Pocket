@@ -30,9 +30,10 @@ Every frame in the pack is cut for one integer multiple — GB/GBC 160×144 at 7
 grids run at a 7.75px pitch across the whole panel, which is a 1240-wide stretch, not what Banana's aspect-preserving
 scaler produces).
 
-So the bezel implies the scale: **while bezels are on, `video_scale_integer` is forced true for `gb`/`gbc`/`gba`**, which
-is where the emulated picture lands in the window exactly. Bezels off leaves RetroArch's own setting alone, for anyone
-who wants a stretched picture and a shader.
+So the bezel implies the scale: **while bezels are on, `gb`/`gbc`/`gba` run at the core's own aspect and an integer
+scale** (both applied in a config appended for that launch), which is where the emulated picture lands in the window
+exactly. Bezels off leaves the card's own aspect, scaling and shader choices alone, for anyone who wants a stretched
+picture and a shader.
 
 ## Design
 
@@ -49,12 +50,15 @@ gets the credit.
 1. `bezels` = `setting bezels` (default `on`); bezel system = `gb`, `gbc` or `gba`, else none.
 2. Overlay off (switch off, or another system): `set_cfg input_overlay_enable false`. Shader keys are left as the block
    above wrote them, so per-game shaders work as before.
-3. Overlay on: `set_cfg video_scale_integer true`, write `/data/retroarch/.banana-overlay.cfg`
-   (`overlays = 1`, `overlay0_overlay = <absolute PNG>`, `overlay0_full_screen = true`, `overlay0_descs = 0`),
-   then `set_cfg input_overlay <cfg>`, `input_overlay_enable true`, `input_overlay_opacity 1.0`,
-   `input_overlay_scale 1.0`, `input_overlay_auto_scale false`, and `video_shader_enable false`.
-4. Every launch rewrites those keys, so flipping the switch applies on the next game start with no stale frame or
-   disabled shader left behind.
+3. Overlay on: write `/run/banana/banana-overlay.cfg` (`overlays = 1`, `overlay0_overlay = <absolute PNG>`,
+   `overlay0_full_screen = true`, `overlay0_descs = 0`) and `/run/banana/retroarch-bezel.cfg` with
+   `video_scale_integer = true`, `aspect_ratio_index = 22` (core provided), `input_overlay = <that cfg>`,
+   `input_overlay_enable = true`, `input_overlay_opacity = 1.0`, `input_overlay_auto_scale = false`,
+   `video_shader_enable = false`; append it to the launch's `--appendconfig` (`$L|$RA|$BZC`).
+4. RetroArch saves its *effective* config on exit, so the five keys a frame overrides (`video_scale_integer`,
+   `aspect_ratio_index`, `input_overlay`, `input_overlay_enable`, `video_shader_enable`) are read before the game and
+   written back after it. A launch with the switch off appends `input_overlay_enable = false`, which also clears an
+   overlay RetroArch saved from an earlier framed game.
 
 The overlay is display-only (`overlay0_descs = 0`) and 1:1 on a 1240×1080 window: one alpha-blended full-screen quad,
 no input changes.
@@ -65,11 +69,12 @@ no input changes.
 - On the handheld: GB, GBC and GBA games with bezels **on** — frame + grid, picture inside the window at 7×/5×.
 - Bezels **off** — no frame, and a per-game shader (`lcd`/`crt`/`sharp`) applies again.
 - NES/SNES/MD (no bezel) — shader applies with the switch in either position.
-- Turning integer scaling off in RetroArch's menu while bezels are on has no effect for the three systems (the launcher
-  sets it back); with bezels off it is honoured.
+- RetroArch's own aspect and integer settings are overridden for the three systems while a frame is on (that is what
+  makes the window fit); with the switch off they are exactly as the card has them, and a framed launch puts the card's
+  values back on the way out.
 
 ## Risks
 
-- Forcing integer scaling while bezels are on overrides a RetroArch setting the user may have changed. It is the only
-  way the pack's windows line up; the Settings help text says so.
+- The appended config overrides RetroArch's aspect and integer settings for those launches, and a per-game shader is
+  skipped while a frame is on. That is the only way the pack's windows line up; the Settings help text says so.
 - RetroArch screenshots and the achievements HUD draw over the overlay as before; the menu and `bananad` are untouched.
