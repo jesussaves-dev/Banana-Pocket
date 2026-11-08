@@ -68,9 +68,14 @@ When asked to create or replace a UI/console icon, generate it locally instead o
 ```
 python3 tools/gen-icon.py --prompt "dreamcast console, swirl logo" --name dreamcast
 python3 tools/gen-icon.py --prompt "game boy advance" --name gba --colors 12 --seed 42
+
+# real hardware: img2img from an existing icon/photo, so the silhouette is the real device
+python3 tools/gen-icon.py --prompt "Sega Dreamcast controller" --name dreamcast \
+    --ref ui/assets/overrides/icons/dreamcast.png --denoise 0.65
 ```
 
 - Writes `ui/assets/overrides/icons/<name>.png` at 128x128 RGBA (the size of the menu's override icons). **Never** write to `ui/assets/rnds/icons/` (the vendored engine's own art).
 - Needs the local ComfyUI at `~/ai-tools/ComfyUI` (SDXL base + Pixel Art XL + SDXL Lightning 4-step LoRA); the script starts it headless with `--lowvram` on `127.0.0.1:8188` if it is not running (log: `~/ai-tools/ComfyUI/comfyui.log`).
 - Prompt template is fixed (`pixel art icon of …, 16-bit DSi menu icon style, centered, solid black background #000000, crisp edges, 1px outline`); the background is flood-filled away from a ring of border points (so an icon's own black outline survives), then it snaps to a 128x128 point grid and quantises to `--colors`.
-- Re-run with `--seed` from the printed output to reproduce or tweak an icon; check the result with `magick identify -format "%wx%h %[channels]\n" <file>` before wiring it into a theme or `systems.conf`.
+- **Known hardware (consoles, controllers) always uses `--ref`**: text-to-image renders a generic grey box for a specific commercial device. The reference is flattened onto black, kept 86% inside the frame, VAE-encoded and restyled at `--denoise 0.55-0.75` (0.65 keeps the silhouette and still changes the look). Text-only is for original/abstract icons: apps, ports, genres, shelves.
+- Re-run with `--seed` from the printed output to reproduce or tweak an icon; check the result with `magick identify -format "%wx%h %[channels]\n" <file>` before wiring it into a theme or `systems.conf`. Render a `--denoise` sweep to `--out-dir /tmp/...` and compare with `montage` before replacing a shipped icon.

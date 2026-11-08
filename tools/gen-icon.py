@@ -34,8 +34,9 @@ PROMPT = ("pixel art icon of {prompt}, chunky 16-bit game icon, flat solid colou
           "background #000000, uniform flat background, no shadow, no gradient, "
           "no dithering, crisp edges")
 NEGATIVE = ("gradient, shadow, floor, vignette, blurry, photo, text, watermark, "
-            "frame, border, multiple objects, realistic, noise, dithering, "
-            "anti-aliasing, soft shading, 3d render")
+            "multiple objects, realistic, noise, dithering, anti-aliasing, soft "
+            "shading, 3d render, badge, emblem, circular frame, colored plate, "
+            "background ring, border, sticker, pedestal")
 SIZE = 1024          # the render
 OUT_SIZE = 128       # what ui/assets/overrides/icons holds
 
@@ -80,9 +81,14 @@ def start_comfy():
     sys.exit(f"gen-icon: ComfyUI did not come up on {COMFY_URL}; see {log}")
 
 
-def workflow(prompt, negative, seed, steps=6, cfg=2.0, lora=1.0):
-    """SDXL + Pixel Art XL + Lightning, in the API's node format."""
-    return {
+def workflow(prompt, negative, seed, steps=24, cfg=6.0, lora=0.6,
+             ref_name=None, denoise=0.60):
+    """SDXL + Pixel Art XL + Lightning, in the API's node format.
+
+    ref_name: an image already copied into ComfyUI/input; it is VAE-encoded as the
+    starting latent (img2img), so a real console's silhouette survives the restyle.
+    """
+    wf = {
         "1": {"class_type": "CheckpointLoaderSimple",
               "inputs": {"ckpt_name": CHECKPOINT}},
         "2": {"class_type": "LoraLoader",
@@ -106,12 +112,39 @@ def workflow(prompt, negative, seed, steps=6, cfg=2.0, lora=1.0):
         "8": {"class_type": "SaveImage",
               "inputs": {"filename_prefix": "banana-icon", "images": ["7", 0]}},
     }
+    if ref_name:
+        wf["0"] = {"class_type": "LoadImage", "inputs": {"image": ref_name}}
+        wf["10"] = {"class_type": "VAEEncode",
+                    "inputs": {"pixels": ["0", 0], "vae": ["1", 2]}}
+        wf["6"]["inputs"]["latent_image"] = ["10", 0]
+        wf["6"]["inputs"]["denoise"] = denoise
+        del wf["5"]                       # no empty latent when starting from an image
+    return wf
 
 
-def render(prompt, negative, seed, steps, cfg, lora):
+def prepare_ref(path):
+    """The reference as SDXL sees it: alpha onto black, 86% inside a 128 square, then
+    1024 on a point grid. Returns the file name inside ComfyUI/input."""
+    name = "banana-ref-" + uuid.uuid4().hex[:8] + ".png"
+    dest = os.path.join(COMFY_DIR, "input", name)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    cmd = ["magick", path, "-background", "black", "-alpha", "remove", "-alpha", "off",
+           "-filter", "Point", "-resize", f"{(OUT_SIZE * 86) // 100}x{(OUT_SIZE * 86) // 100}",
+           "-gravity", "center", "-background", "black",
+           "-extent", f"{OUT_SIZE}x{OUT_SIZE}",
+           "-filter", "Point", "-resize", f"{SIZE}x{SIZE}",
+           dest]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"gen-icon: cannot read the reference: {r.stderr.strip()}")
+    return name
+
+
+def render(prompt, negative, seed, steps, cfg, lora, ref_name=None, denoise=0.60):
     """Queue the workflow and return the PNG bytes of the first output image."""
     client = str(uuid.uuid4())
-    queued = http_json("/prompt", {"prompt": workflow(prompt, negative, seed, steps, cfg, lora),
+    queued = http_json("/prompt", {"prompt": workflow(prompt, negative, seed, steps, cfg, lora,
+                                                          ref_name, denoise),
                                    "client_id": client})
     pid = queued.get("prompt_id")
     if not pid:
@@ -153,7 +186,8 @@ def post_process(src_png, name, colors, out_dir=OUT_DIR):
     seeds += [(0, y) for y in range(0, SIZE, SIZE // 8)] + [(last, y) for y in range(0, SIZE, SIZE // 8)]
     cmd = (["magick", tmp, "-alpha", "on", "-fuzz", "20%", "-fill", "none"]
            + sum([["-draw", f"color {x},{y} floodfill"] for x, y in seeds], [])
-           + ["-trim", "+repage",
+           + ["-channel", "A", "-threshold", "50%", "+channel",
+              "-trim", "+repage",
               "-filter", "Point", "-resize", f"{OUT_SIZE - 8}x{OUT_SIZE - 8}",
               "+dither", "-colors", str(colors),
               "-background", "none", "-gravity", "center",
@@ -176,6 +210,8 @@ def main():
     ap.add_argument("--steps", type=int, default=24, help="sampler steps")
     ap.add_argument("--cfg", type=float, default=6.0, help="guidance")
     ap.add_argument("--lora", type=float, default=0.6, help="Pixel Art XL strength (0..1)")
+    ap.add_argument("--ref", help="reference image (img2img): a real console's silhouette survives")
+    ap.add_argument("--denoise", type=float, default=0.60, help="img2img strength (0..1, default 0.60)")
     a = ap.parse_args()
 
     if os.sep in a.name or a.name in ("", ".", ".."):
@@ -183,11 +219,17 @@ def main():
     if not 2 <= a.colors <= 256:
         sys.exit("gen-icon: --colors is 2..256")
 
+    if not 0.0 < a.denoise <= 1.0:
+        sys.exit("gen-icon: --denoise is 0..1")
+    if a.ref and not os.path.isfile(a.ref):
+        sys.exit(f"gen-icon: no reference at {a.ref}")
+
     seed = a.seed if a.seed is not None else random.randint(0, 2**31 - 1)
     prompt = PROMPT.format(prompt=a.prompt)
     if not comfy_up():
         start_comfy()
-    png = render(prompt, NEGATIVE, seed, a.steps, a.cfg, a.lora)
+    ref_name = prepare_ref(a.ref) if a.ref else None
+    png = render(prompt, NEGATIVE, seed, a.steps, a.cfg, a.lora, ref_name, a.denoise)
     out = post_process(png, a.name, a.colors, a.out_dir)
     print(f"{out}  (seed {seed})")
 
