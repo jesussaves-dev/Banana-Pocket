@@ -18,14 +18,12 @@ system (or one per kind), named in `ui/assets/rnds/systems.cfg`.
 The theme reads one PNG per entry and draws it at a fixed size on the panel, so the file's own pixels are only a
 source. Sizes in use:
 
-- **128×128** — the crisp choice (see below). Current: `dreamcast`, `gamegear`, `zxspectrum`, `c64`,
-  `mastersystem`, `saturn`, `psp`.
-- **32×32** — the older/imported set (BenJelter's pack, and what `gen-icons.py` writes).
+- **32×32** — the whole current set: BenJelter's Console Icon Pack, what `gen-icons.py` draws, and Banana's own.
+- **larger, a multiple of 32** — also allowed, and it draws at the full tile size. `pixelContain`/`pixel` only grow a
+  small source in whole multiples, so a 32×32 icon draws 32 CSS px wide while a source at or above the tile box is
+  fitted to it with nearest-neighbour.
 
-Why 128: the software backend draws a system icon at **~96 CSS px (~186 device px)** on the 1240×1080 panel and scales
-with **bilinear** filtering. A 32×32 source is upscaled ~5.8× and looks soft; 128 is ~1.45× and stays crisp. Use a
-**multiple of 32** (128 is good; 256 also fine) so the art scales cleanly. Transparency (alpha) is expected; the
-engine draws the icon on whatever the tile's background is.
+Transparency (alpha) is expected; the engine draws the icon on whatever the tile's background is.
 
 ## Adding an icon
 
