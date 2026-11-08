@@ -7,7 +7,8 @@ system (or one per kind), named in `ui/assets/rnds/systems.cfg`.
 
 - `ui/assets/overrides/icons/` — **Banana's own** icons (the ones this project adds or redraws). `tools/import-rnds.sh`
   copies this folder over the theme it imports from ROCKNIXDS, so a re-import never loses them. **Add new icons here.**
-- `ui/assets/rnds/icons/` — the working set (ROCKNIXDS's BenJelter pack plus the overrides). This is what the build
+- `ui/assets/rnds/icons/` — the working set ([Ben Jelter's Console Icon Pack](https://benjelter.itch.io/console-icon-pack)
+  plus the overrides). This is what the build
   installs to `/usr/share/banana/rnds/icons`. It is regenerated on import, so treat it as output, not source.
 - `tools/gen-icons.py` — draws some of the simple ones (`pcengine`, `atari2600`, `sega32x`, `segacd`, `ngp`,
   `wonderswan`, `atarilynx`) as reproducible 32×32 pixel art. Run it to rewrite those; it does **not** touch the

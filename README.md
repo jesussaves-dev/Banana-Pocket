@@ -138,6 +138,10 @@ CPUs' idle share from inside the VM. The menu's own cost, headless on a PC, is i
 
 See [`LICENSE`](LICENSE). The `ui/rnds` engine is imported unchanged from ROCKNIXDS.
 
+## 🎨 Credits
+
+The system and handheld icons in `ui/assets/rnds/icons` are **[Ben Jelter's Console Icon Pack](https://benjelter.itch.io/console-icon-pack)** — 32×32 pixel art, name-your-own-price on itch.io. Thank you, Ben; they are half the reason the shelf looks like a real handheld OS. The app tiles, generic kind icons and the systems the pack doesn't cover are drawn in-repo (`tools/gen-icons.py`, `tools/make-blueprints.py`).
+
 ---
 
 ## 🙏 Standing on ROCKNIX's shoulders
