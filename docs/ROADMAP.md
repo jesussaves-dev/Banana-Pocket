@@ -15,6 +15,15 @@ and OTA updates over Wi-Fi are done (see *Done*). Next:
 
 ## In progress
 
+- **The in-game pill: pick it up here (paused 2026-11-08).** The patch (`0014-banana-osd`), the
+  `/data/banana/osd-style` export, the Pixelify OSD font and the `BN V`/`BN B` tokens are in and on the unit as dev
+  builds (`/tmp/retroarch-2`, `/tmp/bananad-r`, `/data/banana-ui`, both bind mounts revert on reboot). **Verified on
+  the panel:** the volume pill and its live updates. **Not looked at yet:** the achievement card (badge, title,
+  points, no English header), an ordinary save-state message unchanged, `hud = 0` silencing pill and card with the
+  menu's own toasts still firing, and the pill's colours under a colour theme. The image on disk predates the last
+  two UI/daemon commits, so `make retroid-pocket-classic` once more before a release. Keys: brightness is F+volume in
+  the menu and Select+volume in a game (10% steps), Select is the search key (opens on the press, closes on the next
+  one, and only on the search page — B is still the back key in password/network keyboards).
 - **An Android-like sleep: find and cut the 37–42 mA standby drain.** Measured on the unit with the gauge's
   `charge_counter` (the awake line has recorded it since `a81a11f`): `battery 99% -> 96% (164 mAh in 3.9 h, 42 mA)` and
   `96% -> 94% (105 mAh in 2.8 h, 37 mA)` in `deep` — about **140 mW**, where an Android-class standby is 5–20 mW. The
