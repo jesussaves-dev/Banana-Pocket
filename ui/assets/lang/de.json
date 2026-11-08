@@ -9,7 +9,7 @@
   "Starting": "Startet",
   "Not yet": "Noch nicht",
   "Night light": "Nachtlicht",
-  "Warmer colours at night. A panel-level tint: it covers the menu and the games, not just the menu, and it is not a shader. Warmer cuts more blue.": "Wärmere Farben für die Nacht. Eine Tönung auf Panel-Ebene: sie gilt für Menü und Spiele, nicht nur fürs Menü, und ist kein Shader. „Wärmer“ nimmt mehr Blau heraus.",
+  "Warmer colours at night: a panel-level tint over the menu. Games are not covered yet (the game compositor resets it); Warmer cuts more blue.": "Wärmere Farben für die Nacht: eine Tönung auf Panel-Ebene über dem Menü. Spiele sind noch nicht abgedeckt (der Spiel-Compositor setzt sie zurück); „Wärmer“ nimmt mehr Blau heraus.",
   "Warm": "Warm",
   "Warmer": "Wärmer",
   "No connection": "Keine Verbindung",

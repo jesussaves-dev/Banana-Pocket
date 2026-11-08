@@ -9,13 +9,15 @@ and OTA updates over Wi-Fi are done (see *Done*). Next:
 
 ## In progress
 
-- **Night light (built 2026-11-08, ships in the next image).** `night_light = off|warm|warmer`
-  (Settings > Display & sound) writes a gamma LUT through `kms.cpp`: the menu sets it and the kernel keeps it while
-  cage owns the panel, so the tint covers the games too (verified on the unit reading the CRTC's LUT — menu and a GBA
-  game showed the same warm values; off restores a plain ramp). RetroArch screenshots do not include it (scanout-level).
-  To check on the release: a suspend/resume re-modeset may drop the LUT until the menu returns, and the two levels want
-  one look each on the panel.
-
+- **Night light: backburner (2026-11-08).** The menu half ships: `night_light = off|warm|warmer`
+  (Settings > Display & sound) writes a gamma LUT from `kms.cpp`, verified on the panel. **Games are not covered**:
+  cage's wlroots gamma control accepts the ramp (`gamma_size 1024`, no `failed`), but the CRTC's `GAMMA_LUT` property
+  stays 0 during play — the menu's own blob is what the DPU honours. Tried and set aside: a Wayland gamma client
+  (`banana-gamma`, piped/memfd table, one control per output) and `WLR_DRM_NO_ATOMIC=1` with the legacy table (array
+  reads warm, no visible tint); a colour shader conflicts with the bezel rule that disables shaders for GB/GBC/GBA and
+  with a game's own shader. Pick-up paths: a cage/wlroots patch that sets the property after its commits (needs
+  approval), or a colour-only shader with the bezel rule narrowed. No spec written; the experiment notes are in this
+  entry.
 - **Bluetooth: designed, not built (2026-11-08).** Stack chosen by request: a bespoke `banana-bt` over the kernel
   mgmt API, a small SDP client and `hidp` — no D-Bus, no BlueZ, no udev; Bluetooth Classic HID only. Design:
   `docs/superpowers/specs/2026-11-08-bluetooth-design.md`; plan (9 tasks): `docs/superpowers/plans/2026-11-08-bluetooth.md`.

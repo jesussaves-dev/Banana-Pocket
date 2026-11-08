@@ -305,7 +305,7 @@ namespace banana
 			{ "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, { "100", "200", "300", "400", "500", "600", "700", "800", "900", "1000" }, Item::BRIGHTNESS);
 		add(D, "music", "Volume", "The speakers or the headphones, whichever is playing. The volume keys change it anywhere.", "", "",
 			{ "0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, { "0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100" }, Item::VOLUME);
-		add(D, "picture", "Night light", "Warmer colours at night. A panel-level tint: it covers the menu and the games, not just the menu, and it is not a shader. Warmer cuts more blue.", menu, "night_light", { "Off", "Warm", "Warmer" }, { "off", "warm", "warmer" });
+		add(D, "picture", "Night light", "Warmer colours at night: a panel-level tint over the menu. Games are not covered yet (the game compositor resets it); Warmer cuts more blue.", menu, "night_light", { "Off", "Warm", "Warmer" }, { "off", "warm", "warmer" });
 		add(D, "music", "Menu sounds", "The menu's clicks, and the cartridge going into the console.", menu, "sounds", { "On", "Off" }, { "on", "off" });
 		add(D, "music", "Background Music", "An ambient loop under the menu, mixed low so the clicks stay clear. Put a bgm.wav (or music/bgm.wav) on the card to hear one. Off stops it at once.", menu, "bgm", { "On", "Off" }, { "on", "off" });
 		add(D, "picture", "Battery", "The battery on the top screen: its icon, or its icon and how full it is.", menu, "battery", { "Icon", "Icon and %" }, { "icon", "percent" });
