@@ -4,16 +4,20 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
 ## Recommended next (in order)
 The 0.5.0 sound server and its leftovers, the library-UX additions (multi-disc `.m3u`, shoulder-button jump-to-letter)
 and OTA updates over Wi-Fi are done (see *Done*). Next:
-1. **Wi-Fi management depth** -- 802.1X, static IP, hotspot. **Saved-network priority and WEP are done**: L/R on a
-   network in Settings > Network moves a saved one up or down `wifi.conf`, and an old WEP network takes its 5/13-
-   character (10/26-hex) key on the same keyboard and is written as `key_mgmt=NONE` + `wep_key0`. What is left:
-   802.1X needs an identity/certificate screen, static IP needs address fields, hotspot needs hostapd (not in the
-   image -- I would drop it).
-2. **Bluetooth** -- the kernel is stripped of it and the QCA BT firmware is unused; BT audio/controllers would need a
-   bespoke path (no BlueZ/DBus in the stack).
-3. **Store / app catalog** (the Apps shelf only scans local folders).
+1. **Bluetooth** -- the kernel side is already there (the WCN3950 node, `hci_uart`/`btqca`, the QCA firmware and
+   `hidp`), so the work is userspace; see *In progress* for the fork (a bespoke no-D-Bus agent for controllers, or
+   BlueZ if audio is wanted).
+2. **Store / app catalog** (the Apps shelf only scans local folders).
 
 ## In progress
+
+- **Bluetooth: pick the stack first (opened 2026-11-08).** Wi-Fi management is done and closed (below). The kernel is
+  ready: the device tree carries the `qcom,wcn3950-bt` node under the WCN3990 combo, `bluetooth`/`hci_uart`/`btqca`/
+  `hidp` build as modules, and `qca/cmbtfw13.tlv` + `.ver` ship in `/lib/firmware`. What is missing is userspace, and
+  the fork is real: **BlueZ** is the supported path (pairing, the HID input plugin for gamepads, A2DP through
+  PipeWire's bluez5 plugin) but it needs **D-Bus**, which the stack forbids today; **a bespoke agent** over the
+  kernel's mgmt API + `hidp` sockets keeps D-Bus out and covers controllers (with its own link-key storage via
+  `MGMT_OP_LOAD_LINK_KEYS`), but not audio. Scope and the D-Bus call are open.
 
 - **The in-game pill: pick it up here (paused 2026-11-08).** The patch (`0014-banana-osd`), the
   `/data/banana/osd-style` export, the Pixelify OSD font and the `BN V`/`BN B` tokens ship in the image now (0.5.12).
@@ -150,6 +154,10 @@ accessibility / in-menu log viewer / battery-time item (2026-11-04).)*
 - **Hardware Validation (`docs/RPC-TEST.md`):** In progress on physical units.
 
 ## Done
+- [x] **Wi-Fi management, as far as it goes (0.5.12).** WPA2-PSK networks, an old WEP network, saved-network priority
+  (L/R on a network) and the on-screen keyboard all work from Settings > Network. Closed by request: 802.1X, static IP
+  and hotspot are not wanted unless someone asks (802.1X would add wpa_supplicant's EAP build option and a
+  certificate/identity screen; hotspot would need hostapd).
 - [x] **A 32x32 icon set (0.5.12).** The shelf's system icons were a mix of 128 px upscales and 32 px originals; they are
   one 32x32 pixel-art set now -- Ben Jelter's Console Icon Pack (credited in the README), with new dedicated art for
   GameCube, PlayStation 2 and PS Vita -- and BananaTube's tile is redrawn from scratch as the master anchor. A 32 px
