@@ -25,3 +25,7 @@ __pycache__/
 
 # the deploy key baked into the image for network installs (never commit it)
 /system/rootfs/etc/banana/ssh/authorized_keys
+
+# fetched icon references (tools/fetch-ref.py): local artifacts, not shipped
+/tmp/
+/ui/assets/refs/

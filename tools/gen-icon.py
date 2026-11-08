@@ -36,7 +36,7 @@ PROMPT = ("pixel art icon of {prompt}, chunky 16-bit game icon, flat solid colou
 NEGATIVE = ("gradient, shadow, floor, vignette, blurry, photo, text, watermark, "
             "multiple objects, realistic, noise, dithering, anti-aliasing, soft "
             "shading, 3d render, badge, emblem, circular frame, colored plate, "
-            "background ring, border, sticker, pedestal")
+            "background ring, border, sticker, pedestal, drop shadow")
 SIZE = 1024          # the render
 OUT_SIZE = 128       # what ui/assets/overrides/icons holds
 
@@ -123,13 +123,16 @@ def workflow(prompt, negative, seed, steps=24, cfg=6.0, lora=0.6,
 
 
 def prepare_ref(path):
-    """The reference as SDXL sees it: alpha onto black, 86% inside a 128 square, then
-    1024 on a point grid. Returns the file name inside ComfyUI/input."""
+    """The reference as SDXL sees it: flattened onto black, trimmed, fitted inside 96x96
+    with its aspect kept, centred on a 128 square, then 1024 on a point grid. That is the
+    same shape tools/fetch-ref.py writes, so either source works and neither clips.
+    Returns the file name inside ComfyUI/input."""
     name = "banana-ref-" + uuid.uuid4().hex[:8] + ".png"
     dest = os.path.join(COMFY_DIR, "input", name)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     cmd = ["magick", path, "-background", "black", "-alpha", "remove", "-alpha", "off",
-           "-filter", "Point", "-resize", f"{(OUT_SIZE * 86) // 100}x{(OUT_SIZE * 86) // 100}",
+           "-fuzz", "10%", "-trim", "+repage",
+           "-resize", f"{(OUT_SIZE * 3) // 4}x{(OUT_SIZE * 3) // 4}",
            "-gravity", "center", "-background", "black",
            "-extent", f"{OUT_SIZE}x{OUT_SIZE}",
            "-filter", "Point", "-resize", f"{SIZE}x{SIZE}",
@@ -167,14 +170,28 @@ def render(prompt, negative, seed, steps, cfg, lora, ref_name=None, denoise=0.60
     sys.exit("gen-icon: timed out waiting for the render")
 
 
-def post_process(src_png, name, colors, out_dir=OUT_DIR):
+def rembg_cut(src, dst):
+    """rembg's u2netp when the ComfyUI venv has it: strips plates and studio backgrounds
+    without touching black outlines inside the sprite. False when unavailable."""
+    py = os.path.join(COMFY_DIR, ".venv", "bin", "python")
+    if not os.path.exists(py) or subprocess.run([py, "-c", "import rembg"],
+                                                capture_output=True).returncode != 0:
+        return False
+    code = ("import sys;from rembg import remove,new_session;from PIL import Image;"
+            "im=Image.open(sys.argv[1]);"
+            "remove(im,session=new_session('u2netp')).save(sys.argv[2])")
+    r = subprocess.run([py, "-c", code, src, dst], capture_output=True, text=True)
+    return r.returncode == 0
+
+
+def post_process(src_png, name, colors, out_dir=OUT_DIR, use_rembg=True):
     """Cut the background from the edges, 128x128 on a point grid, quantised, RGBA PNG."""
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, name + ".png")
     tmp = out + ".raw.png"
     with open(tmp, "wb") as f:
         f.write(src_png)
-    # Background: the prompt asks for a flat magenta plate, keyed out with a generous
+    # Background: rembg when available (it handles a coloured plate), else the key, keyed out with a generous
     # fuzz; a flood-fill from the corners catches the rest. (The icon's own black
     # outline is never the key colour, so it survives.)
     last = SIZE - 1
@@ -194,7 +211,9 @@ def post_process(src_png, name, colors, out_dir=OUT_DIR):
               "-extent", f"{OUT_SIZE}x{OUT_SIZE}",
               "-alpha", "on", "PNG32:" + out])
     r = subprocess.run(cmd, capture_output=True, text=True)
-    os.unlink(tmp)
+    for f in (tmp, tmp + ".cut.png"):
+        if os.path.exists(f):
+            os.unlink(f)
     if r.returncode != 0:
         sys.exit(f"gen-icon: magick failed: {r.stderr.strip()}")
     return out
@@ -211,7 +230,8 @@ def main():
     ap.add_argument("--cfg", type=float, default=6.0, help="guidance")
     ap.add_argument("--lora", type=float, default=0.6, help="Pixel Art XL strength (0..1)")
     ap.add_argument("--ref", help="reference image (img2img): a real console's silhouette survives")
-    ap.add_argument("--denoise", type=float, default=0.60, help="img2img strength (0..1, default 0.60)")
+    ap.add_argument("--denoise", type=float, default=0.62, help="img2img strength (0..1, default 0.62)")
+    ap.add_argument("--no-rembg", action="store_true", help="use the ImageMagick flood fill, not rembg")
     a = ap.parse_args()
 
     if os.sep in a.name or a.name in ("", ".", ".."):
