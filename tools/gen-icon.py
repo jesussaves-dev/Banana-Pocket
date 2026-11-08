@@ -80,14 +80,14 @@ def start_comfy():
     sys.exit(f"gen-icon: ComfyUI did not come up on {COMFY_URL}; see {log}")
 
 
-def workflow(prompt, negative, seed):
-    """SDXL + Pixel Art XL + Lightning 4-step, in the API's node format."""
+def workflow(prompt, negative, seed, steps=6, cfg=2.0, lora=1.0):
+    """SDXL + Pixel Art XL + Lightning, in the API's node format."""
     return {
         "1": {"class_type": "CheckpointLoaderSimple",
               "inputs": {"ckpt_name": CHECKPOINT}},
         "2": {"class_type": "LoraLoader",
               "inputs": {"model": ["1", 0], "clip": ["1", 1], "lora_name": LORA,
-                         "strength_model": 1.0, "strength_clip": 1.0}},
+                         "strength_model": lora, "strength_clip": lora}},
         "9": {"class_type": "LoraLoader",
               "inputs": {"model": ["2", 0], "clip": ["2", 1], "lora_name": LIGHTNING,
                          "strength_model": 1.0, "strength_clip": 1.0}},
@@ -98,7 +98,7 @@ def workflow(prompt, negative, seed):
         "5": {"class_type": "EmptyLatentImage",
               "inputs": {"width": SIZE, "height": SIZE, "batch_size": 1}},
         "6": {"class_type": "KSampler",
-              "inputs": {"seed": seed, "steps": 6, "cfg": 2.0,
+              "inputs": {"seed": seed, "steps": steps, "cfg": cfg,
                          "sampler_name": "euler", "scheduler": "sgm_uniform",
                          "denoise": 1.0, "model": ["9", 0], "positive": ["3", 0],
                          "negative": ["4", 0], "latent_image": ["5", 0]}},
@@ -108,10 +108,10 @@ def workflow(prompt, negative, seed):
     }
 
 
-def render(prompt, negative, seed):
+def render(prompt, negative, seed, steps, cfg, lora):
     """Queue the workflow and return the PNG bytes of the first output image."""
     client = str(uuid.uuid4())
-    queued = http_json("/prompt", {"prompt": workflow(prompt, negative, seed),
+    queued = http_json("/prompt", {"prompt": workflow(prompt, negative, seed, steps, cfg, lora),
                                    "client_id": client})
     pid = queued.get("prompt_id")
     if not pid:
@@ -134,10 +134,10 @@ def render(prompt, negative, seed):
     sys.exit("gen-icon: timed out waiting for the render")
 
 
-def post_process(src_png, name, colors):
+def post_process(src_png, name, colors, out_dir=OUT_DIR):
     """Cut the background from the edges, 128x128 on a point grid, quantised, RGBA PNG."""
-    os.makedirs(OUT_DIR, exist_ok=True)
-    out = os.path.join(OUT_DIR, name + ".png")
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, name + ".png")
     tmp = out + ".raw.png"
     with open(tmp, "wb") as f:
         f.write(src_png)
@@ -172,6 +172,10 @@ def main():
     ap.add_argument("--name", required=True, help="output file name, without .png")
     ap.add_argument("--colors", type=int, default=16, help="palette size (default 16)")
     ap.add_argument("--seed", type=int, default=None, help="fixed seed for a repeatable icon")
+    ap.add_argument("--out-dir", default=OUT_DIR, help="where to write (default ui/assets/overrides/icons)")
+    ap.add_argument("--steps", type=int, default=24, help="sampler steps")
+    ap.add_argument("--cfg", type=float, default=6.0, help="guidance")
+    ap.add_argument("--lora", type=float, default=0.6, help="Pixel Art XL strength (0..1)")
     a = ap.parse_args()
 
     if os.sep in a.name or a.name in ("", ".", ".."):
@@ -183,8 +187,8 @@ def main():
     prompt = PROMPT.format(prompt=a.prompt)
     if not comfy_up():
         start_comfy()
-    png = render(prompt, NEGATIVE, seed)
-    out = post_process(png, a.name, a.colors)
+    png = render(prompt, NEGATIVE, seed, a.steps, a.cfg, a.lora)
+    out = post_process(png, a.name, a.colors, a.out_dir)
     print(f"{out}  (seed {seed})")
 
 
