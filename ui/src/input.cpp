@@ -32,6 +32,10 @@ namespace banana
 		case BTN_START: case KEY_S: return Key::START;
 		case BTN_SELECT: case KEY_TAB: return Key::SELECT;
 		case BTN_MODE: case KEY_F1: return Key::MENU;
+		// the level keys are bananad's; the menu only needs to see them to tell a Select+volume chord from a
+		// Select tap (main.cpp: the search keyboard opens on the release of a Select that held no volume key)
+		case KEY_VOLUMEUP: return Key::VOLUP;
+		case KEY_VOLUMEDOWN: return Key::VOLDOWN;
 		// The power button is bananad's (a short press sleeps, a hold shuts down) -- but it is also the obvious
 		// way to wake a screen the burn-in guard has blanked, and the guard's wake is the menu's, so the menu has
 		// to *see* the press. WAKE is not a menu button (uiButton ignores it), so it wakes and does nothing else.

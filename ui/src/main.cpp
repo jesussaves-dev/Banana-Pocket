@@ -1321,6 +1321,7 @@ int main(int argc, char** argv)
 	IdleGuard guard;
 	std::string panelBl, panelBlMax;
 	bool swallowTouch = false;	// the press that woke the panel: its touch-up must not land either
+	bool selectChord = false;	// SELECT is held: a volume key would make it the brightness chord, not the search
 	int lastMinute = -1;
 	float scale = single ? disp.width() / 640.0f : disp.height() / 480.0f;
 	Settings settingsView(&be, o.assets, o.data, scale, variant, &lib);
@@ -1476,15 +1477,30 @@ int main(int argc, char** argv)
 			}
 			return;
 		}
+		// SELECT is two keys: held, it is the brightness modifier (Select+volume, bananad's); tapped, it is the
+		// search keyboard. The volume key during the hold says which it was, so the keyboard opens on the release
+		// of a Select that held no volume key -- not on the press, which would put the keyboard over the chord.
 		if (ev.type == InputEvent::PRESS && ev.key == Key::SELECT)
 		{
-			// SELECT: the keyboard, to search the games
-			std::lock_guard<std::mutex> l(worker.uiLock);
 			if (ui->view() == rnds::UI::LAUNCH) return;
+			selectChord = true;
+			rep.key = Key::NONE;
+			return;
+		}
+		if (ev.type == InputEvent::PRESS && (ev.key == Key::VOLUP || ev.key == Key::VOLDOWN))
+		{
+			selectChord = false;	/* the chord, not the keyboard; bananad is changing the backlight */
+			return;
+		}
+		if (ev.type == InputEvent::RELEASE && ev.key == Key::SELECT)
+		{
+			if (!selectChord) return;
+			selectChord = false;
+			std::lock_guard<std::mutex> l(worker.uiLock);
 			ui->touchCancel();
 			settingsView.setVariant(menuTheme());
 			settingsView.openSearch(lib.searchQuery());
-			rep.key = Key::NONE;
+			logf("release select: search open (no volume key was held)");
 			sound.play("select");
 			dirty = true;
 			return;
