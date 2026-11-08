@@ -2051,16 +2051,15 @@ static void handle(const struct input_event *e)
 		if (e->value) { power_down = 1; power_since = now; }
 		else if (power_down) { power_down = 0; suspend_now("power button"); }
 		break;
-	/* F + volume: the backlight, in the menu. In a game F is RetroArch's own menu button (the pad profile binds
-	 * BTN_MODE as hotkey and menu toggle), so pressing it pops that menu over whatever the OS draws and the pill
-	 * is never seen: a game changes the backlight with Select + volume instead (in the menu Select is the search
-	 * key), in 10% steps down to a 2% night-mode floor. F + volume in a game is left alone rather than silently
-	 * changing the level behind the menu. */
+	/* Select + volume is the backlight everywhere, in 10% steps down to a 2% night-mode floor; F + volume does
+	 * the same in the menu. In a game F is RetroArch's own menu button (the pad profile binds BTN_MODE as hotkey
+	 * and menu toggle), so pressing it there pops that menu over whatever the OS draws and the pill is never seen:
+	 * F + volume in a game is left alone rather than silently changing the level behind the menu. */
 	case KEY_VOLUMEUP:
 		if (e->value) {
 			int game = pid_of("/run/banana/game.pid") > 0;
 			if (game && fn_held) break;
-			if ((!game && fn_held) || (game && select_held)) brightness(1, select_held && !fn_held ? 10 : cfg.brightness_step);
+			if (select_held || (!game && fn_held)) brightness(1, select_held && !fn_held ? 10 : cfg.brightness_step);
 			else volume(1);
 		}
 		break;
@@ -2068,7 +2067,7 @@ static void handle(const struct input_event *e)
 		if (e->value) {
 			int game = pid_of("/run/banana/game.pid") > 0;
 			if (game && fn_held) break;
-			if ((!game && fn_held) || (game && select_held)) brightness(-1, select_held && !fn_held ? 10 : cfg.brightness_step);
+			if (select_held || (!game && fn_held)) brightness(-1, select_held && !fn_held ? 10 : cfg.brightness_step);
 			else volume(-1);
 		}
 		break;

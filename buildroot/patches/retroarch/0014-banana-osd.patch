@@ -8,14 +8,16 @@ the same two values. The daemon already owns the channel (SHOW_MSG into
 /run/banana/retroarch.cmd), so this teaches the drawing side what a level line
 looks like.
 
-"BN V <0-100>" and "BN B <0-100>" are recognised in command_show_osd_msg()
-and drawn by a small branch in the message path as the menu's card: the same
-310x42 box at the same place (top centre) scaled from the menu's 640x557
-canvas, the same 12x12 speaker/sun grids as quads, ten segments and the gold
-percent. Every other message takes the untouched path, so a save state, a
-screenshot or a core's own notice look exactly as before.
+"BN V <0-100>" and "BN B <0-100>" are recognised in command_show_osd_msg() and
+drawn as the menu's card: the same 310x42 box at the same place (top centre)
+scaled from the menu's 640x557 canvas, the same 12x12 speaker/sun grids as
+quads, ten segments and the gold percent. The card is one live widget updated in
+place, not a queued message: a held key sends a line per repeat, and the queue
+showed them one after another -- the pill trailing a second behind the press.
+Every other message takes the untouched path, so a save state, a screenshot or a
+core's own notice look exactly as before.
 
-The card's fill, edge and roundness follow the menu: banana-ui writes
+The card's fill and edge follow the menu: banana-ui writes
 /data/banana/osd-style when it applies a theme, and this reads it once, falling
 back to the dark card. Corners are square because the widget has no rounded
 primitive; crisp themes, the five shipped ones, are square in the menu too.
@@ -26,22 +28,22 @@ subtitle takes the same gold. Badge, title and points stay.
 
 Signed-off-by: Banana <bananalinux@proton.me>
 ---
- command.c                                  |  25 +++++-
- gfx/gfx_widgets.c                          | 203 +++++++++++++++++++++++++++++
- gfx/gfx_widgets.h                          |   4 +
- gfx/widgets/gfx_widget_achievement_popup.c |  30 ++---
- 4 files changed, 229 insertions(+), 33 deletions(-)
+ command.c                                  |  44 +++++++--
+ gfx/gfx_widgets.c                          | 221 +++++++++++++++++++++++++++++
+ gfx/gfx_widgets.h                          |   5 +
+ gfx/widgets/gfx_widget_achievement_popup.c |  30 ++--
+ 4 files changed, 267 insertions(+), 33 deletions(-)
 
 --- a/command.c
 +++ b/command.c
-@@ -737,9 +737,32 @@
+@@ -737,8 +737,43 @@
     return true;
  }
  
 +/* BananaOS: "BN V <0-100>" / "BN B <0-100>" are the daemon's volume and
 + * brightness pill lines. They last 1.5 s like the menu's own card; every other
 + * message keeps RetroArch's 3 s. */
-+static bool command_banana_osd(const char *arg)
++static bool command_banana_osd(const char *arg, int *sun, int *pct)
 +{
 +   const char *p;
 +   int v = 0;
@@ -57,20 +59,30 @@ Signed-off-by: Banana <bananalinux@proton.me>
 +         return false;
 +      v = v * 10 + (*p - '0');
 +   }
-+   return p != arg + 5 && v <= 100;
++   if (p == arg + 5 || v > 100)
++      return false;
++   *sun = (arg[3] == 'B');
++   *pct = v;
++   return true;
 +}
 +
  bool command_show_osd_msg(command_t *cmd, const char* arg)
  {
--    runloop_msg_queue_push(arg, strlen(arg), 1, 180, false, NULL,
-+    unsigned duration = command_banana_osd(arg) ? 90 : 180;
-+    runloop_msg_queue_push(arg, strlen(arg), 1, duration, false, NULL,
++    int sun = 0;
++    int pct = 0;
++    if (command_banana_osd(arg, &sun, &pct))
++    {
++       /* The level pill is a widget of its own, updated in place: pushing it through the message queue made a
++        * held key show a trail of stale cards a second behind the press. */
++       banana_osd_show(sun, pct);
++       return true;
++    }
+     runloop_msg_queue_push(arg, strlen(arg), 1, 180, false, NULL,
            MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
      return true;
- }
 --- a/gfx/gfx_widgets.c
 +++ b/gfx/gfx_widgets.c
-@@ -1138,6 +1138,209 @@
+@@ -1138,6 +1138,195 @@
     return width;
  }
  
@@ -81,29 +93,6 @@ Signed-off-by: Banana <bananalinux@proton.me>
 +#define BANANA_OSD_CANVAS_H 557.0f /* shortcut: the menu's 640x557 canvas; a different panel needs this revisited */
 +#define BANANA_OSD_BG       0x211f26
 +#define BANANA_OSD_EDGE     0xf1ede2
-+
-+static bool banana_osd_parse(const char *msg, bool *sun, int *pct)
-+{
-+   const char *p;
-+   int v = 0;
-+   if (!msg || msg[0] != 'B' || msg[1] != 'N' || msg[2] != ' ')
-+      return false;
-+   if (msg[3] != 'V' && msg[3] != 'B')
-+      return false;
-+   if (msg[4] != ' ')
-+      return false;
-+   for (p = msg + 5; *p; p++)
-+   {
-+      if (*p < '0' || *p > '9' || v > 1000)
-+         return false;
-+      v = v * 10 + (*p - '0');
-+   }
-+   if (p == msg + 5 || v > 100)
-+      return false;
-+   *sun = msg[3] == 'B';
-+   *pct = v;
-+   return true;
-+}
 +
 +void banana_osd_style(unsigned *bg, unsigned *edge)
 +{
@@ -153,10 +142,26 @@ Signed-off-by: Banana <bananalinux@proton.me>
 +         x, y, w, h, video_width, video_height, color, NULL);
 +}
 +
++/* One live card, replaced in place: the daemon sends a line per key repeat, and a message queue would show them
++ * one after another -- the pill lagging a second behind the keys. */
++static int      banana_osd_kind  = -1;
++static int      banana_osd_pct   = 0;
++static unsigned banana_osd_until = 0;
++
++void banana_osd_show(int sun, int pct)
++{
++   dispgfx_widget_t *p_dispwidget = dispwidget_get_ptr();
++   banana_osd_kind  = sun;
++   banana_osd_pct   = pct;
++   banana_osd_until = p_dispwidget->gfx_widgets_frame_count + 90; /* 1.5 s at 60 Hz, the menu's own card */
++}
++
 +static void banana_osd_draw(
 +      dispgfx_widget_t *p_dispwidget,
 +      gfx_display_t *p_disp,
-+      disp_widget_msg_t *msg,
++      int sun_kind,
++      int pct_value,
++      float alpha,
 +      void *userdata,
 +      unsigned video_width,
 +      unsigned video_height)
@@ -184,7 +189,6 @@ Signed-off-by: Banana <bananalinux@proton.me>
 +   float    lit[16];
 +   float    unlit[16];
 +   float    icon[16];
-+   float    alpha;
 +   float    bx0;
 +   float    bx1;
 +   float    seg;
@@ -193,8 +197,6 @@ Signed-off-by: Banana <bananalinux@proton.me>
 +   float    sh;
 +   float    ix;
 +   float    iy;
-+   bool     sun;
-+   int      pct;
 +   int      r;
 +   int      c;
 +   int      i;
@@ -202,11 +204,7 @@ Signed-off-by: Banana <bananalinux@proton.me>
 +   char     txt[8];
 +   unsigned text_color;
 +
-+   if (!banana_osd_parse(msg->msg, &sun, &pct))
-+      return;
-+
 +   banana_osd_style(&bg, &edge);
-+   alpha = msg->alpha;
 +   scale = (float)video_height / BANANA_OSD_CANVAS_H;
 +   w     = 310.0f * scale;
 +   h     = 42.0f  * scale;
@@ -227,14 +225,14 @@ Signed-off-by: Banana <bananalinux@proton.me>
 +   banana_osd_color(card,   bg,   alpha);
 +   banana_osd_color(lit,    0xffe68a, alpha);
 +   banana_osd_color(unlit,  0x3a3540, alpha);
-+   banana_osd_color(icon,   (!sun && pct <= 0) ? 0xff8a96 : 0xf1ede2, alpha);
++   banana_osd_color(icon,   (!sun_kind && pct_value <= 0) ? 0xff8a96 : 0xf1ede2, alpha);
 +
 +   banana_osd_quad(p_disp, userdata, video_width, video_height, x0, y0, w, h, border);
 +   banana_osd_quad(p_disp, userdata, video_width, video_height, x0 + b, y0 + b, w - 2.0f * b, h - 2.0f * b, card);
 +
 +   /* Icon: the menu's 12x12 grids, one quad per lit pixel */
 +   {
-+      const char *const *ic = sun ? SUN : (pct <= 0 ? MUTE : VOL);
++      const char *const *ic = sun_kind ? SUN : (pct_value <= 0 ? MUTE : VOL);
 +      ix = x0 + in;
 +      iy = cy - 6.0f * k;
 +      for (r = 0; r < 12; r++)
@@ -245,7 +243,7 @@ Signed-off-by: Banana <bananalinux@proton.me>
 +   }
 +
 +   /* Percent, right-aligned in the gold the menu uses */
-+   snprintf(txt, sizeof(txt), "%d%%", pct);
++   snprintf(txt, sizeof(txt), "%d%%", pct_value);
 +   pctw = font_driver_get_message_width(
 +         p_dispwidget->gfx_widget_fonts.msg_queue.font, "100%", 4, 1.0f);
 +   if (pctw < 0)
@@ -264,7 +262,7 @@ Signed-off-by: Banana <bananalinux@proton.me>
 +      banana_osd_quad(p_disp, userdata, video_width, video_height,
 +            (float)(int)(bx0 + (float)i * seg + 0.5f), sy,
 +            (float)(int)(seg - gap + 0.5f), sh,
-+            i < (pct + 5) / 10 ? lit : unlit);
++            i < (pct_value + 5) / 10 ? lit : unlit);
 +
 +   text_color = COLOR_TEXT_ALPHA(0xffe68aff, (unsigned)(alpha * 255.0f));
 +   gfx_widgets_draw_text(&p_dispwidget->gfx_widget_fonts.msg_queue,
@@ -280,32 +278,37 @@ Signed-off-by: Banana <bananalinux@proton.me>
  static void gfx_widgets_draw_task_msg(
        dispgfx_widget_t *p_dispwidget,
        gfx_display_t            *p_disp,
-@@ -1392,6 +1595,17 @@
-    unsigned rect_margin;
-    unsigned text_color;
+@@ -1848,6 +2037,21 @@
+ #endif
+    }
  
-+   /* BananaOS: the daemon's level lines draw the menu's own card */
++   /* BananaOS: the level card, drawn in place so a held key updates it rather than queueing */
++   if (banana_osd_kind >= 0)
 +   {
-+      bool banana_sun;
-+      int  banana_pct;
-+      if (banana_osd_parse(msg->msg, &banana_sun, &banana_pct))
++      unsigned left = (banana_osd_until > p_dispwidget->gfx_widgets_frame_count)
++            ? banana_osd_until - p_dispwidget->gfx_widgets_frame_count : 0;
++      if (left)
 +      {
-+         banana_osd_draw(p_dispwidget, p_disp, msg, userdata, video_width, video_height);
-+         return;
++         float banana_alpha = (left < 15) ? (float)left / 15.0f : 1.0f;
++         banana_osd_draw(p_dispwidget, p_disp, banana_osd_kind, banana_osd_pct,
++               banana_alpha, userdata, video_width, video_height);
 +      }
++      else
++         banana_osd_kind = -1;
 +   }
 +
-    msg->flags             &= ~DISPWIDG_FLAG_UNFOLDING;
-    msg->flags             |=  DISPWIDG_FLAG_UNFOLDED;
- 
+    /* Ensure all text is flushed */
+    gfx_widgets_flush_text(video_width, video_height,
+          &p_dispwidget->gfx_widget_fonts.regular);
 --- a/gfx/gfx_widgets.h
 +++ b/gfx/gfx_widgets.h
-@@ -420,6 +420,10 @@
+@@ -420,6 +420,11 @@
  
  bool gfx_widgets_ready(void);
  
 +/* BananaOS: the menu's level card, published at /data/banana/osd-style */
 +void banana_osd_style(unsigned *bg, unsigned *edge);
++void banana_osd_show(int sun, int pct);
 +void banana_osd_color(float *out, unsigned hex, float alpha);
 +
  dispgfx_widget_t *dispwidget_get_ptr(void);
