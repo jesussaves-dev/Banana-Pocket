@@ -1324,6 +1324,13 @@ int main(int argc, char** argv)
 	int lastMinute = -1;
 	float scale = single ? disp.width() / 640.0f : disp.height() / 480.0f;
 	Settings settingsView(&be, o.assets, o.data, scale, variant, &lib);
+	// the night light is the panel's own gamma, set before any game is handed the panel
+	std::function<void()> nightLight = [&]() {
+		std::string v = getConfValue(o.data + "/settings.conf", "night_light",
+		                             getConfValue("/etc/banana/settings.conf", "night_light", "off"));
+		disp.setWarmth(v == "warmer" ? 2 : v == "warm" ? 1 : 0);
+	};
+	nightLight();
 	settingsView.setPanelHeight(canvasH);
 	settingsView.searchCount = [&](const std::string& q) { return lib.countMatches(q); };
 	settingsView.setVariant(menuTheme());
@@ -1699,6 +1706,7 @@ int main(int argc, char** argv)
 			std::lock_guard<std::mutex> l(worker.uiLock);
 			if (settingsView.update(now)) dirty = true;	// a Wi-Fi scan came back, a network joined
 			if (settingsView.takeLibraryChanged()) roms.due = now;	// box art fetched: the library again, at home
+			if (settingsView.takeNightLightChanged()) nightLight();	// the panel's gamma follows the row
 		}
 		// for testing over SSH: a game's path written to /run/banana/launch starts it, as A on it in the library would
 		if (launchSeen || launchWatch < 0)

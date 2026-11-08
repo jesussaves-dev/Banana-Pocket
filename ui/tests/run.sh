@@ -164,16 +164,16 @@ for size in 640x480 1024x768; do
     ls "$FX/states/DeSmuME/" 2>/dev/null | grep -q 'Banana Kart DS.state.bak-' || { echo "FAIL $size: no backup was made"; fail=1; }
     [ -s "$OUT/$size-xgame-top.png" ] || { echo "FAIL $size: no xgame shot"; fail=1; }
     for s in states states2; do [ -s "$OUT/$size-$s-top.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }; done
-    # Background Music: the Display & sound row (the sixth, after Theme and Language) toggles settings.conf's bgm,
-    # off then back on
+    # Background Music: the Display & sound row (the seventh, after Theme, Language, Brightness, Volume, Night light
+    # and Menu sounds) toggles settings.conf's bgm, off then back on
     grep -q '^bgm = ' "$FX/data/settings.conf" && sed -i 's/^bgm = .*/bgm = on/' "$FX/data/settings.conf" || printf 'bgm = on\n' >> "$FX/data/settings.conf"
     blog=$OUT/$size-bgm.log
     run_bgm() { "$HERE/banana-ui" --headless "$OUT/$size-" --single --size 640x557 --assets "$HERE/assets/rnds" \
         --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" --script "$1" 2>> "$blog" ||
         { echo "FAIL $size: banana-ui (bgm) exited $?"; fail=1; }; }
-    run_bgm "home 0; press start; press a; press down; press down; press down; press down; press down; press right; shot bgm-off"
+    run_bgm "home 0; press start; press a; press down; press down; press down; press down; press down; press down; press right; shot bgm-off"
     grep -q '^bgm = off' "$FX/data/settings.conf" || { echo "FAIL $size: Background Music Off didn't save: $(grep '^bgm' "$FX/data/settings.conf")"; fail=1; }
-    run_bgm "home 0; press start; press a; press down; press down; press down; press down; press down; press right; shot bgm-on"
+    run_bgm "home 0; press start; press a; press down; press down; press down; press down; press down; press down; press right; shot bgm-on"
     grep -q '^bgm = on' "$FX/data/settings.conf" || { echo "FAIL $size: Background Music On didn't save: $(grep '^bgm' "$FX/data/settings.conf")"; fail=1; }
     for s in bgm-off bgm-on; do [ -s "$OUT/$size-$s-top.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }; done
     # the AMOLED burn-in guard follows bananad.conf: 2 min idle dims the panel to 30%, 90 s later it blanks, and the

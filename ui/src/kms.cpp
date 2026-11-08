@@ -200,8 +200,42 @@ namespace banana
 		for (int s = 0; s < count; s++)
 			if (drmModeSetCrtc(fd, p[s].crtc, p[s].buf[p[s].front].fb, 0, 0, &p[s].conn, 1, (drmModeModeInfo*)p[s].mode) != 0)
 				ok = false;
-		if (ok) pending = 0;
+		if (ok) { pending = 0; applyGamma(); }
 		return ok;
+	}
+
+	void Display::setWarmth(int level)
+	{
+		warmth = level;
+		applyGamma();
+	}
+
+	// the night light: a linear ramp with green and blue pulled down, on every CRTC. Level 0 is the plain ramp, so
+	// turning it off restores the panel's own look; the kernel keeps the LUT while a game's compositor has the panel.
+	void Display::applyGamma()
+	{
+		if (fd < 0) return;
+		double kg = warmth >= 2 ? 0.85 : warmth == 1 ? 0.92 : 1.0;
+		double kb = warmth >= 2 ? 0.65 : warmth == 1 ? 0.82 : 1.0;
+		for (int s = 0; s < count; s++)
+		{
+			drmModeCrtc* c = drmModeGetCrtc(fd, p[s].crtc);
+			if (!c) continue;
+			unsigned n = c->gamma_size;
+			if (n > 1)
+			{
+				std::vector<uint16_t> r(n), g(n), b(n);
+				for (unsigned i = 0; i < n; i++)
+				{
+					uint32_t v = (uint32_t)((uint64_t)i * 65535u / (n - 1));
+					r[i] = (uint16_t)v;
+					g[i] = (uint16_t)(v * kg);
+					b[i] = (uint16_t)(v * kb);
+				}
+				(void)drmModeCrtcSetGamma(fd, p[s].crtc, n, r.data(), g.data(), b.data());
+			}
+			drmModeFreeCrtc(c);
+		}
 	}
 
 	void Display::close()

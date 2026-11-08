@@ -47,6 +47,8 @@ namespace banana
 
 		// box art (banana-scrape) finished since the last call: the library is read again
 		bool takeLibraryChanged() { bool r = libChanged; libChanged = false; return r; }
+		// the night light row changed: the menu sets the panel's gamma again (main.cpp)
+		bool takeNightLightChanged() { bool r = nightChanged; nightChanged = false; return r; }
 
 		// what the host has to do after an input
 		enum Result { NONE, MOVED, CHANGED, CLOSED, THEME, REBOOT, POWEROFF, SEARCH };
@@ -234,7 +236,7 @@ namespace banana
 		// box art: banana-scrape runs on its own and says how far it got in /run/banana/scrape.status
 		std::string scrapeLine;				// that file's line, as last read
 		double scrapeNext = 0;
-		bool libChanged = false;
+		bool libChanged = false, nightChanged = false;
 		bool scraping() const { return scrapeLine.compare(0, 8, "running ") == 0; }
 		bool pollScrape(double nowMs);		// true when the line changed
 		void startScrape();

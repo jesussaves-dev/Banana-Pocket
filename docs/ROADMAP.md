@@ -9,6 +9,13 @@ and OTA updates over Wi-Fi are done (see *Done*). Next:
 
 ## In progress
 
+- **Night light (built 2026-11-08, ships in the next image).** `night_light = off|warm|warmer`
+  (Settings > Display & sound) writes a gamma LUT through `kms.cpp`: the menu sets it and the kernel keeps it while
+  cage owns the panel, so the tint covers the games too (verified on the unit reading the CRTC's LUT — menu and a GBA
+  game showed the same warm values; off restores a plain ramp). RetroArch screenshots do not include it (scanout-level).
+  To check on the release: a suspend/resume re-modeset may drop the LUT until the menu returns, and the two levels want
+  one look each on the panel.
+
 - **Bluetooth: designed, not built (2026-11-08).** Stack chosen by request: a bespoke `banana-bt` over the kernel
   mgmt API, a small SDP client and `hidp` — no D-Bus, no BlueZ, no udev; Bluetooth Classic HID only. Design:
   `docs/superpowers/specs/2026-11-08-bluetooth-design.md`; plan (9 tasks): `docs/superpowers/plans/2026-11-08-bluetooth.md`.

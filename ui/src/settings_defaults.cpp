@@ -28,6 +28,7 @@ namespace banana
 		const char* const ACCENTS[] = { "yellow", "blue", "red", "green", "purple", "pink" };
 		const char* const BOXART[] = { "libretro", "both", "twilight" };
 		const char* const MSC[] = { "off", "ro", "rw" };
+		const char* const NIGHTLIGHT[] = { "off", "warm", "warmer" };
 
 		// The values /etc/banana/settings.conf documents, and the ones a card is completed with when that file is
 		// missing (the host test, or a card whose root is older than the menu). Keep in step with the template file.
@@ -51,6 +52,7 @@ namespace banana
 			{ "boxart_twilight_url", "https://boxart.kirovair.com", TEXT, nullptr, 0, 0 },
 			{ "boxart_twilight_key", "tb2_9f4c1d7a3e8b5062", TEXT, nullptr, 0, 0 },
 			{ "bezels", "on", ENUM, ON_OFF, 0, 0 },
+			{ "night_light", "off", ENUM, NIGHTLIGHT, 0, 0 },
 			{ "core.gba", "gpsp", CORE, nullptr, 0, 0 },
 			{ "core.gbc", "gambatte", CORE, nullptr, 0, 0 },
 			{ "core.gb", "gambatte", CORE, nullptr, 0, 0 },

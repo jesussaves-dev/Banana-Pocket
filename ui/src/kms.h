@@ -47,6 +47,9 @@ namespace banana
 		// after a resume or a lost master: show the current buffers again. False when another master still holds the
 		// panel (a game's compositor letting go): the caller retries
 		bool restore();
+		// the night light: 0 off, 1 warm, 2 warmer. A gamma LUT on the panel, so it covers a game too (set from the
+		// menu, which holds the master; the kernel keeps the LUT across the compositor hand-over)
+		void setWarmth(int level);
 
 	private:
 		struct Buf { uint32_t handle = 0, fb = 0, pitch = 0; uint64_t size = 0; uint8_t* map = nullptr; };
@@ -55,6 +58,8 @@ namespace banana
 		int rot = 0, SW = 0, SH = 0;	// the panel's rotation, and its size in its own rows (the scanout buffers')
 		Panel p[2];
 		void turn(const uint32_t* src, Buf& bf, const Damage& d);
+		void applyGamma();
+		int warmth = 0;
 		bool makeBuf(Buf& b);
 		void freeBuf(Buf& b);
 	};
