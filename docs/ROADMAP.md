@@ -11,13 +11,14 @@ and OTA updates over Wi-Fi are done (see *Done*). Next:
 
 ## In progress
 
-- **Bluetooth: pick the stack first (opened 2026-11-08).** Wi-Fi management is done and closed (below). The kernel is
-  ready: the device tree carries the `qcom,wcn3950-bt` node under the WCN3990 combo, `bluetooth`/`hci_uart`/`btqca`/
-  `hidp` build as modules, and `qca/cmbtfw13.tlv` + `.ver` ship in `/lib/firmware`. What is missing is userspace, and
-  the fork is real: **BlueZ** is the supported path (pairing, the HID input plugin for gamepads, A2DP through
-  PipeWire's bluez5 plugin) but it needs **D-Bus**, which the stack forbids today; **a bespoke agent** over the
-  kernel's mgmt API + `hidp` sockets keeps D-Bus out and covers controllers (with its own link-key storage via
-  `MGMT_OP_LOAD_LINK_KEYS`), but not audio. Scope and the D-Bus call are open.
+- **Bluetooth: designed, not built (2026-11-08).** Stack chosen by request: a bespoke `banana-bt` over the kernel
+  mgmt API, a small SDP client and `hidp` — no D-Bus, no BlueZ, no udev; Bluetooth Classic HID only. Design:
+  `docs/superpowers/specs/2026-11-08-bluetooth-design.md`; plan (9 tasks): `docs/superpowers/plans/2026-11-08-bluetooth.md`.
+  The kernel is ready: the device tree carries the `qcom,wcn3950-bt` node under the WCN3990 combo,
+  `bluetooth`/`hci_uart`/`btqca`/`hidp` build as modules, and `qca/cmbtfw13.tlv` + `.ver` ship in `/lib/firmware`; only
+  userspace is missing. **Blocked on test hardware:** the pad here is an 8BitDo Ultimate 2, which speaks BLE, and this
+  design covers Classic (BR/EDR) pads — the on-device checklist needs an 8BitDo Pro 2/SN30 in D-input or a PS4 pad.
+  BLE (and Bluetooth audio) would be the BlueZ/D-Bus design, deliberately not taken.
 
 - **The in-game pill: pick it up here (paused 2026-11-08).** The patch (`0014-banana-osd`), the
   `/data/banana/osd-style` export, the Pixelify OSD font and the `BN V`/`BN B` tokens ship in the image now (0.5.12).
