@@ -4,10 +4,8 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
 ## Recommended next (in order)
 The 0.5.0 sound server and its leftovers, the library-UX additions (multi-disc `.m3u`, shoulder-button jump-to-letter)
 and OTA updates over Wi-Fi are done (see *Done*). Next:
-1. **Bluetooth** -- the kernel side is already there (the WCN3950 node, `hci_uart`/`btqca`, the QCA firmware and
-   `hidp`), so the work is userspace; see *In progress* for the fork (a bespoke no-D-Bus agent for controllers, or
-   BlueZ if audio is wanted).
-2. **Store / app catalog** (the Apps shelf only scans local folders).
+1. **Bluetooth** -- designed and planned, not built (see *In progress*): a bespoke no-D-Bus agent for Classic pads,
+   blocked on a Classic controller to test with.
 
 ## In progress
 
@@ -69,6 +67,11 @@ and OTA updates over Wi-Fi are done (see *Done*). Next:
 
 ## Ideas (unscheduled)
 Not commitments: sketches to weigh against the list above. Each one builds on something the image already has.
+- **An app store, when there are apps to sell.** The Apps shelf already installs a folder with `app.json` from
+  `/data/banana/apps` or `/data/apps`, and PortMaster already covers games and ports (it unpacks to the card and
+  updates itself). Only `bananatube` ships, so a catalog today would be a store with one product. Parked (2026-11-08)
+  until there is something to publish; when it comes back it needs a curated index, a SHA-256 per payload (an app runs
+  as root), and an offline cache, and it should not try to ship cores or system packages (those ride the A/B image).
 - **Session recap card.** After a game, a short card on the menu: time played, achievements won this session, and the
   new state slot. The data is already written (`playstats.tsv`, `/run/banana/cheevos`), so this is a menu view, not a new
   recorder.
