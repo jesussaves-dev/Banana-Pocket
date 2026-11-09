@@ -89,7 +89,15 @@ bananad:
 	    echo "bananad: OK"; \
 	 else echo "bananad: skipped (no libasound headers)"; fi
 
-test: ui bananad
+# the DRM probe is a tool, not part of the image: compile it on the host so it cannot rot between hardware sessions
+probe:
+	@if pkg-config --exists libdrm 2>/dev/null; then \
+		cc -std=c11 -O2 -Wall -Wextra -Werror $$(pkg-config --cflags libdrm) \
+			tools/drm-plane-probe.c $$(pkg-config --libs libdrm) -o /tmp/banana-drm-plane-probe.$$$$ \
+			&& rm -f /tmp/banana-drm-plane-probe.$$$$ && echo "drm-plane-probe: OK"; \
+	 else echo "drm-plane-probe: skipped (no libdrm)"; fi
+
+test: ui bananad probe
 	tools/check-systems.py
 	tools/check-themes.py --selftest
 	tools/check-themes.py
@@ -161,4 +169,4 @@ clean:
 	rm -rf $(OUT)
 	$(MAKE) -C ui clean
 
-.PHONY: $(BOARDS) ui test sound-test bench local-rebuild check-local-build agent-check agent-map clean
+.PHONY: $(BOARDS) ui test probe sound-test bench local-rebuild check-local-build agent-check agent-map clean

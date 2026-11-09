@@ -1,6 +1,19 @@
 # Plan: a native DRM/KMS plane compositor (replacing `cage`)
 
-Status: draft for `feat/drm-plane-compositor`. No code, defconfig or launcher is changed by this plan.
+Status: draft for `feat/drm-plane-compositor`. No compositor code, defconfig or launcher is changed by this plan.
+
+## Terminology (read before the decision)
+
+- **Direct plane presentation** — the client's frame reaches a KMS plane without a CPU/GPU render or copy into a
+  compositor buffer. This is what "zero-copy" in older notes meant, and what a **GO (direct plane)** buys.
+- **Zero composition cost** — *not* claimed and not what the probe measures. The DPU still composites: z-order,
+  alpha/blending, and rotation (where the plane supports it) consume display-controller resources, and scanout
+  bandwidth is still spent. "Zero-copy" never means "free".
+- **GO (EGL rotate)** — the overlay works, but the plane cannot rotate the game frame: one GPU pass per frame is
+  needed, so the copy is gone but a render pass returns.
+- **Real-client DMA-BUF compatibility** is a **separate** requirement: the probe's frames are linear dumb buffers;
+  RetroArch/SDL2 hand over tiled/compressed buffers with their own modifiers, and that import must be validated
+  with a real client (Phase 2 spike), not inferred from a GO here.
 
 ## 0. What the code does today (verified in this tree)
 
@@ -84,7 +97,7 @@ device and boot it was captured on. Never carry a result from one board to anoth
 1. Which planes can feed the `DSI-*` CRTC, with which formats and modifiers?
 2. Does the driver *accept* — not advertise — game on `PRIMARY` plus menu on `OVERLAY`, with the rotation the
    portrait panel needs?
-3. Based on 1 and 2: zero-copy, one EGL rotate pass, or keep cage?
+3. Based on 1 and 2: direct plane, one EGL rotate pass, or keep cage?
 
 Only TEST_ONLY commits answer (2). Property lists answer (1) and are labelled "advertised" everywhere, because a
 driver can advertise a format or a rotation it still rejects in a combination.
@@ -108,18 +121,23 @@ A standalone C11 tool (`libdrm` only), read-only by default:
 drm-plane-probe [--card /dev/dri/cardN] [--connector DSI-1] [--take-master] [--no-atomic]
 ```
 
-- **Enumeration** (works while `banana-ui` runs): kernel and DRM driver, connectors and modes, `panel orientation`,
-  every CRTC with its active mode and `GAMMA_LUT_SIZE`/`OUT_FENCE_PTR`, and every plane with its type,
-  `possible_crtcs`, formats, `IN_FORMATS` modifiers, linear support for AR24/XR24, `zpos` range/value/immutability,
-  `alpha` range, `pixel blend mode` values, `rotation` values, and fence properties.
-- **Overlay choice:** the topmost (highest `zpos`) overlay that takes linear AR24; the target summary prints both
-  planes' `zpos` and warns when the chosen overlay does not stack above the primary (fixed `zpos` is common).
-- **Atomic matrix** (only with DRM master): the six TEST_ONLY cases in 1.6, each printing `[ok]` or `[reject]` with
-  `errno` and a plain-English cause. It also prints a `VERDICT:` line from what was measured.
-- Scaling has no DRM property to read (the DPU does not advertise a scaler limit): rows 5–6 are the measurement.
+- **Enumeration** (works while `banana-ui` runs): kernel and DRM driver, DRM capabilities, connectors and modes,
+  `panel orientation`, every CRTC with its active mode and `GAMMA_LUT_SIZE`/`OUT_FENCE_PTR`, and every plane with
+  its type, `possible_crtcs`, formats, the **full `IN_FORMATS` set** (each modifier with its formats), linear
+  AR24/XR24, `zpos` range/value/immutability, `alpha` range, `pixel blend mode`, `rotation`, fences, and the
+  property ids the requests use.
+- **Overlay choice:** the topmost (highest `zpos`) overlay that takes linear AR24; the summary prints both planes'
+  `zpos` and whether the overlay can stack above the primary.
+- **Atomic matrix** (only with DRM master and a valid mode blob): the six rows with sub-cases in 1.6. Every line is
+  `[ok]`, `[reject] <errno> + cause`, or `[skip] <why>`; tested, rejected and skipped are counted separately.
+- Framebuffers are created with `drmModeAddFB2WithModifiers(…, DRM_FORMAT_MOD_LINEAR)` (falling back to `AddFB2`
+  only if the driver refuses the modifier form, and saying so).
+- Row 2 fails when the overlay cannot stack above the primary, even if the kernel accepts the commit; unknown
+  `zpos` makes the verdict HOLD, not NO-GO.
+- Scaling has no DRM property to read (the DPU does not advertise a scaler limit): rows 5a/5b are the measurement.
 - It **never** calls a commit without `DRM_MODE_ATOMIC_TEST_ONLY`; no page flip, no event, no modeset. It does not
   call `drmSetMaster` unless asked with `--take-master`, and drops it on exit.
-- Exit: `0` matrix ran; `2` enumeration only (the usual case while the menu is up); `1` fatal (no card, no resources).
+- Exit: `0` = a decision (GO or NO-GO); `2` = HOLD/incomplete (skipped rows, no master, no mode); `1` = fatal.
 
 **Why `--take-master` exists.** `DRM_IOCTL_MODE_ATOMIC` is registered with `DRM_MASTER`
 (`drivers/gpu/drm/drm_ioctl.c:714`), so the kernel refuses it with `EACCES` even for `TEST_ONLY`. There is no
@@ -128,108 +146,153 @@ refuses to guess the matrix.
 
 ### 1.4 Running the atomic matrix (exclusive window)
 
-The menu must not hold master, and init respawns it. On a dev unit, with a card you can reboot:
+The menu holds DRM master and init respawns it, so the matrix runs in a short, scripted window. Use
+`tools/drm-probe-window.sh` on the handheld — not a hand-typed kill/mount sequence:
 
 ```
-# a stand-in for the menu that init may respawn
-printf '#!/bin/sh\nexec sleep 86400\n' > /tmp/no-menu.sh && chmod +x /tmp/no-menu.sh
-mount --bind /tmp/no-menu.sh /usr/bin/banana-ui-session
-kill $(pidof banana-ui); sleep 1
-pidof banana-ui && { echo "menu still up: stop here"; exit 1; }
+# on the host: build the probe for the handheld and copy both files
+export SYS=output/retroid-pocket-classic/host/aarch64-buildroot-linux-gnu/sysroot
+output/retroid-pocket-classic/host/bin/aarch64-linux-gcc -std=c11 -O2 -Wall -Wextra -Werror \
+    --sysroot=$SYS -I$SYS/usr/include/libdrm tools/drm-plane-probe.c -L$SYS/usr/lib -ldrm \
+    -o /tmp/drm-plane-probe
+scp -O /tmp/drm-plane-probe tools/drm-probe-window.sh root@<handheld>:/data/
+ssh root@<handheld> 'chmod +x /data/drm-plane-probe /data/drm-probe-window.sh'
 
-scp -O /tmp/drm-plane-probe root@<handheld>:/data/
-ssh root@<handheld> '/data/drm-plane-probe --take-master | tee /data/banana/logs/drm-probe-$(date +%Y%m%d-%H%M).txt'
-
-umount /usr/bin/banana-ui-session
-kill $(pgrep -f /tmp/no-menu.sh) 2>/dev/null      # init respawns the real session
+# on the handheld: it detaches, prints its log path, stops the menu, runs the probe, restores the menu
+ssh root@<handheld> "/data/drm-probe-window.sh --connector DSI-1 --commit $(git rev-parse --short HEAD)"
+# then watch the printed log and copy the report off:
+ssh root@<handheld> 'tail -f /data/banana/logs/drm-probe-window-*.log'
+scp -O 'root@<handheld>:/data/banana/logs/drm-probe-*.txt' .
 ```
 
-- The panel keeps the last frame while the menu is down; the TEST_ONLY commits change nothing.
-- Do not run it with a game, port or BananaTube open: they own the display.
-- A reboot always restores the normal session.
-- If `drmSetMaster` fails with `EBUSY`, something still holds the display; the probe says so and skips.
+What the wrapper guarantees:
 
-### 1.5 Example of the report format
+- it stops the menu only after the stand-in bind mount is visible in `/proc/mounts`;
+- the stand-in is a uniquely named script with a **recorded pid** (not `exec sleep`, whose argv would hide it);
+- `autosleep_minutes`/`dim_minutes` are set to 0 for the window and restored afterwards; `bananad.conf` is put back
+  only if nobody changed it during the window (otherwise only this script's block is removed, never the other
+  change);
+- the probe runs under `timeout 180`; `EXIT`/`INT`/`TERM`/`HUP` all restore;
+- restore unmounts first (so init respawns the real launcher), kills the stand-in, HUPs bananad, and verifies
+  `banana-ui` is running again;
+- it detaches with `setsid`, so a dropped SSH session does not kill the restore path.
 
-Synthetic and trimmed: it shows the shape of the report, not any device's result.
+Preconditions it enforces: root, the probe and launcher present, no game running, `/data` not handed to a computer,
+and either the charger connected or the battery at least 40%. Do not run it with a port or BananaTube open.
+
+**Ultimate recovery.** If the wrapper is `SIGKILL`ed or the handheld loses power, the stand-in can remain in the
+respawn slot and the panel stays on its last frame. **A reboot always restores the normal system** — the bind mount
+is per-boot and cage is untouched. Hold Power to force it off if the menu does not come back.
+
+Never run `--take-master` on the development host's active display. The matrix is for the target device, in this
+window, on the charger.
+
+### 1.5 What the output looks like
+
+A **format template, not a measured result** (placeholders, no invented values):
 
 ```
-banana drm-plane-probe
-kernel : Linux ... aarch64
-driver : msm 1.0.0 (0) "msm"
-card   : /dev/dri/card0
-objects: 1 connector(s), 1 encoder(s), 1 CRTC(s), 0 framebuffer(s)
-
+banana drm-plane-probe 2
+kernel  : <uname -s -r -m>
+driver  : <drm driver name and version>
+card    : /dev/dri/card0
+caps    : dumb=<0|1> prime=<n> addfb2_modifiers=<0|1> async_flip=<0|1> timestamp_monotonic=<0|1>
 connectors
-  DSI-1 (id 45) connected, encoder 44, 1 mode(s)   <- target
-    mode 0: 1080x1240 @ 60 Hz "1080x1240" preferred
-    panel orientation: 3 (right-side-up) immutable
+  <DSI-N> (id <n>) connected, encoder <n>, <n> mode(s)   <- target
+    mode 0: <W>x<H> @ <Hz> "<name>" preferred
+    panel orientation: <n> (<name>) immutable
 crtcs
-  CRTC 41 (index 0) active   <- target
-    mode: 1080x1240 @ 60 Hz "1080x1240"
+  CRTC <id> (index <n>) active   <- target
 planes (advertised; the atomic tests below decide what is actually accepted)
-  plane 50 PRIMARY  possible CRTCs: 41 ... formats: XR24 AR24 ... rotation: rotate-0 rotate-90
-  plane 51 OVERLAY  possible CRTCs: 41 ... zpos: 0..255  alpha: 0..65535  rotation: rotate-0 rotate-90
+  plane <id> PRIMARY ... formats: ... rotation: ...
+    IN_FORMATS: <n> modifier(s)
+      0x<modifier> <name>: <formats>
+  plane <id> OVERLAY ... zpos: <min>..<max> (now <n>) ...
 target
-  overlay plane: found (AR24 advertised)
-  primary rotation advertised: rotate-90
+  overlay plane: found (AR24 advertised) | NONE
+  stacking: primary zpos <n>, overlay zpos <n> -> overlay above | OVERLAY NOT ABOVE
 atomic tests (TEST_ONLY)
-  [ok]     modeset: primary at the panel's mode
-  [ok]     primary + overlay (zpos top, alpha 50%, premultiplied)
-  [ok]     primary rotated 90 (the game buffer: the zero-copy gate)
+  [ok]     modeset: 1 ...
+  [ok]     overlay band: 2a ...
+  [skip]   4b primary rotated 90 (AR24): AR24 not advertised
   ...
-VERDICT: GO (zero-copy) -- ...
+  matrix: <n> ok, <n> rejected, <n> skipped
+VERDICT: GO (direct plane) | GO (EGL rotate) | NO-GO | HOLD -- <why>
 ```
 
 ### 1.6 The atomic matrix
 
-Each row is a separate TEST_ONLY request, so a rejection names one combination:
+Six numbered rows, some with sub-cases (each sub-case is its own TEST_ONLY request, so a rejection names the exact
+combination):
 
-| # | request | proves |
-|---|---|---|
-| 1 | connector `CRTC_ID`, CRTC `MODE_ID`/`ACTIVE`, primary `FB_ID`, panel-sized XR24 | the base modeset is valid |
-| 2 | + overlay `FB_ID`, `SRC`/`CRT`, `zpos` top, `alpha` 50%, premultiplied | the menu layer can sit over the game |
-| 3 | overlay rotated 90 | informational (the menu can pre-rotate; not a gate) |
-| 4 | primary `FB_ID` landscape (panel H×W), `SRC` landscape, `CRT` portrait, `rotation=ROTATE_90` | **the zero-copy gate**: the game frame can be rotated by the plane |
-| 5 | primary scaled 640×480 → panel | the DPU scaler can upscale, if a core outputs low |
-| 6 | overlay scaled + alpha | the toast band can be scaled, if ever needed |
+| # | sub-case | request | proves |
+|---|---|---|---|
+| 1 | — | connector `CRTC_ID`, CRTC `MODE_ID`/`ACTIVE`, primary `FB_ID`, SRC/CRTC, panel-sized | the base modeset is valid |
+| 2a | band overlay | + overlay `FB_ID`, SRC/CRTC, zpos, alpha, premultiplied, 600×200 AR24 | a toast-sized layer stacks over the game |
+| 2b | full-panel overlay | the same at the panel size | the planned full-panel menu layer is accepted |
+| 3 | — | overlay rotated 90 | informational (the menu pre-rotates its own buffer) |
+| 4a | game buffer, XR24 | primary 1240×1080 landscape, SRC landscape, CRTC portrait, `ROTATE_90` | **the direct-plane gate** |
+| 4b | game buffer, AR24 | the same in AR24, if the primary lists it | the client's alpha format also rotates |
+| 5a | scale | primary 640×480 → the panel | the scaler is available |
+| 5b | letterbox | primary panel-width × (H−240) at destination offset (0,120) | non-zero destination offsets work |
+| 6 | — | overlay scaled 600×200 → 300×400 | informational |
 
-Reading a failure: `EINVAL` means a property, format, modifier or the combination was refused; `ENOSPC` means no
-plane/bandwidth; `EACCES` means the probe is not master (fix 1.4, not the hardware). The probe prints all of these
-next to the failing row.
+Each line is one of:
 
-**Two levels of "supported" are reported:** *advertised* (the property/format list) and *validated* (row `[ok]`).
-The verdict uses only validated rows. A format listed but rejected in the test is exactly the "advertised but not
-supported" case the brief asks about, and it is printed as such.
+- `[ok]` — the driver accepted that exact combination (validated, not merely advertised).
+- `[reject] <errno>` — the driver refused it; the line carries the plain cause (`EINVAL` property/format/modifier,
+  `ENOSPC` bandwidth/plane, `EACCES` not master, `EBUSY` busy).
+- `[skip] <why>` — the row could not run (no buffer, no feature). **A skip is never a rejection**: the verdict
+  below distinguishes them.
 
-### 1.7 The hardware report to fill in
+Row 2 also fails if the overlay cannot stack above the primary (its `zpos` is fixed below the primary's), even
+when the kernel accepts the commit — the kernel checks a valid state, not the layer you wanted. If `zpos` is not
+exposed on both planes, stacking is unverifiable and the verdict is HOLD.
 
-Capture the probe output on the unit and record:
+**Two levels of "supported":** *advertised* (property/format/modifier lists) and *validated* (a row `[ok]`). Only
+validated rows feed the verdict. A format listed but rejected in a row is exactly the "advertised but not
+supported" case.
+
+**Real-client buffers.** These rows use linear dumb buffers via `AddFB2WithModifiers(LINEAR)`. RetroArch (Vulkan/GL)
+and SDL2 hand over tiled/compressed DMA-BUFs with their own modifiers; the report lists the plane's full
+`(format, modifier)` set, but importing a real client buffer is **separate validation** (Phase 2 spike) and cannot
+be inferred from a GO here.
+
+Exit codes: `0` = a decision (GO or NO-GO); `2` = HOLD/incomplete; `1` = fatal.
+
+### 1.7 The hardware report
+
+The wrapper writes `/data/banana/logs/drm-probe-<board>-<UTC>.txt` containing, before the matrix:
+
+| field | source |
+|---|---|
+| board | `/etc/banana/board` (written at build: `retroid-pocket-classic`) |
+| SoC, panel, connector, mode, plane capabilities | the probe |
+| kernel (release, machine) | `uname -a` |
+| DRM driver + version | the probe (`drmGetVersion`) |
+| UTC date/time | the wrapper |
+| probe commit | `--commit` from the host (`git rev-parse --short HEAD`) |
+| probe binary SHA-256 | the wrapper (`sha256sum`) |
+| the full six-row matrix and the verdict | the probe |
+
+Copy the report off the card before any reboot, then fill in the review table:
 
 | field | value |
 |---|---|
-| device, board, kernel | |
-| DRM driver + version | |
-| target connector, mode, `panel orientation` | |
-| CRTC count, target CRTC, `GAMMA_LUT_SIZE` | |
-| planes for that CRTC (types, ids) | |
-| primary formats + linear AR24/XR24 | |
-| overlay formats + linear AR24/XR24 | |
-| primary/overlay `rotation` values | |
-| `zpos` range/immutable, `alpha` range, blend modes | |
-| rows 1–6 | ok / reject + errno |
-| verdict | |
+| rows 2a/2b | ok / reject |
+| stacking | overlay above / not above / unknown |
+| rows 4a/4b | ok / reject / not advertised |
+| rows 3, 5a, 5b, 6 | ok / reject / skip |
+| exit code and verdict | |
+| reviewed by / date | |
 
-Nothing in this table is filled in until the probe has run on the real device.
+**Status of the measurements in this document: none.** The probe and wrapper are implemented; the probe has been
+compiled for the host and with the image's `aarch64` toolchain, its enumeration ran on host DRM devices only (no
+target values are quoted), and it is clean under AddressSanitizer/UndefinedBehaviorSanitizer. **The atomic matrix
+has not been run on the target.** No result is copied from a host run, and none is invented.
 
-**Status of the measurements in this document: none.** The probe has been compiled for the host and with the image's
-`aarch64` toolchain, and its enumeration has been exercised on host DRM devices only (no display result is quoted
-here); the host enumeration also runs clean under AddressSanitizer/UndefinedBehaviorSanitizer. The atomic matrix has **not** been run: there is no target device in this session, and taking DRM master on
-the development host's active display would disrupt it. No result is copied from a host run, and none is invented.
-
-**GO/NO-GO for Phase 2 right now: HOLD.** This is not a hardware NO-GO — it means the matrix is unmeasured. The GO
-is issued only by a filled-in report from the target device with rows 2 and 4 `[ok]` (zero-copy) or row 2 `[ok]` and
-row 4 rejected/absent (EGL rotate). Any other result is NO-GO, retain cage.
+**GO/NO-GO for Phase 2 right now: HOLD.** This is not a hardware NO-GO; the matrix is unmeasured. The GO is issued
+only from a reviewed target report.
 
 ### 1.8 Buffer synchronisation contract (documented now, implemented in Phase 3)
 
@@ -237,7 +300,7 @@ If the matrix says GO, the compositor will import client buffers and hand them t
 code:
 
 - **Import:** `drmModeAddFB2WithModifiers` with the client's fourcc, modifier, stride and offset. Reject a modifier
-  the plane does not list.
+  the plane does not list (and test it with a real client buffer; see 1.6).
 - **Produce → compose:** the client must not hand a buffer that is still being written. Use the plane's
   `IN_FENCE_FD` (acquire fence) per plane where advertised; otherwise the client must complete its write before the
   commit, or the compositor waits on a shared `sync_file`/dma-buf reservation first.
@@ -246,23 +309,22 @@ code:
   release the buffer to the client (Wayland `wl_buffer.release`).
 - **Lifetime:** hold a reference for every buffer in flight; on commit failure (`EBUSY`/`EINVAL`) keep the previous
   frame and do not release the new buffer until it is no longer referenced.
-- **Never** assume implicit sync between GPU and DPU; the whole point of the probe's fence lines is to know what is
-  available on this driver.
+- **Never** assume implicit sync between GPU and DPU; the probe's fence lines say what is available.
 - Two or three buffers per client, never one; never write a buffer the DPU may still be reading, including across
   suspend.
 
-### 1.9 Decision criteria (GO/NO-GO)
+### 1.9 Decision criteria (GO / NO-GO / HOLD)
 
-| measured result | decision | next |
+| measured result | verdict | next |
 |---|---|---|
-| overlay row 2 `[ok]` **and** primary rotation row 4 `[ok]` | **GO — zero-copy** | Phase 2 with the plane assignment as planned |
-| overlay row 2 `[ok]`, row 4 not advertised or rejected | **GO — EGL rotate** | Phase 2, but budget one GPU pass per frame; "zero copy" is off the table |
-| no overlay plane for the CRTC, or row 2 rejected | **NO-GO** | retain cage; Phase 1B (atomic menu) can still ship |
-| overlay has no AR24 / no alpha | partial | opaque cards only, or an ARGB primary and a second plane; record it |
+| rows 2a/2b `[ok]`, stacking verified, rows 4a/4b `[ok]` | **GO (direct plane)** | Phase 2 with the plane assignment as planned |
+| rows 2a/2b `[ok]`, stacking verified, rotation not advertised or rejected | **GO (EGL rotate)** | Phase 2, but budget one GPU pass per frame |
+| no overlay plane, or rows 2a/2b rejected, or stacking impossible | **NO-GO** | retain cage; Phase 1B can still ship |
+| any required row skipped, no master, no mode, z-order unknown | **HOLD** | do not proceed; rerun when it can be measured |
+| overlay has no AR24 / no alpha | partial | record it; opaque cards only, or a different plane |
 
-The verdict line the probe prints is a convenience, not the decision: the decision is this table filled in from the
-device's report, reviewed before Phase 2 starts. No GO from a host run, from another board, or from property lists
-alone.
+The probe's `VERDICT:` line is a convenience; the decision is this table filled in from a reviewed target report.
+No GO from a host run, from property lists alone, or from another board.
 
 ### 1.10 Phase 1B — atomic KMS in `banana-ui` (after the report)
 
@@ -302,8 +364,8 @@ the exact `errno`s in the probe output.
 - `wl_shm` and `zwp_linux_dmabuf_v1` (import): shm for software clients (mpv/SDL software), dmabuf for GL/Vulkan
   clients. Accept the modifiers the probe listed; reject unknown ones with a clear error.
 - Renderer: import the client buffer, and if the probe showed hardware plane rotation, scan it out as-is; otherwise
-  one EGL/GBM rotate pass into a GBM scanout buffer (the same work cage does today, so no regression, but "zero GPU
-  copy" must then be dropped from the goal).
+  one EGL/GBM rotate pass into a GBM scanout buffer (the same work cage does today, so no regression, but the
+  direct-plane saving is lost).
 - Plane policy: game buffer on `PRIMARY`; banana-ui's own content on an `OVERLAY` (`zpos` top, `pixel blend mode` =
   premultiplied) when the overlay is visible; when no game runs, today's dumb-buffer path on `PRIMARY` is unchanged.
 - Loop: the existing `poll()` gains the Wayland socket fds, a `signalfd` for `SIGCHLD`, and the existing timers. The
@@ -430,7 +492,7 @@ leaves the list), `docs/ROADMAP.md` (this plan becomes Done with the measured nu
 
 | Risk | Evidence it is real | Mitigation |
 |---|---|---|
-| msm planes cannot rotate 90° | The panel is portrait (1080×1240) while every client draws 1240×1080; cage does the turn today | Probe `rotation` on each plane; if absent, budget one EGL pass and drop "zero GPU copy" |
+| msm planes cannot rotate 90° | The panel is portrait (1080×1240) while every client draws 1240×1080; cage does the turn today | Probe `rotation` on each plane; if absent, budget one EGL pass and the direct-plane saving is lost |
 | DMA-BUF import fails for Vulkan/GL clients | Turnip + Vulkan WSI allocate from the driver; modifiers must match | Probe formats/modifiers; test with RetroArch first (Vulkan and glcore), then SDL2 |
 | A single CRTC makes the overlay impossible | One DSI output; planes are tied to a CRTC | This is why leases are out; the compositor owns the one CRTC and composites everything |
 | Being resident changes sleep | The menu currently leaves the panel to the game; bananad's SIGHUP/SIGUSR1 logic assumes cage | Explicit task in Phase 2 (`compositor.pid`, resume re-commit), tested in 5.2.3 |
