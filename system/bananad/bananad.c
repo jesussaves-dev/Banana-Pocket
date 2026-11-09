@@ -881,9 +881,7 @@ static void shutdown_now(const char *why)
 }
 
 static double save_volume_at, save_backlight_at;	/* debounced: written a moment after the last key */
-static int core_ready(void);
-static double load_at = -1, load_deadline, load_verify_until;	/* hibernation: when to try LOAD_STATE; -1: nothing pending */
-static int load_tries;	/* deliveries for this state (a LOAD_STATE RetroArch ignored is re-sent, bounded) */
+static double load_at = -1, load_deadline;	/* hibernation: when to try LOAD_STATE; -1: nothing pending */
 static char load_rom[PATH_MAX];			/* the ROM it belongs to (never load another game's state) */
 static double volume_reassert_at;	/* once, after the sound server has opened the card (it sets its own level) */
 
@@ -2167,6 +2165,25 @@ static int state_ready(const char *dir, const char *name, int slot, const struct
 	return 0;
 }
 
+/* A byte copy beside the state, for the .state.auto slot (the wake loads it during content init). */
+static int copy_file(const char *from, const char *to)
+{
+	FILE *in = fopen(from, "rb");
+	if (!in) return -1;
+	FILE *out = fopen(to, "wb");
+	if (!out) { fclose(in); return -1; }
+	char buf[65536];
+	size_t n;
+	int ok = 1;
+	while ((n = fread(buf, 1, sizeof buf, in)) > 0)
+		if (fwrite(buf, 1, n, out) != n) { ok = 0; break; }
+	ok &= fflush(out) == 0 && fsync(fileno(out)) == 0;
+	ok &= fclose(out) == 0;
+	fclose(in);
+	if (!ok) { unlink(to); return -1; }
+	return 0;
+}
+
 /* RetroArch logs "[Core] Geometry:" once the content and core are up. Its stdin FIFO has a reader from the moment
  * run-retroarch creates it (the launcher's own fd 3), so a write succeeding does not mean a state can be loaded yet --
  * measured on the unit: a LOAD_STATE sent at that point is accepted and ignored. */
@@ -2180,8 +2197,6 @@ static int log_has(const char *what)
 	fclose(f);
 	return found;
 }
-
-static int core_ready(void) { return log_has("[Core] Geometry"); }
 
 /* The game is gone when the menu unlinked its pid file, or when what is left is a zombie the menu has not reaped yet
  * (kill(pid, 0) still succeeds for a zombie, so the /proc state is what says it exited). */
@@ -2216,6 +2231,12 @@ static int hibernate_game(pid_t game, const char *rom)
 	if (!state_ready(dir, name, slot, &t0, st, sizeof st)) {
 		sleep_log("hibernate: no finished state for %s under %s within 1500 ms", name, dir);
 		return 0;
+	}
+	/* stage it as the automatic state too: RetroArch then loads it while it starts the content, instead of a command
+	 * arriving after the first frames (which it drops) and needing a retry. The manual state stays for the States page. */
+	char aut[PATH_MAX];
+	if (strlen(st) + 6 < sizeof aut && snprintf(aut, sizeof aut, "%s.auto", st) > 0) {
+		if (copy_file(st, aut) != 0) sleep_log("hibernate: could not stage %s; the state load will need a command", aut);
 	}
 	/* the marker before the kill: a game closed with nothing to relaunch is a lost session */
 	size_t rl = strlen(rom) + 2;
@@ -2513,62 +2534,37 @@ int main(int argc, char **argv)
 		if (vib_off_at > 0 && vib_off_at - tnow < wait) wait = vib_off_at - tnow;	/* a pulse's stop */
 		if (jack_settle_at > 0 && jack_settle_at - tnow < wait) wait = jack_settle_at - tnow;	/* the jack's second look */
 		if (load_at >= 0 && (load_at <= tnow || load_at - tnow < wait)) wait = load_at > tnow ? load_at - tnow : 0;
-		if (load_verify_until > 0) {
-			/* look at RetroArch's log every 200 ms while a delivered state is unconfirmed */
-			if (wait > 0.2) wait = 0.2;
-		}
 		int timeout = wait <= 0 ? 20 : (int)(wait * 1000) + 20;
 		poll(pf, n, timeout);
 		double now = mono();
 		/* a hibernated game's saved state: hand it to the relaunched RetroArch once its stdin takes commands. The
 		 * FIFO is non-blocking, so a successful write is the readiness test; the ROM has to be the one that was
 		 * saved, and a different game starting first cancels the hand-over. */
-		if (load_at < 0 && load_verify_until <= 0) {
+		if (load_at < 0) {
 			FILE *lf = fopen("/run/banana/load-pending", "r");
 			if (lf) {
 				if (fgets(load_rom, sizeof load_rom, lf)) trim(load_rom);
 				fclose(lf);
-				if (load_rom[0]) { load_at = 0; load_deadline = now + 5.0; load_tries = 0; }
+				if (load_rom[0]) { load_at = 0; load_deadline = now + 5.0; }
 				else unlink("/run/banana/load-pending");
 			}
 		} else if (load_at >= 0 && now >= load_at) {
 			char rom[PATH_MAX] = "";
 			read_str("/run/banana/game.path", rom, sizeof rom);
 			pid_t g = pid_of("/run/banana/game.pid");
-			if (g && !strcmp(rom, load_rom) && core_ready()) {
-				if (ra_cmd("LOAD_STATE")) {
-					load_tries++;
-					sleep_log("hibernate: LOAD_STATE handed to RetroArch for %s", rom);
-					load_verify_until = now + 2.0;	/* one line more says whether it really loaded */
-					load_at = -1;
-				} else load_at = now + 0.1;
+			if (g && !strcmp(rom, load_rom) && log_has("Loading state")) {
+				sleep_log("hibernate: the staged state was loaded (confirmed)");
+				unlink("/run/banana/load-pending");
+				load_at = -1;
 			} else if (g && strcmp(rom, load_rom)) {
 				sleep_log("hibernate: %s started instead of %s: no state loaded", rom, load_rom);
 				unlink("/run/banana/load-pending");
 				load_at = -1;
 			} else if (now >= load_deadline) {
-				sleep_log("hibernate: RetroArch did not take the state for %s within 5 s", load_rom);
+				sleep_log("hibernate: RetroArch did not report the staged state for %s within 5 s", load_rom);
 				unlink("/run/banana/load-pending");
 				load_at = -1;
-			} else load_at = now + 0.1;	/* retry every 100 ms (also while the core is still loading) */
-		}
-		if (load_verify_until > 0 && log_has("Loading state")) {
-			sleep_log("hibernate: RetroArch loaded the state (confirmed)");
-			unlink("/run/banana/load-pending");
-			load_verify_until = 0;
-			load_tries = 0;
-		} else if (load_verify_until > 0 && now >= load_verify_until) {
-			load_verify_until = 0;
-			if (load_tries < 2 && load_rom[0]) {
-				/* a command written in the first frames is accepted and dropped on the unit: deliver it again, once
-				 * more, before giving up (the same state, so a second load cannot hurt) */
-				sleep_log("hibernate: RetroArch did not report the state; delivering LOAD_STATE again");
-				load_at = now + 0.5;
-			} else {
-				sleep_log("hibernate: LOAD_STATE delivered, but RetroArch did not report the state; giving up");
-				unlink("/run/banana/load-pending");
-				load_tries = 0;
-			}
+			} else load_at = now + 0.1;
 		}
 		if (vib_off_at > 0 && now >= vib_off_at) { vib_stop(); vib_off_at = 0; }
 		if (jack_settle_at > 0 && now >= jack_settle_at) jack_settle_poll();

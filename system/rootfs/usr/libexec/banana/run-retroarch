@@ -388,10 +388,10 @@ if [ ! -f $QR ]; then
 fi
 q=$(sed -n 's/^savestate_auto_save = "\(.*\)"/\1/p' $CFG | tail -n 1)
 set_cfg savestate_auto_load ${q:-false}
-# A hibernation relaunch carries its own state: bananad sends LOAD_STATE once this game's stdin takes commands, so the
-# automatic state must not load underneath it (and never for another game's launch: the pending ROM has to be this one)
+# A hibernation relaunch carries its own state: bananad staged it as the automatic state, so this launch turns
+# auto-load on (whatever Quick resume says for ordinary launches) and RetroArch loads it while starting the content.
 if [ -f /run/banana/load-pending ] && [ "$(cat /run/banana/load-pending 2>/dev/null)" = "$BANANA_ROM" ]; then
-    set_cfg savestate_auto_load false
+    set_cfg savestate_auto_load true
 fi
 # the RetroAchievements account from the setup (banana/accounts.conf) for RetroArch: its name in retroarch.cfg, but its
 # password, and the token RetroArch gets with it, only in a config appended from /run, never in retroarch.cfg, which

@@ -183,6 +183,7 @@ asleep && ok "suspended after a verified save" || bad "no suspend after the save
 grep -qx SAVE_STATE /run/test/ra-cmds && ok "SAVE_STATE went down the pipe before the close" || bad "no SAVE_STATE: $(tr '\n' ' ' < /run/test/ra-cmds)"
 grep -q 'hibernate: state saved to /data/states/Test Game.state, game closed' /data/banana/logs/sleep.log && ok "the finished state was verified" || bad "state not verified: $(tail -n1 /data/banana/logs/sleep.log)"
 grep -qx '/data/roms/gba/Test Game.zip' /data/banana/resume 2>/dev/null && ok "the ROM was persisted" || bad "no resume marker"
+[ -f '/data/states/Test Game.state.auto' ] && ok "the state was staged as the automatic one" || bad "no .state.auto staged"
 [ ! -e /data/banana/resume.tmp ] && ok "the marker was renamed into place" || bad "a .tmp resume file was left"
 [ ! -e /run/banana/shutting-down ] && ok "hibernation is not a shutdown" || bad "shutting-down was created"
 wake
@@ -194,14 +195,12 @@ for i in $(seq 20); do [ -f /run/banana/load-pending ] && break; sleep 0.1; done
 : > /data/banana/logs/retroarch.log	# run-retroarch rotates it at launch, before the new game has a pid
 setsid sleep 600 & HG2=$!; sleep 0.1
 echo $HG2 > /run/banana/game.pid
-sleep 0.5
-grep -qx LOAD_STATE /run/test/ra-cmds 2>/dev/null && bad "LOAD_STATE before the core was up" || ok "no state before RetroArch says the core is up"
-printf '[Core] Geometry: 240x160, Aspect: 1.500\n' >> /data/banana/logs/retroarch.log
-for i in $(seq 40); do grep -qx LOAD_STATE /run/test/ra-cmds 2>/dev/null && break; sleep 0.1; done
-sleep 0.4
-[ "$(grep -c '^LOAD_STATE$' /run/test/ra-cmds)" = 1 ] && ok "LOAD_STATE delivered once, after the launch" || bad "LOAD_STATE $(grep -c '^LOAD_STATE$' /run/test/ra-cmds) times"
+# what RetroArch writes while it starts the content on the staged state (auto-load): the confirmation bananad watches
+printf '[State] Auto-loading save state from "x.state.auto" succeeded.\n[State] Loading state "x.state.auto", 1 bytes.\n' >> /data/banana/logs/retroarch.log
+for i in $(seq 40); do grep -q 'staged state was loaded (confirmed)' /data/banana/logs/sleep.log && break; sleep 0.1; done
 [ ! -e /run/banana/load-pending ] && ok "the pending state was consumed" || bad "load-pending was left behind"
-grep -q 'loaded the state (confirmed)' /data/banana/logs/sleep.log && ok "the load was confirmed in RetroArch's log" || bad "the load was not confirmed: $(tail -n1 /data/banana/logs/sleep.log)"
+grep -q 'staged state was loaded (confirmed)' /data/banana/logs/sleep.log && ok "the auto-load was confirmed in RetroArch's log" || bad "the load was not confirmed: $(tail -n1 /data/banana/logs/sleep.log)"
+grep -qx LOAD_STATE /run/test/ra-cmds 2>/dev/null && bad "a LOAD_STATE command was sent as well" || ok "no state command: the staged state loaded by itself"
 kill $HG2 2>/dev/null; rm -f /run/banana/game.pid
 stop
 
@@ -279,9 +278,9 @@ for i in $(seq 20); do [ -f /run/banana/load-pending ] && break; sleep 0.1; done
 : > /data/banana/logs/retroarch.log
 setsid sleep 600 & SS2=$!; sleep 0.1
 echo $SS2 > /run/banana/game.pid
-printf '[Core] Geometry: 240x160, Aspect: 1.500\n' >> /data/banana/logs/retroarch.log
-for i in $(seq 40); do grep -qx LOAD_STATE /run/test/ra-cmds 2>/dev/null && break; sleep 0.1; done
-grep -qx LOAD_STATE /run/test/ra-cmds && ok "the state was handed back from the sorted folder" || bad "no LOAD_STATE from the sorted folder"
+printf '[State] Loading state "x.state.auto", 1 bytes.\n' >> /data/banana/logs/retroarch.log
+for i in $(seq 40); do grep -q 'staged state was loaded (confirmed)' /data/banana/logs/sleep.log && break; sleep 0.1; done
+grep -q 'staged state was loaded (confirmed)' /data/banana/logs/sleep.log && ok "the sorted folder's staged state was confirmed" || bad "no confirmation from the sorted folder"
 kill $SS2 2>/dev/null; rm -f /run/banana/game.pid
 stop
 printf 'savestate_directory = "/data/states"\nstate_slot = "0"\nsort_savestates_enable = "false"\n' > /data/retroarch/retroarch.cfg

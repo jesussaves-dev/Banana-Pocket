@@ -1743,12 +1743,14 @@ int main(int argc, char** argv)
 			if (settingsView.takeLibraryChanged()) roms.due = now;	// box art fetched: the library again, at home
 			if (settingsView.takeNightLightChanged()) nightLight();	// the panel's gamma follows the row
 		}
-		// a hibernated game comes back: bananad closed it before the sleep and wrote this marker on the way up. Same
-		// 0.5 s cancel window as a boot resume, then the normal launch path (and bananad hands over the state).
+		// a hibernated game comes back: bananad closed it before the sleep and wrote this marker on the way up. A wake
+		// is not a boot -- the player pressed power to get straight back -- so it launches at once (no cancel window,
+		// which stays for a boot resume), and the state was staged as the automatic one, so the game starts on it.
 		if (resumeDue <= 0 && takeWakeResume(o.data, resumeRom))
 		{
-			resumeDue = nowMs() + 500;
-			logf("resume: ready after a wake %s (any key cancels)", resumeRom.c_str());
+			logf("resume: launching after a wake %s", resumeRom.c_str());
+			std::ofstream(runFile("launch")) << resumeRom << "\n";
+			resumeTake(o.data);
 		}
 		// for testing over SSH: a game's path written to /run/banana/launch starts it, as A on it in the library would
 		if (launchSeen || launchWatch < 0)

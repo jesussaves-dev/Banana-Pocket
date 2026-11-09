@@ -9,85 +9,20 @@ and OTA updates over Wi-Fi are done (see *Done*). Next:
 
 ## In progress
 
-- **Hybrid hibernation (built 2026-11-08, ships in the next image).** `suspend_mode` in `banana/bananad.conf`
-  (Settings > Sleep & power, default `freeze`): `freeze` is the existing SIGSTOP/SIGCONT path, untouched; `savestate`
-  sends `SAVE_STATE` down RetroArch's stdin, verifies the state file (50 ms polls, 1500 ms, steady size), persists the
-  ROM atomically, closes the game, suspends, and on waking has the menu relaunch it (same 0.5 s cancel window) while
-  `bananad` delivers `LOAD_STATE` once the new pipe accepts writes; `hybrid` falls back to freezing if the save fails.
-  `savestate_auto_load` is forced off for the relaunch so the two cannot both load. Host tests: 81/81 in
-  `system/bananad/tests/sleep-test.sh` and the UI wake marker in `ui/tests/run.sh`. **Verified on the unit
-  (2026-11-09):** the whole cycle — power press -> SAVE_STATE (~0.3 s) -> game closed -> 126 s asleep -> wake ->
-  menu relaunch -> LOAD_STATE confirmed in RetroArch's log (430168-byte state). Two findings folded back in: states
-  live in a per-core folder (`sort_savestates_enable`, `/data/states/mGBA/...`), discovered rather than assumed; and
-  the first LOAD_STATE written in the first frames after `[Core] Geometry` is accepted and dropped, so bananad waits
-  for that log line and re-delivers once, 0.5 s later, if RetroArch has not logged `Loading state`. Still open:
-  whether `savestate_auto_load` alone would be enough (then the explicit LOAD_STATE could go) and a few more cycles
-  for confidence.
-
-- **Night light: backburner (2026-11-08).** The menu half ships: `night_light = off|warm|warmer`
-  (Settings > Display & sound) writes a gamma LUT from `kms.cpp`, verified on the panel. **Games are not covered**:
-  cage's wlroots gamma control accepts the ramp (`gamma_size 1024`, no `failed`), but the CRTC's `GAMMA_LUT` property
-  stays 0 during play — the menu's own blob is what the DPU honours. Tried and set aside: a Wayland gamma client
-  (`banana-gamma`, piped/memfd table, one control per output) and `WLR_DRM_NO_ATOMIC=1` with the legacy table (array
-  reads warm, no visible tint); a colour shader conflicts with the bezel rule that disables shaders for GB/GBC/GBA and
-  with a game's own shader. Pick-up paths: a cage/wlroots patch that sets the property after its commits (needs
-  approval), or a colour-only shader with the bezel rule narrowed. No spec written; the experiment notes are in this
-  entry.
-- **Bluetooth: designed, not built (2026-11-08).** Stack chosen by request: a bespoke `banana-bt` over the kernel
-  mgmt API, a small SDP client and `hidp` — no D-Bus, no BlueZ, no udev; Bluetooth Classic HID only. Design:
-  `docs/superpowers/specs/2026-11-08-bluetooth-design.md`; plan (9 tasks): `docs/superpowers/plans/2026-11-08-bluetooth.md`.
-  The kernel is ready: the device tree carries the `qcom,wcn3950-bt` node under the WCN3990 combo,
-  `bluetooth`/`hci_uart`/`btqca`/`hidp` build as modules, and `qca/cmbtfw13.tlv` + `.ver` ship in `/lib/firmware`; only
-  userspace is missing. **Blocked on test hardware:** the pad here is an 8BitDo Ultimate 2, which speaks BLE, and this
-  design covers Classic (BR/EDR) pads — the on-device checklist needs an 8BitDo Pro 2/SN30 in D-input or a PS4 pad.
-  BLE (and Bluetooth audio) would be the BlueZ/D-Bus design, deliberately not taken.
-
-- **The in-game pill: pick it up here (paused 2026-11-08).** The patch (`0014-banana-osd`), the
-  `/data/banana/osd-style` export, the Pixelify OSD font and the `BN V`/`BN B` tokens ship in the image now (0.5.12).
-  **Verified on the panel:** the volume pill and its live updates. **Not looked at yet:** the achievement card (badge,
-  title, points, no English header), an ordinary save-state message unchanged, `hud = 0` silencing pill and card with
-  the menu's own toasts still firing, and the pill's colours under a colour theme. Keys: brightness is F+volume in
-  the menu and Select+volume in a game (10% steps), Select is the search key (opens on the press, closes on the next
-  one, and only on the search page — B is still the back key in password/network keyboards).
-- **An Android-like sleep: find and cut the 37–42 mA standby drain.** Measured on the unit with the gauge's
-  `charge_counter` (the awake line has recorded it since `a81a11f`): `battery 99% -> 96% (164 mAh in 3.9 h, 42 mA)` and
-  `96% -> 94% (105 mAh in 2.8 h, 37 mA)` in `deep` — about **140 mW**, where an Android-class standby is 5–20 mW. The
-  spurious wakes (3–5 a night, the SD host's IRQ, no key or cable) cost well under 1 mAh together, so this is a steady
-  state, not wake churn; the 99→75 in the field notes was the 2026-11-02 hang (100→74 in 15 h).
-  - **Done — test 1, the sound server (measured win).** The overnight sleep with `sleep.d/20-sound` (stop
-    PipeWire/WirePlumber in `pre`, restart in the background in `post`) held **25–29 mA**, against the 37–42 mA
-    baseline: 3.3 h at 29 mA, 8.0 h at **26 mA** (206 mAh), 2.0 h at 27 mA. The AudioReach graph pinned by
-    `session.suspend-timeout-seconds = 0` was keeping the ADSP awake. `make sound-test` after the wake: all 14 checks
-    pass (DSP graph RUNNING, amp at 81 %), so the chain comes back on its own.
-  - **Done — test 2, the USB gadget (no win).** `sleep.d/30-usb` unbinds the gadget for the sleep (`usb-gadget down`
-    in `pre`, back in the background in `post`; verified on the unit: `a600000.usb` -> empty -> rebound). Six sleeps
-    measured against test 1's 25–29 mA: the two clean half-hour windows held **26 mA** (11 and 12 mAh), a 2.2 h window
-    **29 mA** with two spurious wakes in it, and the short ones 32–36 mA (too brief to read). A bound UDC is **not**
-    what keeps the controller or its PHY clocks alive -- the hook earns nothing and is a candidate to drop.
-  - **Queued, one variable per sleep:** (3) a `s2idle` sleep for comparison, to know what `deep` is worth. If none
-    moves it, the floor is the platform's S2R depth (firmware) and the remaining wins are on the wake side.
-    (Unbinding `ath10k_snoc`/WPSS was tried and rejected: 69 mA over 0.4 h, no win.)
-  - **Wake side:** 57–60 ms from the kernel's resume to a drawn menu; the kernel's own resume is ~1.05 s; Wi-Fi coming
-    back is the slow part (the post hook reconnects in the background). Measure it, then consider keeping the link
-    associated across suspend (`sleep.d/10-wifi` currently always downs it) — "works instantly" is mostly this.
-  - The meter (`battery_charge_uah`, the awake line) is in the image (0.5.8+); the `30-usb` hook ships in it too
-    (0.5.10), so the unit's bind-mounted copy went away with the update. The unit runs **0.5.12, slot b**
-    (updated 2026-11-08).
-
-- **BananaTube: what is left of the YouTube work.** A1 (idle frames), A2 (cards, keyboard, thumbnail bound), B1 (player
-  OSD + Y quality) and the Pocket shell all shipped in 0.5.9. Left: **captions** (Track B3 -- yt-dlp's subtitle path
-  into mpv's `--sub-file`, no new dependency) and the three unscheduled Ideas below -- a **Subscriptions** tab from the
-  channels' saved `browseId`s (no account), an **offline shelf** (a yt-dlp download queue with progress and a local mpv
-  path) and a **play-next queue** in the player OSD. Designs/plans: `docs/superpowers/specs/2026-11-04-bananatube-*`
-  and `docs/superpowers/plans/2026-11-04-bananatube-*`.
-- **Languages: Spanish and German, Settings screen first.** The pipeline is in: the English string is the key,
-  `tr()` in `ui/src/i18n.cpp` falls back to English, catalogs are JSON in `/usr/share/banana/lang/<code>.json` with a
-  `/data/banana/lang/` override on the card (like a theme), and Settings > Display & sound gains a **Language** row
-  (English / Español / Deutsch) that switches at once. The whole main Settings list is translated — group names, row
-  names, help strip, values, buttons, the toasts whose text is catalogued — 130 strings per language, informal
-  (tú/du). `tools/check-lang.py` runs in `make test` (stale or misspelled keys fail, coverage is printed) and the
-  headless menu test loads the German catalog. Next: the Settings sub-pages, the menu chrome, system/app names,
-  date/time formats, then another language or two.
+- **Hybrid hibernation (built, unit-verified 2026-11-09; ships in the next image).** `suspend_mode` in
+  `banana/bananad.conf` (Settings > Sleep & power, default `freeze`): `freeze` is the existing SIGSTOP/SIGCONT path,
+  untouched; `savestate` sends `SAVE_STATE`, verifies the state file (50 ms polls, 1500 ms, steady size), stages a copy
+  as `.state.auto`, persists the ROM atomically, closes the game and suspends. On a wake the menu relaunches at once
+  (no cancel window: a wake is not a boot) and run-retroarch forces `savestate_auto_load` for that ROM, so the state
+  loads while the content starts -- no `LOAD_STATE` command and no wait for the core. `hybrid` falls back to freezing
+  if the save fails. Host tests: 83/83 in `system/bananad/tests/sleep-test.sh` plus the UI wake marker. **Unit run
+  (2026-11-09):** the full cycle works and is same-second on wake (`awake 00:47:33`, staged state loaded and confirmed
+  in the same second, game running via auto-load). Findings folded in: states live in a per-core folder
+  (`sort_savestates_enable`), discovered not assumed; the menu clears the resume marker at a game exit unless
+  `/run/banana/hibernating` says the exit was a hibernation; a `LOAD_STATE` in the first frames after the core starts
+  is dropped, which the staged auto state avoids entirely. Still open: a few more cycles for confidence, the 3%
+  battery trigger (same `suspend_now()` path, not yet exercised), and whether the menu flash before the relaunch is
+  worth hiding (the panel could stay closed from the hibernation close until the game starts).
 
 ## Ideas (unscheduled)
 Not commitments: sketches to weigh against the list above. Each one builds on something the image already has.
