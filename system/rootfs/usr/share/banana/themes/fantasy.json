@@ -31,8 +31,8 @@
     "dreamcast": "fantasy/dc.png",
     "psx": "fantasy/psx.png",
     "n64": "fantasy/n64.png",
-    "c64": "fantasy/banana.png",
-    "zxspectrum": "fantasy/banana.png",
+    "c64": "fantasy/c64.png",
+    "zxspectrum": "fantasy/zxspectrum.png",
     "gc": "fantasy/gc.png",
     "gamecube": "fantasy/gc.png",
     "wii": "fantasy/wii.png",
@@ -48,7 +48,9 @@
     "neogeo": "fantasy/banana.png",
     "neogeocd": "fantasy/disc.png",
     "3do": "fantasy/disc.png",
-    "cdi": "fantasy/disc.png"
+    "cdi": "fantasy/disc.png",
+    "ports": "fantasy/ports.png",
+    "bananatube": "fantasy/bananatube.png"
   },
 
   "vars": {
