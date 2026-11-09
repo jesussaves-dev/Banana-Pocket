@@ -16,7 +16,7 @@ These names are the only phase numbers used from here on; older headings below k
 | **1A** | DRM probe: plane enumeration and the TEST_ONLY matrix on the target (this work) | a reviewed target report |
 | **1B** | `banana-ui` atomic KMS (prerequisite; independent of the compositor) | the 1A report, then its own hardware smoke test |
 | **2** | real-client DMA-BUF import and modifier compatibility (RetroArch/SDL2 buffers) | **measured**: compressed rejected; linear imports/scans; rotation EGL |
-| **3** | compositor implementation (3A plane assignment and lease spike, 3B overlay/toasts, 3C input) | 2 measured; GO (EGL rotate); the Phase 3 acceptance list |
+| **3** | compositor implementation: 3A atomic primary/overlay in `banana-ui` (done), 3B Wayland + one client, 3C EGL rotate, 3D UI overlay, 3E input/lifecycle, 3F performance | 2 measured; GO (EGL rotate); each milestone's own hardware gate |
 | **4** | Buildroot cleanup, ports/BananaTube integration and the merge gate | the full acceptance list |
 
 A 1A GO authorises **1B and Phase 2 (client-buffer validation)**, not the compositor. TEST_ONLY results never prove real-client buffer
@@ -463,15 +463,52 @@ before rebooting. The live variant is `--live` (bounded; the menu is stopped and
 3. Live frame pacing across a longer run; the Phase 2 live window was one flip, enough to prove scanout, not pacing.
 4. The same matrix on a second boot/driver state (the card index and feedback are auto-detected).
 
-## Phase 3 — The compositor: leases out, a single-client Wayland compositor in (was Phase 2)
+## Phase 3 — The compositor: one process, one display owner
 
 **Goal:** `banana-ui` keeps DRM master while a game runs and owns the plane assignment.
 
-### 3.1 Prove the lease answer (a day, not a phase)
+**Milestones (approved):** 3A architecture and DRM ownership · 3B minimal Wayland + one client · 3C EGL rotation and
+linear scanout · 3D Banana UI overlay integration · 3E input forwarding and lifecycle recovery · 3F performance and
+regression. The lease idea below 3.2 is dropped: a lease would take the CRTC from the master, so the menu overlay
+could not be shown. Phase 2 made the question moot (the game path already needs an EGL rotate pass), and 3A keeps DRM
+master in `banana-ui` throughout.
 
-Run `drm-plane-probe --lease-test` in an exclusive window (see 1.4). Expected, and the basis for option A being
-rejected: the master can no longer touch the leased CRTC, so a menu overlay cannot be shown; the lessee can. Record
-the exact `errno`s in the probe output.
+### 3.1 Phase 3A — atomic primary/overlay, implemented and measured (2026-11-09)
+
+Scope: extend `Display` (in `ui/src/kms.{h,cpp}`) with atomic KMS and the overlay plane, add the `Compositor`
+ownership seam (`ui/src/compositor.h`), keep every other path (menu, input, sound, sleep, cage launch) unchanged.
+
+- **Ownership.** `banana-ui` owns the card and master. `Display::openSingle()` sets `DRM_CLIENT_CAP_UNIVERSAL_PLANES`
+  and `DRM_CLIENT_CAP_ATOMIC`, then finds the planes at runtime (`findPlanes`): the first `DRM_PLANE_TYPE_PRIMARY`
+  whose `possible_crtcs` bit matches the connector's CRTC, and the first `DRM_PLANE_TYPE_OVERLAY`. No plane id is
+  hard-coded; on this unit the discovery logs `primary=38 overlay=44`.
+- **Initial modeset.** One atomic request (`atomicModeset`) sets the connector `CRTC_ID`, the CRTC `MODE_ID` +
+  `ACTIVE`, the primary on the black `XR24` buffer (`zpos` 0) and the overlay on the menu `AR24` buffer (`zpos` top,
+  `alpha` 0xffff, `pixel blend mode` premultiplied). It is tried `TEST_ONLY | ALLOW_MODESET` first; a rejection falls
+  back to the legacy single-primary path (QEMU's virtio, a driver without an overlay).
+- **Frames.** One atomic commit per changed frame puts both planes up with `PAGE_FLIP_EVENT`; the event (polled on the
+  DRM fd) clears the one in-flight flag, so a buffer is only reused after its flip completed. No second commit is
+  queued (`pending` > 0 makes `present()` return false, as before).
+- **Buffers.** Dumb buffers, so linear (`XR24` black primary; `AR24` menu overlay), two menu buffers as today. The
+  hidden buffer accumulates the damage it missed exactly as the legacy path did; the first frame after the modeset is
+  a full redraw by the soft renderer.
+- **Coordinates.** The menu canvas is logical `W×H` = 1240×1080; the panel mode and both scanout buffers are
+  `SW×SH` = 1080×1240. `rot` is 90 on the RPC (connector `panel orientation`, overridable with `banana.rotate=`), and
+  `turnRect()` maps canvas `(x, y)` to panel `(x, H-1-y)` (the canvas top row becomes the panel's right column). The
+  same 90 degrees applies to a future game client's 1240×1080 frame in the EGL presenter; the Wayland output will be
+  the logical 1240×1080, transform normal, because that is the size the tested clients rendered.
+- **Gamma.** `applyGamma()` is unchanged and still runs after the modeset and on every `setWarmth()`; night light
+  covers both planes.
+- **Limitations (3A).** No Wayland server, no EGL, no rotation of a client frame, no input forwarding: games still
+  run under `cage` with the display closed (the measured fallback), and `run-retroarch` is unchanged. The overlay is
+  opaque and full-panel today, so alpha blending is configured (premultiplied, alpha 0xffff) but not yet exercised by
+  a transparent UI layer; that lands with the 3D toast layer. Nothing compressed is ever advertised or imported.
+- **Measured on the unit** (Retroid Pocket Classic, `msm 1.13.0`): `kms: panel 1240x1080 (mode 1080x1240,
+  rotation 90), atomic=1 primary=38 overlay=44`; `debugfs dri/1/state` shows `plane[38]` `XR24` 1080×1240
+  `normalized-zpos=0` and `plane[44]` `AR24` 1080×1240 `normalized-zpos=1`, both owned by `banana-ui`; the menu
+  dump is unchanged; `SIGTERM` restarts the menu into the atomic path; a cage game launch hands the primary to
+  `cage` and the menu returns with `panel back after the game (0 tries)`; one power-button suspend/wake reopened the
+  display atomically (a new `kms: panel ... atomic=1` line, planes restored).
 
 ### 3.2 Scope of the compositor (D1)
 

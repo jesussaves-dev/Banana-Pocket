@@ -15,6 +15,7 @@
 #include "../rnds/RndsUI.h"
 #include "input.h"
 #include "kms.h"
+#include "compositor.h"
 #include "library.h"
 #include "soft.h"
 #include "splash.h"
@@ -1222,7 +1223,10 @@ int main(int argc, char** argv)
 	sound.setBgm(settings["bgm"] != "off");		// the ambient loop, if the card or the image has one
 	if (settings["splash"] != "off" && settings["sounds"] != "off") sound.warm();
 
-	Display disp;
+	// Phase 3A: the compositor owns the display (atomic KMS when available); the main loop stays here and is
+	// the persistent loop the Wayland dispatch joins in 3B.
+	Compositor comp;
+	Display& disp = comp.display();
 	std::string err;
 	// the panel's driver may still be probing when init starts us
 	for (int tries = 0; !disp.openSingle(o.top, err); tries++)
