@@ -74,6 +74,7 @@ REPORT=
 BACKUP=
 WROTE_SUM=
 STANDIN_PID=
+STANDIN_PIDFILE=/tmp/banana-drm-probe-standin.pid
 TPID=
 PROBE_PIDFILE=/tmp/banana-drm-probe.pid
 RESTORED=0
@@ -125,9 +126,15 @@ restore() {
 	# 1. unmount first: while the bind is in place, init would respawn the stand-in again
 	if [ "$BOUND" = 1 ]; then
 		umount "$TARGET" 2>/dev/null || umount -l "$TARGET" 2>/dev/null
-		# 2. stop the stand-in (recorded pid, then the unique path in case it changed)
-		if [ -n "$STANDIN_PID" ]; then kill -TERM "$STANDIN_PID" 2>/dev/null; fi
-		for p in $(pgrep -f "$STANDIN" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
+		# 2. stop the stand-in. Its argv is the bind target (/usr/bin/banana-ui-session), not the stand-in
+		# path, so the pid it publishes is the only reliable handle. If an older run died before writing it,
+		# fall back to the target path (nothing else runs it while the menu is stopped).
+		if [ -n "$STANDIN_PID" ]; then
+			kill -TERM "$STANDIN_PID" 2>/dev/null
+		else
+			for p in $(pgrep -f "$TARGET" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
+		fi
+		rm -f "$STANDIN_PIDFILE"
 	fi
 	# 3. bananad.conf: restore only if the file is still exactly what this script wrote; otherwise remove just
 	#    this script's block, so a change made by someone else during the window is never overwritten
@@ -222,13 +229,16 @@ WROTE_SUM=$(sha256sum "$CONF" | cut -d' ' -f1)
 for p in $(pidof bananad 2>/dev/null); do kill -HUP "$p" 2>/dev/null; done
 sleep 0.5
 
-# 2. the stand-in: a unique path, no exec (so its cmdline keeps the path and pgrep can find it)
-cat > "$STANDIN" <<'EOF'
+# 2. the stand-in: init execs the bind target, so its argv is /usr/bin/banana-ui-session, not this file; it
+# publishes its own pid before looping. A unique path keeps it apart from anything else on the card.
+cat > "$STANDIN" <<EOF
 #!/bin/sh
 # drm-probe-window: hold the launcher's respawn slot while the probe owns DRM
+echo \$\$ > "$STANDIN_PIDFILE"
 while :; do sleep 3600; done
 EOF
 chmod +x "$STANDIN" || fail "cannot make $STANDIN"
+rm -f "$STANDIN_PIDFILE"
 
 mount --bind "$STANDIN" "$TARGET" || fail "bind mount failed; the menu was not stopped"
 BOUND=1
@@ -242,12 +252,9 @@ MENU_STOPPED=1
 pidof banana-ui >/dev/null 2>&1 && fail "the menu did not stop; nothing was tested"
 
 i=0
-while [ $i -lt 25 ] && [ -z "$STANDIN_PID" ]; do
-	STANDIN_PID=$(pgrep -f "$STANDIN" 2>/dev/null | head -n 1)
-	[ -n "$STANDIN_PID" ] || sleep 0.2
-	i=$((i+1))
-done
-[ -n "$STANDIN_PID" ] || fail "init did not start the stand-in; aborting"
+while [ $i -lt 50 ] && [ ! -s "$STANDIN_PIDFILE" ]; do sleep 0.1; i=$((i+1)); done
+[ -s "$STANDIN_PIDFILE" ] && STANDIN_PID=$(cat "$STANDIN_PIDFILE" 2>/dev/null)
+[ -n "$STANDIN_PID" ] && kill -0 "$STANDIN_PID" 2>/dev/null || fail "init did not start the stand-in; aborting"
 say "exclusive window: stand-in pid $STANDIN_PID, menu stopped"
 
 # 4. the matrix
