@@ -68,11 +68,12 @@ static struct {
 	double dim_min;			/* idle minutes in the menu before the panel dims (0: never) */
 	int dim_pct;			/* dimmed to this percent of their brightness */
 	int vibrate_ms;			/* the plug-in pulse length; the motor's drive is already the driver's maximum */
+	int wake_audio_fast;		/* the sound server stays up through a sleep: sound at once on a wake, more standby */
 	char sleep_skip[64];		/* debug: comma list of suspend steps to skip (stop, ui, mute, hooks, sync) */
 	int autosleep_set;		/* autosleep_minutes was written down somewhere: it is asked for, not defaulted */
 	int hud;			/* the bridge: text inside a game, and the unplug pause */
 	char lang[8];			/* the bridge's language, from settings.conf (the menu's own choice) */
-} cfg = { "auto", 5, 8, 10, 2000, 3, "deep", 4, 5, 15, 2, 30, 600, "", 0, 1, "en" };
+} cfg = { "auto", 5, 8, 10, 2000, 3, "deep", 4, 5, 15, 2, 30, 600, 0, "", 0, 1, "en" };
 
 /* a suspend step named in sleep_skip: only ever set by hand (banana/bananad.conf), to bisect a sleep that comes straight
  * back on the handheld without rebuilding bananad */
@@ -150,6 +151,7 @@ static void load_conf(const char *path, int asked)
 		else if (!strcmp(k, "dim_minutes")) cfg.dim_min = atof(v);
 		else if (!strcmp(k, "dim_percent")) cfg.dim_pct = atoi(v);
 		else if (!strcmp(k, "vibrate_ms")) cfg.vibrate_ms = atoi(v);
+		else if (!strcmp(k, "wake_audio_fast")) cfg.wake_audio_fast = !strcmp(v, "on") || !strcmp(v, "1");
 		else if (!strcmp(k, "sleep_skip")) snprintf(cfg.sleep_skip, sizeof cfg.sleep_skip, "%s", v);
 		else if (!strcmp(k, "hud")) cfg.hud = strcmp(v, "off") && strcmp(v, "0") ? 1 : 0;
 		else if (!strcmp(k, "lang")) snprintf(cfg.lang, sizeof cfg.lang, "%s", v);
@@ -792,11 +794,11 @@ static void suspend_now(const char *why)
 	double t_back = mono();
 	undim();
 	hooks("post", 1);
-	if (pg > 0) {
+	if (pg > 0 && !cfg.wake_audio_fast) {
 		/* the game's stream died with the server when it was stopped for the sleep: the driver has to be restarted
 		 * (AUDIO_REINIT, the same command the jack uses), or the game runs on without sound for good */
 		sound_wait(3.0);
-		if (ra_cmd("AUDIO_REINIT")) sleep_log("audio: the game's driver was reinitialised after the wake");
+		if (ra_cmd("AUDIO_REINIT")) sleep_log("audio: the game's driver was reinitialised after the wake (fast %d)", cfg.wake_audio_fast);
 		else sleep_log("audio: could not reinitialise the game's driver after the wake");
 	}
 	/* the press that woke us comes in now: it is not a new request */

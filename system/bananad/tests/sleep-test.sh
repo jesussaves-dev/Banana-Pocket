@@ -110,6 +110,7 @@ wake() { ev $EV_KEY $KEY_POWER 1; head -c 3 /sys/power/state > /dev/null
 rtc_wake() { head -c 3 /sys/power/state > /dev/null; sleep 0.4; }
 gstate() { awk '{print $3}' /proc/$GAME/stat; }
 start() {   # start [bananad.conf lines]
+    pkill -x bananad 2>/dev/null || true; sleep 0.2         # one daemon at a time (a leftover would read the same keys)
     echo "s2idle [deep]" > /sys/power/mem_sleep     # the kernel's file always lists both
     printf '%s\n' "autosleep_minutes = 0" "sleep_check_hours = 0" "$@" > /data/banana/bananad.conf
     "$W/bananad" & BD=$!
@@ -151,6 +152,17 @@ pre=$(grep -E '^(wifi|sound-server|usb-gadget) down$' /run/test/hook-calls 2>/de
 grep -qx 'wifi up' /run/test/hook-calls 2>/dev/null && ok "the post hook brought Wi-Fi back" || bad "no wifi up"
 grep -qx 'sound-server up' /run/test/hook-calls 2>/dev/null && ok "the post hook brought the sound server back" || bad "no sound-server up"
 grep -qx 'usb-gadget' /run/test/hook-calls 2>/dev/null && ok "the post hook bound the USB gadget again" || bad "no usb-gadget re-bind"
+stop
+
+echo "1j. wake_audio_fast keeps the sound server up through the sleep"
+rm -f /run/test/hook-calls
+start "wake_audio_fast = on"
+: > /run/test/ra-cmds
+power
+asleep && ok "suspended with the server kept" || bad "no suspend with the server kept"
+grep -qx 'sound-server down' /run/test/hook-calls 2>/dev/null && bad "the sound server was stopped" || ok "the sound server was not stopped"
+wake; sleep 0.4
+grep -qx AUDIO_REINIT /run/test/ra-cmds 2>/dev/null && bad "the game's audio was reinitialised anyway: $(grep -a 'audio:' /data/banana/logs/sleep.log | tail -n 2 | tr '\n' '|')" || ok "no reinit: the server (and the game's stream) never went away"
 stop
 
 echo "2. the battery guard: an RTC wake with the battery nearly empty shuts down cleanly"

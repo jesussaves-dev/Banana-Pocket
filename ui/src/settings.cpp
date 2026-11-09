@@ -316,6 +316,7 @@ namespace banana
 			{ "Never", "5 minutes", "10 minutes", "15 minutes", "30 minutes" }, { "0", "5", "10", "15", "30" });
 		add(P, "moon", "Dim when idle", "In the menu, the panel goes down to a third after this long with no button pressed, and back at the first press. Never while a game is running.", power, "dim_minutes",
 			{ "Never", "1 minute", "2 minutes", "5 minutes" }, { "0", "1", "2", "5" });
+		add(P, "music", "Fast wake audio", "Keep the sound server running through a sleep: a game has sound the instant it wakes, at about 12 mA more while asleep. Off stops the server for the sleep; the game's audio comes back a second or two after a wake.", power, "wake_audio_fast", { "On", "Off" }, { "on", "off" });
 		const char* O = "RetroArch";
 		add(O, "gamepad", "RetroAchievements", "Softcore: achievements unlock with save states, rewind and cheats still there. Hardcore: those are locked for the game, and the unlocks count as hardcore on retroachievements.org. RetroArch's own menu changes the same setting.",
 			"/data/retroarch/retroarch.cfg", "cheevos_hardcore_mode_enable", { "Softcore", "Hardcore" }, { "false", "true" });
@@ -748,7 +749,7 @@ namespace banana
 			// what the settings screen keeps outside settings.conf: bananad's sleep rows (same defaults the rows
 			// show when the card has no line), the backlights and the mixer's level
 			static const struct { const char* key; const char* def; } BANANAD[] = {
-				{ "autosleep_minutes", "10" }, { "dim_minutes", "2" } };
+				{ "autosleep_minutes", "10" }, { "dim_minutes", "2" }, { "wake_audio_fast", "off" } };
 			for (const auto& b : BANANAD)
 				setConfValue(data + "/bananad.conf", b.key, getConfValue("/etc/banana/bananad.conf", b.key, b.def));
 			if (DIR* d = opendir("/sys/class/backlight"))

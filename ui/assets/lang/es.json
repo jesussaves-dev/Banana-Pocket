@@ -79,6 +79,8 @@
   "Sleep when idle": "Suspender al estar inactivo",
   "In the menu, after this long with no button pressed. Never while a game is running.": "En el menú, tras este tiempo sin pulsar nada. Nunca mientras corre un juego.",
   "Dim when idle": "Atenuar al estar inactivo",
+  "Fast wake audio": "Audio rápido al despertar",
+  "Keep the sound server running through a sleep: a game has sound the instant it wakes, at about 12 mA more while asleep. Off stops the server for the sleep; the game's audio comes back a second or two after a wake.": "Mantiene el servidor de sonido encendido durante el reposo: el juego suena en cuanto se despierta, con unos 12 mA más mientras duerme. Desactivado, el servidor se apaga y el audio del juego vuelve uno o dos segundos después de despertar.",
   "In the menu, the panel goes down to a third after this long with no button pressed, and back at the first press. Never while a game is running.": "En el menú, la pantalla baja a un tercio tras este tiempo sin pulsar nada, y vuelve con la primera pulsación. Nunca mientras corre un juego.",
   "RetroAchievements": "RetroAchievements",
   "Softcore: achievements unlock with save states, rewind and cheats still there. Hardcore: those are locked for the game, and the unlocks count as hardcore on retroachievements.org. RetroArch's own menu changes the same setting.": "Softcore: los logros se desbloquean con estados guardados, rebobinado y trucos todavía disponibles. Hardcore: eso queda bloqueado para el juego y los logros cuentan como hardcore en retroachievements.org. El menú propio de RetroArch cambia el mismo ajuste.",

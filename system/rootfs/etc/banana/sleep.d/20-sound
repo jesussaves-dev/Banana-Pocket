@@ -5,6 +5,11 @@
 # nothing is playing into it; on the way out the server comes back in the background, the menu is up first and its
 # sound thread retries its opens every 250 ms until the sink is there.
 [ -x /usr/libexec/banana/sound-server ] || exit 0
+# wake_audio_fast (Settings > Sleep & power): the server stays up through the sleep, so a game has sound at once on a
+# wake. It costs the ADSP graph's keep-alive (37-42 mA asleep instead of 26), which is the reason this hook exists.
+fast=$(sed -n 's/^ *wake_audio_fast *= *//p' /data/banana/bananad.conf 2>/dev/null | tail -n 1)
+[ -n "$fast" ] || fast=$(sed -n 's/^ *wake_audio_fast *= *//p' /etc/banana/bananad.conf 2>/dev/null | tail -n 1)
+[ "$fast" = on ] && exit 0
 case $1 in
 pre)
     /usr/libexec/banana/sound-server down
