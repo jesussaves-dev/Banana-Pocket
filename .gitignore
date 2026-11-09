@@ -43,3 +43,4 @@ __pycache__/
 # Phase 2 dmabuf test harness: generated protocol code and binaries
 /tools/dmabuf-capture/build/
 /ui/build/
+/tools/egl-buffer-client/build/

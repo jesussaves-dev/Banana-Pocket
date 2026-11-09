@@ -16,7 +16,7 @@ These names are the only phase numbers used from here on; older headings below k
 | **1A** | DRM probe: plane enumeration and the TEST_ONLY matrix on the target (this work) | a reviewed target report |
 | **1B** | `banana-ui` atomic KMS (prerequisite; independent of the compositor) | the 1A report, then its own hardware smoke test |
 | **2** | real-client DMA-BUF import and modifier compatibility (RetroArch/SDL2 buffers) | **measured**: compressed rejected; linear imports/scans; rotation EGL |
-| **3** | compositor implementation: 3A atomic primary/overlay in `banana-ui` (done), 3B Wayland + one client (done, unrotated), 3C EGL rotate, 3D UI overlay, 3E input/lifecycle, 3F performance | 2 measured; GO (EGL rotate); each milestone's own hardware gate |
+| **3** | compositor implementation: 3A atomic primary/overlay in `banana-ui` (done), 3B Wayland + one client (done, unrotated), 3C EGL rotation (BLOCKED: see 3.3), 3D UI overlay, 3E input/lifecycle, 3F performance | 2 measured; GO (EGL rotate); each milestone's own hardware gate |
 | **4** | Buildroot cleanup, ports/BananaTube integration and the merge gate | the full acceptance list |
 
 A 1A GO authorises **1B and Phase 2 (client-buffer validation)**, not the compositor. TEST_ONLY results never prove real-client buffer
@@ -547,7 +547,29 @@ launch path; this server is reached only by a client that connects to `/run/bana
 - **Not in 3B:** correct orientation (3C), quick menu/toasts over a game (3D), real input/focus (3E), frame pacing
   (3F). No launcher, session or bananad change: production still uses cage.
 
-### 3.3 Scope of the compositor (D1)
+### 3.3 Phase 3C — EGL rotation: BLOCKED (2026-11-09)
+
+**Status: stopped, not completed and not accepted.** The full report and raw traces are in
+[`docs/reports/phase3c-blocked-2026-11-09.txt`](reports/phase3c-blocked-2026-11-09.txt). The implementation lives on
+`feat/3c-egl-rotate-blocked`; the accepted 3B state (`4050e99`) on `feat/drm-plane-compositor` is unchanged.
+
+- Built: three 1080x1240 XR24 LINEAR GBM scanout slots, source-buffer EGLImage cache, a 90-degree clockwise quad
+  (`ui/src/rotate.h`, tested against `turn.h`), `glFinish`, an opt-in one-shot readback, a `Presenter` interface with
+  the 3B direct fallback, and a fsync'd diagnostic trace.
+- Verified on the unit: EGL/GBM allocation (XR24, LINEAR, stride 4352, one plane) and two complete paths through
+  import → rotated draw → `glFinish` → atomic commit → primary scanout.
+- Failure: the SoC hangs inside the rotated draw of a **reused client source buffer**, after "draw begin" and before
+  "glFinish done". With the SDL client the hang was on frame 3; with the six-buffer D1 client it moved to frame 8.
+  Frames 3-7 reused scanout slots 56/57 without a fault, so the three-slot pool is not the trigger.
+- Fault capture (D3): pstore has no persistent backend, MSM devcoredump is disabled and would not survive a hard
+  hang; no kernel change is proposed. The remaining uncertainty is producer→consumer synchronization on reused
+  DMA-BUFs versus EGLImage/import-reuse behavior (possibly a Mesa/msm fault); `glFinish` cannot distinguish them.
+- Explicit fences are a **future investigation only**, not implemented. No sleeps, delays or client-side flushes
+  were used as workarounds.
+- The EGL presenter is disabled by default: it starts only when `/run/banana/3c-egl` exists (tmpfs, absent after
+  boot); otherwise the accepted 3B direct presenter runs and logs that rotation is off. Production remains cage/3B.
+
+### 3.4 Scope of the compositor (D1)
 
 `banana-ui` creates `/run/banana/wayland/wayland-0` itself (the same path cage used, so the launchers only lose the
 `cage --` prefix and `SEATD_VTBOUND`). Objects, in order of need:
@@ -572,7 +594,7 @@ launch path; this server is reached only by a client that connects to `/run/bana
   dropped, since it is already running) and bananad's wake path is updated in the same change.
 - The RetroArch patch stays: the in-process OSD is the fallback when the compositor path is off.
 
-### 3.4 Fallback rules
+### 3.5 Fallback rules
 
 - Probe shows no usable overlay plane, or no plane rotation and an EGL rotate > 1 ms/frame: **stop**, keep cage, ship
   Phase 1B only.

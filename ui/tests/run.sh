@@ -22,6 +22,10 @@ ${CXX:-c++} -O2 -std=c++17 -Wno-unused-function -o "$OUT/turn-test" "$HERE/tests
 ${CXX:-c++} -O2 -std=c++17 $(pkg-config --cflags libdrm 2>/dev/null) -o "$OUT/dmabuf-test" "$HERE/tests/dmabuf-test.cpp" 2> "$OUT/dmabuf-build.log" ||
     { echo "FAIL: can't build dmabuf-test (see $OUT/dmabuf-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/dmabuf-test" > "$OUT/dmabuf.log" 2>&1 || { echo "FAIL: dmabuf-test"; cat "$OUT/dmabuf.log"; fail=1; }
+# the Phase 3C rotation map must be turn.h's 90-degree turn, and the quad's UVs must interpolate to it
+${CXX:-c++} -O2 -std=c++17 -o "$OUT/rotation-test" "$HERE/tests/rotation-test.cpp" 2> "$OUT/rotation-build.log" ||
+    { echo "FAIL: can't build rotation-test (see $OUT/rotation-build.log)"; fail=1; }
+[ "$fail" = 1 ] || "$OUT/rotation-test" > "$OUT/rotation.log" 2>&1 || { echo "FAIL: rotation-test"; cat "$OUT/rotation.log"; fail=1; }
 # A golden theme test: the key screens compared to committed baselines, so a change that moves or drops an element
 # fails here instead of only being seen on the handheld. The comparison is at 32x24 grey -- a layout change is a big
 # difference (an added block scores ~0.06), while a freetype version's rasterization stays under 0.02 -- and

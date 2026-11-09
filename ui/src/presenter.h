@@ -1,0 +1,55 @@
+#pragma once
+// Presentation strategies for one client frame. DirectPresenter is the Phase 3B path (the client's framebuffer on
+// the primary, unrotated); EglPresenter is Phase 3C (one EGL rotate pass into a linear scanout pool). The compositor
+// owns exactly one and calls it only while the DRM fd and its EGL context are alive: render() and forget() are
+// never called after stop().
+#include <cstdint>
+#include <string>
+
+namespace banana
+{
+	struct ClientBuffer;
+
+	class Presenter
+	{
+	public:
+		virtual ~Presenter() = default;
+		virtual const char* name() const = 0;
+		virtual bool rotated() const = 0;	// true when the output is panel-oriented (a real 3C rotation)
+		virtual bool start(std::string& err) = 0;
+		virtual void stop() = 0;
+		// Draw the client frame into a scanout framebuffer. On true, the GPU has finished reading the source (the
+		// implementation calls glFinish or the direct path has no GPU read); the caller commits fb and then calls
+		// presented() or abandon(). The source buffer is still referenced by the caller.
+		virtual bool render(ClientBuffer& b, uint32_t& fb, std::string& err) = 0;
+		virtual void presented() = 0;	// the commit succeeded: the rendered FB is on the plane
+		virtual void abandon() = 0;	// the commit failed: return the rendered slot, drop the frame
+		virtual void flipDone() = 0;	// the page-flip event for the current FB completed
+		virtual void detached() = 0;	// the menu took the primary back: the current FB is no longer scanned
+		virtual void forget(ClientBuffer& b) = 0;	// the buffer is about to be freed: release its GPU/DRM objects
+		// Called once at the start of Compositor::stop(): scanoutCleared says the primary no longer scans any
+		// presenter-owned framebuffer, so freeing DRM framebuffers is safe now.
+		virtual void quiesce(bool scanoutCleared) { (void)scanoutCleared; }
+	};
+
+	class DirectPresenter : public Presenter
+	{
+	public:
+		explicit DirectPresenter(class Display& d) : d(d) {}
+		const char* name() const override { return "direct (unrotated)"; }
+		bool rotated() const override { return false; }
+		bool start(std::string& err) override;
+		void stop() override {}
+		bool render(ClientBuffer& b, uint32_t& fb, std::string& err) override;
+		void presented() override {}
+		void abandon() override {}
+		void flipDone() override {}
+		void detached() override {}
+		void forget(ClientBuffer& b) override;
+		void quiesce(bool scanoutCleared) override { allowRmfb = scanoutCleared; }
+
+	private:
+		Display& d;
+		bool allowRmfb = true;	// false only if stop could not clear the plane (the DRM close then releases the FB)
+	};
+}

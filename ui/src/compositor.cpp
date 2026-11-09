@@ -7,13 +7,19 @@
 // LINEAR), kept alive by the compositor while it is on screen, and released with wl_buffer.release after the page
 // flip event. A disconnect puts the menu back.
 #include "compositor.h"
+#include "client_buffer.h"
 #include "dmabuf.h"
+#include "egl_presenter.h"
+#include "presenter.h"
+#include "trace.h"
 #include <cerrno>
 #include <cstdarg>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <memory>
+#include <poll.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -49,15 +55,7 @@ namespace banana
 
 	struct Compositor::Impl
 	{
-		struct Buffer
-		{
-			Impl* im = nullptr;
-			wl_resource* res = nullptr;
-			int fd = -1;
-			uint32_t off = 0, stride = 0, format = 0, w = 0, h = 0, fb = 0;
-			uint64_t modifier = 0;
-			int refs = 0;	// 1 for the wl_buffer resource, +1 for each frame slot that holds it
-		};
+		using Buffer = ClientBuffer;	// wl_buffer resource + import parameters + per-presenter caches
 		struct Surface
 		{
 			Impl* im = nullptr;
@@ -93,6 +91,7 @@ namespace banana
 		bool saidShm = false;
 		bool saidSecondary = false;
 		unsigned frames = 0;
+		std::unique_ptr<Presenter> presenter;	// EGL rotate (3C) or the direct 3B fallback
 		dev_t dev = 0;
 		char devName[128] = "";
 
@@ -104,7 +103,9 @@ namespace banana
 
 		void bufferFree(Buffer* b)
 		{
-			if (b->fb && d->drmFd() >= 0) drmModeRmFB(d->drmFd(), b->fb);
+			// the presenter owns the imported/EGL objects; it is still alive here (clients are destroyed before
+			// presenter->stop()), so the context and DRM fd are valid
+			if (presenter) presenter->forget(*b);
 			if (b->fd >= 0) close(b->fd);
 			delete b;
 		}
@@ -120,31 +121,6 @@ namespace banana
 			Buffer* b = pending;
 			pending = nullptr;
 			bufferRelease(b);
-		}
-		bool import(Buffer* b)
-		{
-			int fd = d->drmFd();
-			if (fd < 0 || b->fd < 0) return false;
-			uint32_t handle = 0;
-			if (drmPrimeFDToHandle(fd, b->fd, &handle))
-			{
-				logf("import: drmPrimeFDToHandle failed (%s)", strerror(errno));
-				return false;
-			}
-			uint32_t handles[4] = { handle }, pitches[4] = { b->stride }, offsets[4] = { b->off };
-			uint64_t mods[4] = { b->modifier };
-			int ret = drmModeAddFB2WithModifiers(fd, b->w, b->h, b->format, handles, pitches, offsets, mods, &b->fb, DRM_MODE_FB_MODIFIERS);
-			drmCloseBufferHandle(fd, handle);
-			if (ret)
-			{
-				b->fb = 0;
-				logf("import: AddFB2 %ux%u fmt=%.4s mod=0x%016llx failed (%s)", b->w, b->h,
-				     (const char*)&b->format, (unsigned long long)b->modifier, strerror(errno));
-				return false;
-			}
-			close(b->fd);
-			b->fd = -1;
-			return true;
 		}
 		void putPendingCb(wl_resource* cb)
 		{
@@ -166,9 +142,23 @@ namespace banana
 		{
 			if (!pending || d->flipPending()) return;
 			Buffer* b = pending;
-			if (!b->fb && !import(b)) { dropPending(); return; }
-			if (!d->presentGame(b->fb, b->w, b->h))
+			uint32_t fb = 0;
+			std::string err;
+			if (frames < 3) tracef("frame: render begin %ux%u", b->w, b->h);
+			if (!presenter || !presenter->render(*b, fb, err))
 			{
+				logf("render: %s", err.empty() ? "no presenter" : err.c_str());
+				if (presenter) presenter->abandon();
+				dropPending();
+				return;
+			}
+			// the EGL path produces the panel-sized scanout buffer (1:1); the direct fallback passes the client size
+			uint32_t pw = presenter->rotated() ? (uint32_t)d->panelWidth() : b->w;
+			uint32_t ph = presenter->rotated() ? (uint32_t)d->panelHeight() : b->h;
+			if (frames < 3) { logf("commit: fb=%u src=%ux%u", fb, pw, ph); tracef("frame: commit fb=%u %ux%u", fb, pw, ph); }
+			if (!d->presentGame(fb, pw, ph))
+			{
+				presenter->abandon();
 				if (!d->flipPending())
 				{
 					logf("presenting a client frame failed; dropped it");
@@ -176,16 +166,27 @@ namespace banana
 				}
 				return;
 			}
+			presenter->presented();
+			if (frames < 3) tracef("frame: presented fb=%u", fb);
 			pending = nullptr;
 			inflight = b;
 			hidMenu = true;
-			if (onScreen != b)
+			if (!presenter->rotated())
 			{
-				if (onScreen) bufferDrop(onScreen);	// the new commit replaced it on the plane
-				b->refs++;
-				onScreen = b;
+				// the direct path scans the client's own framebuffer: keep it referenced until the next commit
+				if (onScreen != b)
+				{
+					if (onScreen) bufferDrop(onScreen);
+					b->refs++;
+					onScreen = b;
+				}
 			}
-			if (frames++ < 3 || frames % 60 == 0) logf("present %ux%u fb=%u (frame %u)", b->w, b->h, b->fb, frames);
+			else if (onScreen)
+			{
+				bufferDrop(onScreen);	// EGL: the source is not the scanout, the flip reference above is enough
+				onScreen = nullptr;
+			}
+			if (frames++ < 3 || frames % 60 == 0) logf("present %ux%u fb=%u (frame %u)", b->w, b->h, fb, frames);
 			if (pendingCb)
 			{
 				wl_resource* cb = pendingCb;
@@ -205,6 +206,7 @@ namespace banana
 				bufferRelease(b);
 				fireCb(inflightCb, inflightCbGone);
 			}
+			if (presenter && !d->flipPending()) presenter->flipDone();
 			if (restoreMenu && !inflight && !d->flipPending())
 			{
 				restoreMenu = false;
@@ -228,11 +230,13 @@ namespace banana
 			if (d->showMenu())
 			{
 				hidMenu = false;
+				if (presenter) presenter->detached();
 				if (onScreen) { bufferDrop(onScreen); onScreen = nullptr; }
 			}
 		}
 		void clientDisconnected()
 		{
+			tracef("client disconnected");
 			client = nullptr;
 			if (pendCb) { pendCb = nullptr; }		// their resource destroy handlers unlink the listeners
 			if (pendingCb) { pendingCb = nullptr; }
@@ -257,7 +261,7 @@ namespace banana
 			auto* b = (Impl::Buffer*)wl_resource_get_user_data(res);
 			if (!b) return;
 			b->res = nullptr;
-			b->im->bufferDrop(b);
+			((Impl*)b->im)->bufferDrop(b);
 		}
 		void bufferDestroy(wl_client*, wl_resource* res) { wl_resource_destroy(res); }
 		const struct wl_buffer_interface bufferImpl = { .destroy = bufferDestroy };
@@ -614,7 +618,7 @@ namespace banana
 		void paramsResourceGone(wl_resource* res)
 		{
 			auto* b = (Impl::Buffer*)wl_resource_get_user_data(res);
-			if (b && !b->res) b->im->bufferFree(b);	// a created buffer is owned by its wl_buffer resource
+			if (b && !b->res) ((Impl*)b->im)->bufferFree(b);	// a created buffer is owned by its wl_buffer resource
 		}
 		void paramsDestroy(wl_client*, wl_resource* res) { wl_resource_destroy(res); }
 		void paramsAdd(wl_client*, wl_resource* res, int32_t fd, uint32_t plane, uint32_t off, uint32_t stride, uint32_t hi, uint32_t lo)
@@ -630,7 +634,14 @@ namespace banana
 		}
 		bool paramsValidate(wl_resource* res, Impl::Buffer* b, int32_t w, int32_t h, uint32_t format)
 		{
-			if (w <= 0 || h <= 0 || !banana::dmabufSupported(format, b->modifier, b->fd >= 0 ? 1 : 0))
+			if (w != kClientFormatW || h != kClientFormatH)
+			{
+				logf("rejecting %dx%d: the output and the 3C rotation are %dx%d", w, h, kClientFormatW, kClientFormatH);
+				wl_resource_post_error(res, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_INVALID_DIMENSIONS,
+				                       "only 1240x1080 is supported");
+				return false;
+			}
+			if (!banana::dmabufSupported(format, b->modifier, b->fd >= 0 ? 1 : 0))
 			{
 				logf("rejecting a buffer: %dx%d fmt=%u mod=0x%016llx planes=%d", w, h, format,
 				     (unsigned long long)b->modifier, b->fd >= 0 ? 1 : 0);
@@ -709,6 +720,7 @@ namespace banana
 			im->client = c;
 			wl_client_add_destroy_listener(c, &im->clientGone);
 			logf("client connected");
+			tracef("client connected");
 		}
 		void onClientGone(wl_listener* l, void*)
 		{
@@ -762,21 +774,81 @@ namespace banana
 		wl_global_create(im->wl, &zwp_linux_dmabuf_v1_interface, 4, im, dmabufBind);
 		wl_global_create(im->wl, &wl_drm_interface, 2, im, drmBind);
 		wl_display_init_shm(im->wl);
+
+		// Presentation strategy. 3C is only claimed when the EGL presenter starts; otherwise the 3B direct path
+		// keeps the client working and says loudly that the output is not rotated. The EGL path is opt-in while it
+		// is being validated on the unit (an unexplained hang was seen with the first 3C client): create
+		// /run/banana/3c-egl before the menu starts to enable it.
+		bool eglWanted = access("/run/banana/3c-egl", F_OK) == 0;
+		traceInit(eglWanted ? "/data/banana/logs/3c-trace" : nullptr);
+		if (eglWanted) tracef("start: EGL gate on");
+		if (!eglWanted) logf("EGL rotation disabled (no /run/banana/3c-egl); direct presenter");
+		{
+			auto egl = std::make_unique<EglPresenter>(d);
+			std::string perr;
+			if (eglWanted && egl->start(perr)) im->presenter = std::move(egl);
+			else
+			{
+				if (eglWanted) logf("EGL rotation unavailable (%s)", perr.c_str());
+				logf("direct (unrotated) present");
+				auto direct = std::make_unique<DirectPresenter>(d);
+				std::string derr;
+				if (!direct->start(derr))
+				{
+					err = derr;
+					wl_display_destroy(im->wl);
+					delete im;
+					return false;
+				}
+				logf("direct presenter active: the game frame is NOT rotated");
+				im->presenter = std::move(direct);
+			}
+		}
 		impl = im;
-		logf("wayland-0 at %s/%s (xdg-shell 1, linux-dmabuf 4 linear, wl_drm; primary %s)", kWaylandDir, kSocket, im->devName);
+		logf("wayland-0 at %s/%s (xdg-shell 1, linux-dmabuf 4 linear, wl_drm; primary %s; presenter %s)",
+		     kWaylandDir, kSocket, im->devName, im->presenter->name());
 		return true;
 	}
 
+	// Teardown contract (Phase 3C):
+	//   1. no new frames; give an in-flight flip a bounded chance to complete, then put the display's own black
+	//      buffer on the primary (and the overlay off) so no presenter-owned framebuffer is being scanned;
+	//   2. drop the compositor's frame references (clients still own their wl_buffer resources);
+	//   3. destroy the clients: client handlers, then resource callbacks, then bufferFree() -> presenter->forget()
+	//      with the EGL context and the DRM fd still alive;
+	//   4. stop the presenter: EGL images/textures/slots; framebuffers are only RmFB'd when step 1 said the plane
+	//      was cleared (never while it can still scan one);
+	//   5. destroy the Wayland display, unlink the socket, free the impl.
+	// Every caller (runGame, SIGUSR1, ~Compositor) closes the Display immediately after this, so the DRM file close
+	// releases any framebuffer ids left to it. No other code keeps a pool framebuffer id.
 	void Compositor::stop()
 	{
 		if (!impl) return;
 		Impl* im = impl;
 		im->stopping = true;
+		tracef("stop: begin");
+		bool cleared = false;
+		if (d.isOpen() && im->presenter)
+		{
+			for (int i = 0; i < 8 && d.flipPending(); i++)
+			{
+				pollfd p = { d.pollFd(), POLLIN, 0 };
+				if (poll(&p, 1, 20) > 0) d.handleEvents();
+			}
+			if (!d.flipPending()) cleared = d.blank();
+			tracef("stop: blank=%d", cleared);
+			if (cleared) logf("stop: the primary no longer scans a presenter framebuffer");
+			else logf("stop: the primary could not be cleared; the display close releases the scanout");
+			im->presenter->quiesce(cleared);
+		}
 		if (im->pending) { im->bufferDrop(im->pending); im->pending = nullptr; }
 		if (im->inflight) { im->bufferDrop(im->inflight); im->inflight = nullptr; }
 		if (im->onScreen) { im->bufferDrop(im->onScreen); im->onScreen = nullptr; }
 		im->pendingCb = im->inflightCb = im->pendCb = nullptr;
 		wl_display_destroy_clients(im->wl);
+		tracef("stop: clients destroyed");
+		if (im->presenter) { im->presenter->stop(); im->presenter.reset(); }
+		tracef("stop: presenter stopped");
 		wl_display_destroy(im->wl);
 		unlink((std::string(kWaylandDir) + "/" + kSocket).c_str());
 		delete im;
@@ -806,5 +878,10 @@ namespace banana
 	bool Compositor::gameActive() const
 	{
 		return impl && (impl->pending || impl->inflight);
+	}
+
+	bool Compositor::eglActive() const
+	{
+		return impl && impl->presenter && impl->presenter->rotated();
 	}
 }

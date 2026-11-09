@@ -63,6 +63,9 @@ namespace banana
 		bool atomic() const { return count > 0 && p[0].atomic; }
 		bool presentGame(uint32_t fb, uint32_t w, uint32_t h);
 		bool showMenu();
+		// black primary, overlay off: used before the compositor is torn down so the plane stops scanning a
+		// presenter-owned framebuffer before the DRM fd is closed
+		bool blank();
 
 	private:
 		struct Buf { uint32_t handle = 0, fb = 0, pitch = 0; uint64_t size = 0; uint8_t* map = nullptr; };

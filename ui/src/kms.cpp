@@ -544,6 +544,11 @@ namespace banana
 		return commitFrame(p[0], p[0].black.fb, SW, SH, p[0].buf[p[0].front].fb);
 	}
 
+	bool Display::blank()
+	{
+		return commitFrame(p[0], p[0].black.fb, SW, SH, 0);
+	}
+
 	void Display::handleEvents()
 	{
 		if (fd < 0) return;

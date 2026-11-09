@@ -2015,6 +2015,11 @@ int main(int argc, char** argv)
 			else
 				input.read(p.fd, handle);
 		}
+		if (comp.eglActive())
+		{
+			static double lastEglBeat = 0;
+			if (now - lastEglBeat >= 5000) { lastEglBeat = now; logf("compositor: EGL alive"); }
+		}
 		// the client went away (or its last frame completed): give the panel back to the menu with a full redraw
 		bool gameNow = comp.gameActive();
 		if (gameWas && !gameNow) { be.invalidate(); dirty = true; drawn = false; }

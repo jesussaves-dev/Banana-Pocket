@@ -1,0 +1,147 @@
+Phase 3C — EGL rotation: BLOCKED
+================================
+Date:    2026-11-09
+Branch:  feat/3c-egl-rotate-blocked (the accepted Phase 3B base is 4050e99 on
+         feat/drm-plane-compositor and is unchanged)
+Device:  Retroid Pocket Classic, msm 1.13.0, 1080x1240 DSI-1, Mesa 26.2.6,
+         GLES 3.2 FD613, kernel as shipped for the image
+Status:  NOT COMPLETED, NOT ACCEPTED. 3C is stopped; the EGL presenter is
+         disabled by default and is not the production path.
+
+What was built (preserved on this branch)
+-----------------------------------------
+- EglPresenter: three 1080x1240 XR24 LINEAR GBM scanout slots, each with a
+  DRM framebuffer and an EGLImage-backed FBO; EGLImage source cache per client
+  wl_buffer; 90-degree clockwise quad; glFinish before the atomic commit; an
+  opt-in one-shot FBO readback (BANANA_3C_DUMP), off by default.
+- Presenter interface + DirectPresenter (the accepted 3B path) as the fallback.
+- rotate.h and ui/tests/rotation-test.cpp: the quad UVs and the source map are
+  checked against turn.h's rot==90 turn (host test passes).
+- trace.h/.cpp: fsync'd milestone trace used only with the EGL gate.
+- Display::blank(): black primary + overlay off, used before presenter teardown.
+- EGL gate: the presenter starts only if /run/banana/3c-egl exists (tmpfs, gone
+  after boot). Without it, the compositor runs the 3B DirectPresenter and logs
+  that rotation is off.
+- tools/egl-buffer-client: the D1 six-buffer diagnostic client (test only).
+
+Allocation verified on the unit
+-------------------------------
+egl: OpenGL ES 3.2 Mesa 26.2.6 / FD613
+egl: extensions: dma_buf_import=1 modifiers=1 fence_sync=1 native_fence=1
+     surfaceless=1 OES_EGL_image=1
+egl: slot: 1080x1240 XR24 LINEAR stride=4352 offset=0 fb=52
+egl: slot: 1080x1240 XR24 LINEAR stride=4352 offset=0 fb=57
+egl: slot: 1080x1240 XR24 LINEAR stride=4352 offset=0 fb=58
+(pool framebuffer ids differ per boot; the stride/format/modifier do not.)
+
+Test 1 — SDL2 GLES client (short client buffer cycle)
+-----------------------------------------------------
+fsync'd trace captured before the hard hang:
+
+  client connected
+  frame: render begin 1240x1080
+  source: image ok 1240x1080
+  frame 1: draw begin slot fb=56
+  frame 1: glFinish done
+  frame: commit fb=56 1080x1240
+  frame: presented fb=56
+  frame: render begin 1240x1080
+  source: image ok 1240x1080
+  frame 2: draw begin slot fb=57
+  frame 2: glFinish done
+  frame: commit fb=57 1080x1240
+  frame: presented fb=57
+  frame: render begin 1240x1080
+  source: image ok 1240x1080
+  frame 3: draw begin slot fb=56        <-- SoC hung here
+
+Test 2 (D1) — six explicit source buffers
+------------------------------------------
+The D1 client allocates six independent LINEAR XR24 1240x1080 buffers, renders
+an asymmetric pattern, and reuses a buffer only after wl_buffer.release. The
+source cycle is six; the compositor's scanout-slot cycle is still three.
+Raw /data/banana/logs/3c-trace from the run (verbatim):
+
+start: EGL gate on
+slot: fb=56 stride=4352
+slot: fb=57 stride=4352
+slot: fb=58 stride=4352
+client connected
+frame: render begin 1240x1080
+source: image ok 1240x1080
+frame 1: draw begin slot fb=56
+frame 1: glFinish done
+frame: commit fb=56 1080x1240
+frame: presented fb=56
+frame: render begin 1240x1080
+source: image ok 1240x1080
+frame 2: draw begin slot fb=57
+frame 2: glFinish done
+frame: commit fb=57 1080x1240
+frame: presented fb=57
+frame: render begin 1240x1080
+source: image ok 1240x1080
+frame 3: draw begin slot fb=56
+frame 3: glFinish done
+frame: commit fb=56 1080x1240
+frame: presented fb=56
+source: image ok 1240x1080
+frame 4: draw begin slot fb=57
+frame 4: glFinish done
+source: image ok 1240x1080
+frame 5: draw begin slot fb=56
+frame 5: glFinish done
+frame 6: draw begin slot fb=57
+frame 6: glFinish done
+frame 7: draw begin slot fb=56
+frame 7: glFinish done
+frame 8: draw begin slot fb=57
+
+Evidence
+--------
+- Scanout-slot reuse is exonerated. Frames 3, 5 and 7 reuse slot fb=56 and
+  frames 4 and 6 reuse fb=57; every one reached "glFinish done" and the run
+  continued to frame 8. The three-buffer pool is not the trigger.
+- The failure follows client source-buffer reuse. With SDL's shorter source
+  cycle the hang was on frame 3; with six D1 source buffers it moved to frame 8.
+- Exact hang location: after "draw begin" and before "glFinish done" of frame 8,
+  i.e. inside the rotated draw sampling a reused client buffer (the source
+  EGLImage had already been reported "image ok").
+- D3 (fault capture): CONFIG_PSTORE / PSTORE_CONSOLE / PSTORE_COMPRESS are set,
+  but there is no persistent backend (/sys/fs/pstore is empty, no ramoops in the
+  kernel command line). /sys/class/devcoredump is globally disabled
+  ("disabled"), and a hard SoC hang would not leave a readable dump. No kernel
+  change is proposed.
+- Every hang required a hard power reset; the durable userspace trace is the
+  only evidence.
+
+Remaining uncertainty
+---------------------
+The evidence is consistent with two causes that this work did not separate:
+  1. missing/insufficient producer-to-consumer synchronization on a reused
+     client DMA-BUF (the implicit dma-buf fences not ordering the client's new
+     writes before the compositor's GPU read), or
+  2. an EGLImage/import-reuse behavior in this Mesa/msm combination (the cached
+     imported image is reused after the client rewrites the buffer), including
+     a possible freedreno/msm fault.
+glFinish() proves the compositor's own GL work completed; it does not prove the
+client's writes were complete, so it cannot distinguish these.
+
+Future investigation (NOT implemented, needs approval)
+------------------------------------------------------
+- Explicit producer fence handling before sampling a reused client buffer
+  (for example EGL_ANDROID_native_fence_sync, or exporting the dma-buf's sync
+  file and waiting) is the natural next mechanism. It is deliberately not
+  implemented in 3C.
+- A fresh EGLImage per commit would test the stale-image hypothesis; also not
+  attempted.
+- No client-side flush, sleep or delay workaround was added.
+
+Device state after the stop
+---------------------------
+- The reboot removed the dev shim; the handheld runs the shipped image binary
+  (/usr/bin/banana-ui, sha256 a906ccb4cf15efc5804069c20b65eb52d1c83591c174a977e66857bc69152abc).
+- The 3C dev binary is in /data/banana-ui but is not running; the EGL gate
+  (/run/banana/3c-egl) is absent, so it would run the direct 3B presenter if
+  started. No production launcher points at it.
+- No further EGL hardware runs were made after D1.

@@ -32,6 +32,7 @@ namespace banana
 		void vblank();			// a page flip completed: release the scanned buffer, fire its callback
 		void frame();			// present the latest committed client frame when no flip is in flight
 		bool gameActive() const;	// a client frame is pending or on screen (the menu must not present)
+		bool eglActive() const;		// the EGL rotate presenter is running (3C validation)
 
 		struct Impl;			// the server state, defined in compositor.cpp
 
