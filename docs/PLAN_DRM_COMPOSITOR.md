@@ -1,6 +1,8 @@
 # Plan: a native DRM/KMS plane compositor (replacing `cage`)
 
 Status: draft for `feat/drm-plane-compositor`. No compositor code, defconfig or launcher is changed by this plan.
+**Phase 1A is measured on the Retroid Pocket Classic (2026-11-09): GO (EGL rotate)** — overlay + full-panel overlay +
+stacking + scaling pass; primary rotate-90 is rejected with linear buffers. Phase 2 is authorised; Phase 3 is not.
 
 ## Milestones (authoritative)
 
@@ -296,24 +298,29 @@ The wrapper writes `/data/banana/logs/drm-probe-<board>-<UTC>.txt` containing, b
 | probe binary SHA-256 | the wrapper (`sha256sum`) |
 | the full six-row matrix and the verdict | the probe |
 
-Copy the report off the card before any reboot, then fill in the review table:
+Copy the report off the card before any reboot, then fill in the review table.
 
-| field | value |
+**Measured on the target: 2026-11-09, 20:10 UTC**, Retroid Pocket Classic, kernel 7.2.0, `msm 1.13.0`, `DSI-1`
+1080×1240 @ 60 Hz, `DSI-1` id 36, CRTC 50 (only CRTC), primary plane 38, overlay plane 44. Raw report:
+[`docs/reports/drm-probe-2026-11-09-retroid-pocket-classic.txt`](reports/drm-probe-2026-11-09-retroid-pocket-classic.txt).
+
+| field | measured |
 |---|---|
-| rows 2a/2b | ok / reject |
-| stacking | overlay above / not above / unknown |
-| rows 4a/4b | ok / reject / not advertised |
-| rows 3, 5a, 5b, 6 | ok / reject / skip |
-| exit code and verdict | |
-| reviewed by / date | |
+| rows 2a/2b (band + full-panel overlay, zpos/alpha/premultiplied) | **ok / ok** |
+| stacking (`zpos` mutable 0..255, primary 0, overlay 255) | **overlay above** |
+| rows 4a/4b (primary rotate-90, XR24 and AR24) | **reject `EINVAL` both** (rotation advertised: rotate-90) |
+| row 3 (overlay rotate-90) | reject `EINVAL` (informational) |
+| rows 5a/5b/6 (scale, letterbox, overlay scale) | **ok / ok / ok** |
+| matrix / exit / verdict | 6 ok, 3 rejected, 0 skipped; exit 0; **GO (EGL rotate)** |
+| formats | AR24/XR24 + others, LINEAR and COMPRESSED `0x0500000000000001`; `AddFB2WithModifiers(LINEAR)` accepted |
+| reviewed | 2026-11-09, from the captured report above |
 
-**Status of the measurements in this document: none.** The probe and wrapper are implemented; the probe has been
-compiled for the host and with the image's `aarch64` toolchain, its enumeration ran on host DRM devices only (no
-target values are quoted), and it is clean under AddressSanitizer/UndefinedBehaviorSanitizer. **The atomic matrix
-has not been run on the target.** No result is copied from a host run, and none is invented.
+The rotation rejection used **linear dumb buffers**. The plane lists a COMPRESSED (UBWC-family) modifier, and the DPU
+may only rotate compressed frames; Phase 2 must retest rotation with a real client buffer before assuming an EGL
+pass is permanent. Until then the report's verdict stands: budget one EGL rotate pass.
 
-**GO/NO-GO for Phase 2 right now: HOLD.** This is not a hardware NO-GO; the matrix is unmeasured. The GO is issued
-only from a reviewed target report.
+**GO/NO-GO: GO (EGL rotate).** Phase 2 (real-client DMA-BUF import) is authorised; Phase 3 is not. The decision
+table below still governs, and the 3 rejected rotation rows are the measured basis for this verdict.
 
 ### 1.8 Buffer synchronisation contract (documented now, implemented in Phase 3)
 
@@ -525,7 +532,7 @@ leaves the list), `docs/ROADMAP.md` (this plan becomes Done with the measured nu
 
 | Risk | Evidence it is real | Mitigation |
 |---|---|---|
-| msm planes cannot rotate 90° | The panel is portrait (1080×1240) while every client draws 1240×1080; cage does the turn today | Probe `rotation` on each plane; if absent, budget one EGL pass and the direct-plane saving is lost |
+| msm planes cannot rotate 90° | Measured 2026-11-09: rotate-90 is advertised but rejected (`EINVAL`) with linear dumb buffers, for XR24 and AR24; the panel is portrait while every client draws 1240×1080 | Budget one EGL pass (the measured verdict); Phase 2 must retest with a COMPRESSED/UBWC client buffer before treating this as permanent |
 | DMA-BUF import fails for Vulkan/GL clients | Turnip + Vulkan WSI allocate from the driver; modifiers must match | Probe formats/modifiers; test with RetroArch first (Vulkan and glcore), then SDL2 |
 | A single CRTC makes the overlay impossible | One DSI output; planes are tied to a CRTC | This is why leases are out; the compositor owns the one CRTC and composites everything |
 | Being resident changes sleep | The menu currently leaves the panel to the game; bananad's SIGHUP/SIGUSR1 logic assumes cage | Explicit task in Phase 3 (`compositor.pid`, resume re-commit), tested in 4.2 item 3 |
