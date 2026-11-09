@@ -14,11 +14,15 @@ and OTA updates over Wi-Fi are done (see *Done*). Next:
   sends `SAVE_STATE` down RetroArch's stdin, verifies the state file (50 ms polls, 1500 ms, steady size), persists the
   ROM atomically, closes the game, suspends, and on waking has the menu relaunch it (same 0.5 s cancel window) while
   `bananad` delivers `LOAD_STATE` once the new pipe accepts writes; `hybrid` falls back to freezing if the save fails.
-  `savestate_auto_load` is forced off for the relaunch so the two cannot both load. Host tests: 75/75 in
-  `system/bananad/tests/sleep-test.sh` and the UI wake marker in `ui/tests/run.sh`. **Hardware to check:** the exact
-  state filename RetroArch writes (derived from `savestate_directory`/`state_slot`, not hardcoded), a SAVE_STATE ->
-  LOAD_STATE round trip in a real game, deep-suspend after the game has closed, whether `savestate_auto_load` alone
-  would be enough (then the explicit LOAD_STATE could go), and the resume reliability over several cycles.
+  `savestate_auto_load` is forced off for the relaunch so the two cannot both load. Host tests: 81/81 in
+  `system/bananad/tests/sleep-test.sh` and the UI wake marker in `ui/tests/run.sh`. **Verified on the unit
+  (2026-11-09):** the whole cycle — power press -> SAVE_STATE (~0.3 s) -> game closed -> 126 s asleep -> wake ->
+  menu relaunch -> LOAD_STATE confirmed in RetroArch's log (430168-byte state). Two findings folded back in: states
+  live in a per-core folder (`sort_savestates_enable`, `/data/states/mGBA/...`), discovered rather than assumed; and
+  the first LOAD_STATE written in the first frames after `[Core] Geometry` is accepted and dropped, so bananad waits
+  for that log line and re-delivers once, 0.5 s later, if RetroArch has not logged `Loading state`. Still open:
+  whether `savestate_auto_load` alone would be enough (then the explicit LOAD_STATE could go) and a few more cycles
+  for confidence.
 
 - **Night light: backburner (2026-11-08).** The menu half ships: `night_light = off|warm|warmer`
   (Settings > Display & sound) writes a gamma LUT from `kms.cpp`, verified on the panel. **Games are not covered**:

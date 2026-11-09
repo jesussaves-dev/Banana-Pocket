@@ -92,19 +92,23 @@ EV_KEY=1 KEY_POWER=116
 # with SAVE_STATE is /run/test/ra-mode: ok (half the file, pause, the rest -- so the size changes and then settles),
 # none (never writes it). The state path is the one RetroArch would use (savestate_directory + content name + .state).
 mkdir -p /data/states /data/retroarch
-printf 'savestate_directory = "/data/states"\nstate_slot = "0"\n' > /data/retroarch/retroarch.cfg
+printf 'savestate_directory = "/data/states"\nstate_slot = "0"\nsort_savestates_enable = "false"\n' > /data/retroarch/retroarch.cfg
 rm -f /run/banana/retroarch.cmd; mkfifo /run/banana/retroarch.cmd
 : > /run/test/ra-mode; : > /run/test/ra-cmds
 (
     exec 4<>/run/banana/retroarch.cmd
     while IFS= read -r cmd <&4; do
         printf '%s\n' "$cmd" >> /run/test/ra-cmds
+        if [ "$cmd" = LOAD_STATE ]; then
+            printf '[State] Loading state "test", 1 bytes.\n' >> /data/banana/logs/retroarch.log
+        fi
         if [ "$cmd" = SAVE_STATE ]; then
             rom=$(cat /run/banana/game.path 2>/dev/null)
             if [ -n "$rom" ]; then
                 base=${rom##*/}; base=${base%.*}
                 case $(cat /run/test/ra-mode 2>/dev/null) in
                 ok) printf 'half' > "/data/states/$base.state"; sleep 0.2; printf ' rest' >> "/data/states/$base.state" ;;
+                ok-sorted) mkdir -p /data/states/mGBA; printf 'half' > "/data/states/mGBA/$base.state"; sleep 0.2; printf ' rest' >> "/data/states/mGBA/$base.state" ;;
                 esac
             fi
         fi
@@ -175,6 +179,7 @@ echo '/data/roms/gba/Test Game.zip' > /run/banana/game.path
 start "suspend_mode = savestate"
 power
 asleep && ok "suspended after a verified save" || bad "no suspend after the save"
+[ -f /run/banana/hibernating ] && ok "the game's exit is marked as a hibernation" || bad "no hibernating marker"
 grep -qx SAVE_STATE /run/test/ra-cmds && ok "SAVE_STATE went down the pipe before the close" || bad "no SAVE_STATE: $(tr '\n' ' ' < /run/test/ra-cmds)"
 grep -q 'hibernate: state saved to /data/states/Test Game.state, game closed' /data/banana/logs/sleep.log && ok "the finished state was verified" || bad "state not verified: $(tail -n1 /data/banana/logs/sleep.log)"
 grep -qx '/data/roms/gba/Test Game.zip' /data/banana/resume 2>/dev/null && ok "the ROM was persisted" || bad "no resume marker"
@@ -182,14 +187,21 @@ grep -qx '/data/roms/gba/Test Game.zip' /data/banana/resume 2>/dev/null && ok "t
 [ ! -e /run/banana/shutting-down ] && ok "hibernation is not a shutdown" || bad "shutting-down was created"
 wake
 for i in $(seq 20); do [ -f /run/banana/load-pending ] && break; sleep 0.1; done
+[ ! -e /run/banana/hibernating ] && ok "the hibernation marker is gone once the wake owns the resume" || bad "hibernating marker survived the wake"
 [ -f /run/banana/load-pending ] && ok "a pending state after the wake" || bad "no load-pending after the wake"
 [ -f /run/banana/resume-now ] && ok "the menu was asked to resume" || bad "no resume-now marker"
 [ ! -e /data/banana/resume-tries ] && ok "no resume try was counted for a wake" || bad "resume-tries was created"
+: > /data/banana/logs/retroarch.log	# run-retroarch rotates it at launch, before the new game has a pid
 setsid sleep 600 & HG2=$!; sleep 0.1
 echo $HG2 > /run/banana/game.pid
+sleep 0.5
+grep -qx LOAD_STATE /run/test/ra-cmds 2>/dev/null && bad "LOAD_STATE before the core was up" || ok "no state before RetroArch says the core is up"
+printf '[Core] Geometry: 240x160, Aspect: 1.500\n' >> /data/banana/logs/retroarch.log
 for i in $(seq 40); do grep -qx LOAD_STATE /run/test/ra-cmds 2>/dev/null && break; sleep 0.1; done
+sleep 0.4
 [ "$(grep -c '^LOAD_STATE$' /run/test/ra-cmds)" = 1 ] && ok "LOAD_STATE delivered once, after the launch" || bad "LOAD_STATE $(grep -c '^LOAD_STATE$' /run/test/ra-cmds) times"
 [ ! -e /run/banana/load-pending ] && ok "the pending state was consumed" || bad "load-pending was left behind"
+grep -q 'loaded the state (confirmed)' /data/banana/logs/sleep.log && ok "the load was confirmed in RetroArch's log" || bad "the load was not confirmed: $(tail -n1 /data/banana/logs/sleep.log)"
 kill $HG2 2>/dev/null; rm -f /run/banana/game.pid
 stop
 
@@ -206,7 +218,7 @@ sleep 2.2
 asleep 2>/dev/null && bad "it slept without a state" || ok "refused to sleep without a verified state"
 [ "$(awk '{print $3}' /proc/$SB/stat)" != T ] && ok "the game kept running" || bad "the game was stopped"
 [ ! -e /data/banana/resume ] && ok "no resume marker was written" || bad "a resume marker was left"
-grep -q 'no finished state at /data/states/Test Game.state within 1500 ms' /data/banana/logs/sleep.log && ok "the timeout was logged" || bad "timeout not logged: $(tail -n1 /data/banana/logs/sleep.log)"
+grep -q 'no finished state for Test Game under /data/states within 1500 ms' /data/banana/logs/sleep.log && ok "the timeout was logged" || bad "timeout not logged: $(grep -a hibernate /data/banana/logs/sleep.log | tail -n 3 | tr '\n' '|')"
 kill $SB 2>/dev/null; rm -f /run/banana/game.pid
 stop
 
@@ -250,6 +262,30 @@ grep -q 'started instead of' /data/banana/logs/sleep.log && ok "the mismatch was
 kill $B 2>/dev/null; rm -f /run/banana/game.pid
 stop
 
+echo "1h. a per-core state folder (sort_savestates_enable) is found without knowing the core's name"
+printf 'ok-sorted\n' > /run/test/ra-mode
+printf 'savestate_directory = "/data/states"\nstate_slot = "0"\nsort_savestates_enable = "true"\n' > /data/retroarch/retroarch.cfg
+: > /run/test/ra-cmds
+rm -f /data/banana/resume /run/banana/load-pending /run/banana/resume-now
+setsid sleep 600 & SS=$!; sleep 0.1
+echo $SS > /run/banana/game.pid
+echo '/data/roms/gba/Test Game.zip' > /run/banana/game.path
+start "suspend_mode = savestate"
+power
+asleep && ok "hibernated with a per-core state folder" || bad "no hibernation with the sorted folder"
+grep -q 'hibernate: state saved to /data/states/mGBA/Test Game.state, game closed' /data/banana/logs/sleep.log && ok "the state in the core's folder was found" || bad "sorted state not found: $(tail -n1 /data/banana/logs/sleep.log)"
+wake
+for i in $(seq 20); do [ -f /run/banana/load-pending ] && break; sleep 0.1; done
+: > /data/banana/logs/retroarch.log
+setsid sleep 600 & SS2=$!; sleep 0.1
+echo $SS2 > /run/banana/game.pid
+printf '[Core] Geometry: 240x160, Aspect: 1.500\n' >> /data/banana/logs/retroarch.log
+for i in $(seq 40); do grep -qx LOAD_STATE /run/test/ra-cmds 2>/dev/null && break; sleep 0.1; done
+grep -qx LOAD_STATE /run/test/ra-cmds && ok "the state was handed back from the sorted folder" || bad "no LOAD_STATE from the sorted folder"
+kill $SS2 2>/dev/null; rm -f /run/banana/game.pid
+stop
+printf 'savestate_directory = "/data/states"\nstate_slot = "0"\nsort_savestates_enable = "false"\n' > /data/retroarch/retroarch.cfg
+
 echo "1g. a failed suspend drops the hibernation markers (the state file stays)"
 printf 'ok\n' > /run/test/ra-mode
 : > /run/test/ra-cmds
@@ -263,6 +299,7 @@ power
 sleep 2.5
 [ ! -e /data/banana/resume ] && ok "the resume request was dropped" || bad "a resume marker survived a failed suspend"
 [ ! -e /run/banana/load-pending ] && [ ! -e /run/banana/resume-now ] && ok "no wake markers were left" || bad "wake markers left behind"
+[ ! -e /run/banana/hibernating ] && ok "the hibernation marker was dropped too" || bad "hibernating marker survived a failed suspend"
 [ -f '/data/states/Test Game.state' ] && ok "the state file stayed on the card" || bad "the state file was deleted"
 grep -q 'suspend failed, the resume request is dropped' /data/banana/logs/sleep.log && ok "the drop was logged" || bad "drop not logged"
 stop

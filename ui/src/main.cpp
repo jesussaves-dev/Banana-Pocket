@@ -1687,7 +1687,10 @@ int main(int argc, char** argv)
 		sound.warm();				// the game handed the DSP frontend back: have it open before the next press
 		// a game that ended because it was quit goes back to a menu the next boot should show too; one a shutdown
 		// stopped leaves the marker bananad wrote, for the next boot to resume
-		if (access("/run/banana/shutting-down", F_OK) != 0) resumeCancel(o.data);
+		// a game that quit on its own is not resumed; a hibernation closed it and owns the marker, and a shutdown
+		// leaves it for the next boot
+		if (access("/run/banana/shutting-down", F_OK) != 0 && access(runFile("hibernating").c_str(), F_OK) != 0)
+			resumeCancel(o.data);
 		guard.input(nowMs());			// the game's own time doesn't count as menu idle
 		dirty = true;
 		batteryDue = true;	// a step passed during the game shows now
