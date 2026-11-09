@@ -486,6 +486,20 @@ static bool pick_target(drmModeRes *res)
 
 // ---- reporting ----------------------------------------------------------------------------------------------------
 
+// the board's own identification, when the kernel exposes it (the RPC: "retroid,pocket-classic", "qcom,sm4450")
+static void print_compatible(void)
+{
+	FILE *f = fopen("/proc/device-tree/compatible", "rb");
+	if (!f) return;
+	char buf[512];
+	size_t n = fread(buf, 1, sizeof buf - 1, f);
+	fclose(f);
+	buf[n] = 0;
+	printf("compatible:");
+	for (size_t i = 0; i < n; i += strlen(buf + i) + 1) printf(" %s", buf + i);
+	printf("\n");
+}
+
 static void print_caps(void)
 {
 	struct { const char *name; uint64_t id; } caps[] = {
@@ -949,6 +963,7 @@ int main(int argc, char **argv)
 	if (ver) printf("driver  : %s %d.%d.%d (%s) \"%s\"\n", ver->name, ver->version_major, ver->version_minor,
 	                ver->version_patchlevel, ver->date, ver->desc ? ver->desc : "");
 	printf("card    : %s\n", opt_card);
+	print_compatible();
 	drmFreeVersion(ver);
 	print_caps();
 

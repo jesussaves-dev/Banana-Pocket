@@ -196,6 +196,7 @@ banana drm-plane-probe 2
 kernel  : <uname -s -r -m>
 driver  : <drm driver name and version>
 card    : /dev/dri/card0
+compatible: <soc>,<board> (from /proc/device-tree/compatible; absent off-device)
 caps    : dumb=<0|1> prime=<n> addfb2_modifiers=<0|1> async_flip=<0|1> timestamp_monotonic=<0|1>
 connectors
   <DSI-N> (id <n>) connected, encoder <n>, <n> mode(s)   <- target
@@ -267,7 +268,8 @@ The wrapper writes `/data/banana/logs/drm-probe-<board>-<UTC>.txt` containing, b
 | field | source |
 |---|---|
 | board | `/etc/banana/board` (written at build: `retroid-pocket-classic`) |
-| SoC, panel, connector, mode, plane capabilities | the probe |
+| SoC + board compatible strings | the probe, from `/proc/device-tree/compatible` (e.g. `qcom,sm4450`, `retroid,pocket-classic`) |
+| panel, connector, mode, plane capabilities | the probe |
 | kernel (release, machine) | `uname -a` |
 | DRM driver + version | the probe (`drmGetVersion`) |
 | UTC date/time | the wrapper |
