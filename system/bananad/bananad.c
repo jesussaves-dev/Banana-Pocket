@@ -68,12 +68,11 @@ static struct {
 	double dim_min;			/* idle minutes in the menu before the panel dims (0: never) */
 	int dim_pct;			/* dimmed to this percent of their brightness */
 	int vibrate_ms;			/* the plug-in pulse length; the motor's drive is already the driver's maximum */
-	char suspend_mode[16];		/* freeze (SIGSTOP/SIGCONT), savestate (save, close, reload) or hybrid */
 	char sleep_skip[64];		/* debug: comma list of suspend steps to skip (stop, ui, mute, hooks, sync) */
 	int autosleep_set;		/* autosleep_minutes was written down somewhere: it is asked for, not defaulted */
 	int hud;			/* the bridge: text inside a game, and the unplug pause */
 	char lang[8];			/* the bridge's language, from settings.conf (the menu's own choice) */
-} cfg = { "auto", 5, 8, 10, 2000, 3, "deep", 4, 5, 15, 2, 30, 600, "freeze", "", 0, 1, "en" };
+} cfg = { "auto", 5, 8, 10, 2000, 3, "deep", 4, 5, 15, 2, 30, 600, "", 0, 1, "en" };
 
 /* a suspend step named in sleep_skip: only ever set by hand (banana/bananad.conf), to bisect a sleep that comes straight
  * back on the handheld without rebuilding bananad */
@@ -86,9 +85,6 @@ static void jack_settle_begin(void);
 static void jack_settle_poll(void);
 static void jack_log(void);
 static int ra_cmd(const char *cmd);
-static int hibernate_game(pid_t game, const char *rom);
-static void sound_wait(double seconds);
-static int write_atomic(const char *path, const char *text);
 static void undim(void);
 static void find_panel_bl(void);
 static char panel_bl[64];	/* the panel's backlight name; banana-ui's idle dim owns it while it runs */
@@ -153,7 +149,6 @@ static void load_conf(const char *path, int asked)
 		else if (!strcmp(k, "dim_minutes")) cfg.dim_min = atof(v);
 		else if (!strcmp(k, "dim_percent")) cfg.dim_pct = atoi(v);
 		else if (!strcmp(k, "vibrate_ms")) cfg.vibrate_ms = atoi(v);
-		else if (!strcmp(k, "suspend_mode")) snprintf(cfg.suspend_mode, sizeof cfg.suspend_mode, "%s", v);
 		else if (!strcmp(k, "sleep_skip")) snprintf(cfg.sleep_skip, sizeof cfg.sleep_skip, "%s", v);
 		else if (!strcmp(k, "hud")) cfg.hud = strcmp(v, "off") && strcmp(v, "0") ? 1 : 0;
 		else if (!strcmp(k, "lang")) snprintf(cfg.lang, sizeof cfg.lang, "%s", v);
@@ -658,21 +653,6 @@ static void suspend_now(const char *why)
 	}
 	pid_t game = pid_of("/run/banana/game.pid");
 	pid_t pg = game ? getpgid(game) : 0;
-	/* Hibernation (suspend_mode): save the game, close it and come back through the menu. It runs before the freeze
-	 * and never replaces it: "hybrid" falls through to the freeze when anything fails, "savestate" aborts the sleep
-	 * instead (its promise is that the game is still here after the power press). */
-	int hib = !strcmp(cfg.suspend_mode, "savestate") ? 2 : !strcmp(cfg.suspend_mode, "hybrid") ? 1 : 0;
-	int hibernated = 0;
-	char hrom[PATH_MAX] = "";
-	if (game && hib) {
-		read_str("/run/banana/game.path", hrom, sizeof hrom);
-		hibernated = hibernate_game(game, hrom);
-		if (hibernated) { game = 0; pg = 0; }
-		else if (hib == 2) {
-			sleep_log("not sleeping (%s): hibernation failed (suspend_mode = savestate)", why);
-			return;
-		} else sleep_log("hibernate failed: freezing the game instead (suspend_mode = hybrid)");
-	}
 	if (pg > 0 && !skip("stop")) kill(-pg, SIGSTOP);	/* an emulator's dynarec mustn't run on while the clocks drop */
 	/* the menu's ambient loop, if any: stop it and have it release the DSP before the ADSP sleeps (SIGHUP). Wait for
 	 * the close it publishes to /run/banana/sound-state instead of guessing at a delay -- a PCM close still in flight
@@ -748,15 +728,6 @@ static void suspend_now(const char *why)
 			 * a frozen emulator behind a dark screen is worse. Nothing here is a wake, so the wake bookkeeping
 			 * below is skipped. */
 			if (pg > 0) kill(-pg, SIGCONT);
-			if (hibernated) {
-				/* no sleep means no relaunch: a marker left here would surprise-resume at the next boot */
-				unlink("/data/banana/resume");
-				unlink("/data/banana/resume-tries");
-				unlink("/run/banana/load-pending");
-				unlink("/run/banana/resume-now");
-				unlink("/run/banana/hibernating");
-				sleep_log("hibernate: suspend failed, the resume request is dropped (the state stays on the card)");
-			}
 			sleep_quiet_end();
 			backlights_power(0);
 			/* the pre hooks have run (10-wifi took Wi-Fi down): run the post ones too, or a failed suspend would
@@ -806,7 +777,7 @@ static void suspend_now(const char *why)
 	double t_wake = mono();
 	backlights_power(1);
 	sleep_quiet_end();
-	if (!hibernated && pg > 0) kill(-pg, SIGCONT);
+	if (pg > 0) kill(-pg, SIGCONT);
 	/* The compositor's output too: a panel its driver disabled on the way down can come back dark, with cage's
 	 * frames going nowhere, and only a modeset clears it. cage has no session manager to hear that the system
 	 * slept (Banana's seat is deliberately not VT-bound), so it re-modesets on SIGUSR1 -- the pid run-retroarch
@@ -820,14 +791,6 @@ static void suspend_now(const char *why)
 	double t_back = mono();
 	undim();
 	hooks("post", 1);
-	if (hibernated) {
-		/* the game was closed, not frozen: once the post hooks have started the sound server, and it answers on ALSA,
-		 * ask the menu to relaunch it (it launches at once: a wake is not a boot) */
-		sound_wait(3.0);
-		if (write_atomic("/run/banana/load-pending", hrom)) sleep_log("hibernate: could not write load-pending");
-		if (write_atomic("/run/banana/resume-now", "1")) sleep_log("hibernate: could not write resume-now");
-		unlink("/run/banana/hibernating");	/* from here the wake path owns the resume marker */
-	}
 	/* the press that woke us comes in now: it is not a new request */
 	drain_inputs();
 	power_update();
@@ -871,8 +834,7 @@ static void shutdown_now(const char *why)
 	if (game && rom[0]) {
 		FILE *f = fopen("/data/banana/resume", "w");
 		if (f) { fprintf(f, "%s\n", rom); fclose(f); }
-	} else if (access("/run/banana/load-pending", F_OK) != 0)
-		unlink("/data/banana/resume");	/* a hibernated game is waiting for its relaunch: its marker stays */
+	} else unlink("/data/banana/resume");
 	if (game) {
 		pid_t pg = getpgid(game);
 		kill(pg > 0 ? -pg : game, SIGTERM);	/* let the emulator write its saves */
@@ -884,8 +846,6 @@ static void shutdown_now(const char *why)
 }
 
 static double save_volume_at, save_backlight_at;	/* debounced: written a moment after the last key */
-static double load_at = -1, load_deadline;	/* hibernation: when to try LOAD_STATE; -1: nothing pending */
-static char load_rom[PATH_MAX];			/* the ROM it belongs to (never load another game's state) */
 static double volume_reassert_at;	/* once, after the sound server has opened the card (it sets its own level) */
 
 /* ---- sound: the card that plays ----------------------------------------------------------------------------------- */
@@ -1248,41 +1208,6 @@ static void sleep_quiet_end(void)
 		if (sleep_rx1[0]) cset(card_ar, "RX_RX1 Digital Volume", sleep_rx1);
 	}
 	sleep_rx0[0] = sleep_rx1[0] = 0;
-}
-
-/* The sound server comes back in the background after a sleep (sleep.d/20-sound). A game started before it is up
- * makes RetroArch fail to open ALSA once and run silent for the whole session (measured on the unit: "Failed to
- * initialize audio driver. Will continue without audio"), so the wake waits for the server's PCM before the menu is
- * allowed to relaunch. Bounded; without a server (the host test) there is nothing to wait for. */
-static void sound_wait(double seconds)
-{
-	/* the daemon has no session: the ALSA PipeWire plugin needs the server's runtime dir to find it (run-retroarch
-	 * and the menu set it in their own children; bananad is started by rcS) */
-	setenv("XDG_RUNTIME_DIR", "/run/banana/wayland", 1);
-	setenv("PIPEWIRE_RUNTIME_DIR", "/run/banana/wayland", 1);
-	double t = mono();
-	int seen = 0;
-	for (;;) {
-		/* open *and* set the format: opening the PCM succeeds as soon as the server answers, while the parameters
-		 * are what fails (EIO, "Host is down") until the sink and its DSP graph are up -- and what RetroArch then
-		 * fails on for good. 48 kHz S16 stereo, the menu's own shape. */
-		snd_pcm_t *pc = NULL;
-		if (snd_pcm_open(&pc, "default", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) == 0) {
-			int ok = snd_pcm_set_params(pc, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, 48000, 1, 15000) == 0;
-			snd_pcm_close(pc);
-			if (ok) { sleep_log("audio: the server answered after %.0f ms", (mono() - t) * 1000); return; }
-		}
-		/* the post hook starts the server in the background: give it a moment to appear before deciding there is
-		 * none (the host test) and not waiting at all */
-		if (!seen) {
-			FILE *p = popen("pidof pipewire 2>/dev/null", "r");
-			seen = p && fgetc(p) != EOF;
-			if (p) pclose(p);
-		}
-		if (!seen && mono() - t >= 1.5) return;
-		if (mono() - t >= seconds) { sleep_log("audio: the server is not back after %.0f ms; the game may start silent", (mono() - t) * 1000); return; }
-		sleep_us(100000);
-	}
 }
 
 /* The jack's answer, confirmed without blocking the loop. The WCD937x's MBHC answers before it has measured the socket:
@@ -2079,233 +2004,6 @@ static int ra_cmd(const char *cmd)
 	return ok;
 }
 
-/* Write a small file where a crash or a power cut must not leave half of it: a temporary beside it, fsynced, renamed,
- * then the directory fsynced too (the resume marker is what the next boot believes). */
-static int write_atomic(const char *path, const char *text)
-{
-	char tmp[PATH_MAX];
-	snprintf(tmp, sizeof tmp, "%s.tmp", path);
-	FILE *f = fopen(tmp, "w");
-	if (!f) return -1;
-	size_t n = strlen(text);
-	int ok = fwrite(text, 1, n, f) == n && fflush(f) == 0 && fsync(fileno(f)) == 0;
-	ok &= fclose(f) == 0;
-	if (!ok || rename(tmp, path) != 0) { unlink(tmp); return -1; }
-	char dir[PATH_MAX];
-	snprintf(dir, sizeof dir, "%s", path);
-	char *slash = strrchr(dir, '/');
-	if (slash) {
-		*slash = 0;
-		int d = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-		if (d >= 0) { fsync(d); close(d); }
-	}
-	return 0;
-}
-
-/* The directory, stem and slot RetroArch uses for this content: savestate_directory and state_slot from
- * /data/retroarch/retroarch.cfg (the image seeds them, the card's own wins), and the content's basename with its last
- * extension dropped. A card that moves its states or saves to a slot still gets its own file; the per-core folder some
- * cards sort into (sort_savestates_enable, the log's "[Override] Redirecting save state to .../mGBA/...") is found by
- * state_find, so the core's own name never has to be guessed here. */
-static int state_names(const char *rom, char *dir, size_t dn, char *name, size_t nn, int *slot)
-{
-	snprintf(dir, dn, "/data/states");
-	*slot = 0;
-	FILE *f = fopen("/data/retroarch/retroarch.cfg", "r");
-	if (f) {
-		char ln[512];
-		while (fgets(ln, sizeof ln, f)) {
-			char *eq = strchr(ln, '=');
-			if (!eq) continue;
-			*eq = 0;
-			char *k = ln, *v = eq + 1;
-			trim(k); trim(v);
-			size_t vl = strlen(v);
-			if (vl >= 2 && v[0] == '"' && v[vl - 1] == '"') { v[vl - 1] = 0; v++; }
-			if (!strcmp(k, "savestate_directory") && v[0]) snprintf(dir, dn, "%s", v);
-			else if (!strcmp(k, "state_slot")) *slot = atoi(v);
-		}
-		fclose(f);
-	}
-	const char *base = strrchr(rom, '/');
-	base = base ? base + 1 : rom;
-	snprintf(name, nn, "%s", base);
-	char *dot = strrchr(name, '.');
-	if (dot && dot != name) *dot = 0;
-	return name[0] ? 0 : -1;
-}
-
-/* The newest <stem>.state[slot] in the state directory or one of its per-core folders (RetroArch's
- * sort_savestates_enable). The file name is still the configured one; the folder is discovered, not assumed. */
-static int state_find(const char *dir, const char *name, int slot, char *out, size_t n)
-{
-	char suf[32];
-	if (slot > 0) snprintf(suf, sizeof suf, ".state%d", slot);
-	else snprintf(suf, sizeof suf, ".state");
-	char p[PATH_MAX];
-	int found = 0;
-	time_t best = 0;
-	struct stat st;
-	size_t dl = strlen(dir), nl = strlen(name), sl = strlen(suf);
-	if (dl + 1 + nl + sl + 1 > sizeof p) return 0;
-	char *w = p;
-	memcpy(w, dir, dl); w += dl; *w++ = '/';
-	memcpy(w, name, nl); w += nl;
-	memcpy(w, suf, sl + 1);
-	if (stat(p, &st) == 0 && S_ISREG(st.st_mode)) { best = st.st_mtime; snprintf(out, n, "%s", p); found = 1; }
-	DIR *d = opendir(dir);
-	if (d) {
-		struct dirent *e;
-		while ((e = readdir(d))) {
-			if (e->d_name[0] == '.') continue;
-			size_t el = strlen(e->d_name);
-			if (dl + 1 + el + 1 + nl + sl + 1 > sizeof p) continue;
-			w = p;
-			memcpy(w, dir, dl); w += dl; *w++ = '/';
-			memcpy(w, e->d_name, el); w += el; *w++ = '/';
-			memcpy(w, name, nl); w += nl;
-			memcpy(w, suf, sl + 1);
-			if (stat(p, &st) == 0 && S_ISREG(st.st_mode) && (!found || st.st_mtime >= best)) {
-				best = st.st_mtime;
-				snprintf(out, n, "%s", p);
-				found = 1;
-			}
-		}
-		closedir(d);
-	}
-	return found;
-}
-
-/* The save is done when the file is there, newer than the request, and its size stopped changing: RetroArch writes it
- * in place, so two polls 50 ms apart that agree mean the write has finished. 30 polls = the 1500 ms the design allows.
- * `out` keeps the candidate between polls and receives the finished path. */
-static int state_ready(const char *dir, const char *name, int slot, const struct timespec *since, char *out, size_t n)
-{
-	char cand[PATH_MAX];
-	off_t last = -1;
-	struct timespec t0 = *since;
-	for (int i = 0; i < 30; i++) {
-		if (state_find(dir, name, slot, cand, sizeof cand)) {
-			struct stat st;
-			if (stat(cand, &st) == 0 && st.st_size > 0
-					&& (st.st_mtim.tv_sec > t0.tv_sec
-					    || (st.st_mtim.tv_sec == t0.tv_sec && st.st_mtim.tv_nsec + 20000000L >= t0.tv_nsec))) {
-				if (last == st.st_size && out[0] && !strcmp(cand, out)) return 1;
-				last = st.st_size;
-				snprintf(out, n, "%s", cand);
-				sleep_us(50000);
-				continue;
-			}
-		}
-		last = -1;
-		sleep_us(50000);
-	}
-	return 0;
-}
-
-/* A byte copy beside the state, for the .state.auto slot (the wake loads it during content init). */
-static int copy_file(const char *from, const char *to)
-{
-	FILE *in = fopen(from, "rb");
-	if (!in) return -1;
-	FILE *out = fopen(to, "wb");
-	if (!out) { fclose(in); return -1; }
-	char buf[65536];
-	size_t n;
-	int ok = 1;
-	while ((n = fread(buf, 1, sizeof buf, in)) > 0)
-		if (fwrite(buf, 1, n, out) != n) { ok = 0; break; }
-	ok &= fflush(out) == 0 && fsync(fileno(out)) == 0;
-	ok &= fclose(out) == 0;
-	fclose(in);
-	if (!ok) { unlink(to); return -1; }
-	return 0;
-}
-
-/* RetroArch logs "[Core] Geometry:" once the content and core are up. Its stdin FIFO has a reader from the moment
- * run-retroarch creates it (the launcher's own fd 3), so a write succeeding does not mean a state can be loaded yet --
- * measured on the unit: a LOAD_STATE sent at that point is accepted and ignored. */
-static int log_has(const char *what)
-{
-	FILE *f = fopen("/data/banana/logs/retroarch.log", "r");
-	if (!f) return 0;
-	char ln[512];
-	int found = 0;
-	while (fgets(ln, sizeof ln, f)) if (strstr(ln, what)) { found = 1; break; }
-	fclose(f);
-	return found;
-}
-
-/* The game is gone when the menu unlinked its pid file, or when what is left is a zombie the menu has not reaped yet
- * (kill(pid, 0) still succeeds for a zombie, so the /proc state is what says it exited). */
-static int game_exited(pid_t game)
-{
-	if (access("/run/banana/game.pid", F_OK) != 0) return 1;
-	char p[64], b[512];
-	snprintf(p, sizeof p, "/proc/%d/stat", (int)game);
-	FILE *f = fopen(p, "r");
-	if (!f) return 1;
-	int gone = 0;
-	if (fgets(b, sizeof b, f)) {
-		char *rp = strrchr(b, ')');
-		if (rp && rp[1] == ' ' && (rp[2] == 'Z' || rp[2] == 'X')) gone = 1;
-	}
-	fclose(f);
-	return gone;
-}
-
-/* Hibernation: save the state, then close the game and leave the menu to relaunch it. 1 = closed and the resume marker
- * is written; 0 = the caller freezes (hybrid) or aborts the sleep (savestate). Every wait is bounded and every failure
- * leaves the game running exactly as it was. */
-static int hibernate_game(pid_t game, const char *rom)
-{
-	if (!rom[0]) { sleep_log("hibernate: no game path to resume"); return 0; }
-	char dir[PATH_MAX], name[PATH_MAX], st[PATH_MAX] = "";
-	int slot = 0;
-	if (state_names(rom, dir, sizeof dir, name, sizeof name, &slot) != 0) { sleep_log("hibernate: cannot name the state file"); return 0; }
-	struct timespec t0;
-	clock_gettime(CLOCK_REALTIME, &t0);
-	if (!ra_cmd("SAVE_STATE")) { sleep_log("hibernate: RetroArch's command pipe did not take SAVE_STATE"); return 0; }
-	if (!state_ready(dir, name, slot, &t0, st, sizeof st)) {
-		sleep_log("hibernate: no finished state for %s under %s within 1500 ms", name, dir);
-		return 0;
-	}
-	/* stage it as the automatic state too: RetroArch then loads it while it starts the content, instead of a command
-	 * arriving after the first frames (which it drops) and needing a retry. The manual state stays for the States page. */
-	char aut[PATH_MAX];
-	if (strlen(st) + 6 < sizeof aut && snprintf(aut, sizeof aut, "%s.auto", st) > 0) {
-		if (copy_file(st, aut) != 0) sleep_log("hibernate: could not stage %s; the state load will need a command", aut);
-	}
-	/* the marker before the kill: a game closed with nothing to relaunch is a lost session */
-	size_t rl = strlen(rom) + 2;
-	char *line = malloc(rl);
-	if (!line) { sleep_log("hibernate: out of memory for the resume marker"); return 0; }
-	snprintf(line, rl, "%s\n", rom);
-	int ok = write_atomic("/data/banana/resume", line) == 0;
-	free(line);
-	if (!ok) { sleep_log("hibernate: cannot write the resume marker"); return 0; }
-	unlink("/data/banana/resume-tries");
-	/* the menu clears the resume marker when a game quits normally; this says this exit is not one, so the marker
-	 * survives the close (and a power cut while asleep) until the wake's relaunch takes it */
-	if (write_atomic("/run/banana/hibernating", "1")) { sleep_log("hibernate: cannot write the hibernating marker"); unlink("/data/banana/resume"); return 0; }
-	/* the game goes: a stopped process does not take SIGTERM, so continue it first, then ask the whole group */
-	pid_t pg = getpgid(game);
-	if (pg > 0) kill(-pg, SIGCONT); else kill(game, SIGCONT);
-	if (pg > 0) kill(-pg, SIGTERM); else kill(game, SIGTERM);
-	/* the menu unlinks game.pid once its child is reaped, so that file going is the exit (a reaped pid can linger as a
-	 * zombie, which kill(pid, 0) would still call alive) */
-	double t = mono();
-	while (mono() - t < 2.0 && !game_exited(game)) sleep_us(50000);
-	if (!game_exited(game)) {
-		if (pg > 0) kill(-pg, SIGKILL); else kill(game, SIGKILL);
-		sleep_log("hibernate: the game did not exit within 2 s");
-		unlink("/data/banana/resume");
-		return 0;
-	}
-	sleep_log("hibernate: state saved to %s, game closed", st);
-	return 1;
-}
-
 static void handle(const struct input_event *e)
 {
 	double now = mono();
@@ -2571,39 +2269,9 @@ int main(int argc, char **argv)
 		if (power_down && wait > 0.1) wait = 0.1;
 		if (vib_off_at > 0 && vib_off_at - tnow < wait) wait = vib_off_at - tnow;	/* a pulse's stop */
 		if (jack_settle_at > 0 && jack_settle_at - tnow < wait) wait = jack_settle_at - tnow;	/* the jack's second look */
-		if (load_at >= 0 && (load_at <= tnow || load_at - tnow < wait)) wait = load_at > tnow ? load_at - tnow : 0;
 		int timeout = wait <= 0 ? 20 : (int)(wait * 1000) + 20;
 		poll(pf, n, timeout);
 		double now = mono();
-		/* a hibernated game's saved state: hand it to the relaunched RetroArch once its stdin takes commands. The
-		 * FIFO is non-blocking, so a successful write is the readiness test; the ROM has to be the one that was
-		 * saved, and a different game starting first cancels the hand-over. */
-		if (load_at < 0) {
-			FILE *lf = fopen("/run/banana/load-pending", "r");
-			if (lf) {
-				if (fgets(load_rom, sizeof load_rom, lf)) trim(load_rom);
-				fclose(lf);
-				if (load_rom[0]) { load_at = 0; load_deadline = now + 5.0; }
-				else unlink("/run/banana/load-pending");
-			}
-		} else if (load_at >= 0 && now >= load_at) {
-			char rom[PATH_MAX] = "";
-			read_str("/run/banana/game.path", rom, sizeof rom);
-			pid_t g = pid_of("/run/banana/game.pid");
-			if (g && !strcmp(rom, load_rom) && log_has("Loading state")) {
-				sleep_log("hibernate: the staged state was loaded (confirmed)");
-				unlink("/run/banana/load-pending");
-				load_at = -1;
-			} else if (g && rom[0] && strcmp(rom, load_rom)) {
-				sleep_log("hibernate: %s started instead of %s: no state loaded", rom, load_rom);
-				unlink("/run/banana/load-pending");
-				load_at = -1;
-			} else if (now >= load_deadline) {
-				sleep_log("hibernate: RetroArch did not report the staged state for %s within 5 s", load_rom);
-				unlink("/run/banana/load-pending");
-				load_at = -1;
-			} else load_at = now + 0.1;
-		}
 		if (vib_off_at > 0 && now >= vib_off_at) { vib_stop(); vib_off_at = 0; }
 		if (jack_settle_at > 0 && now >= jack_settle_at) jack_settle_poll();
 		if (volume_reassert_at > 0 && now >= volume_reassert_at) { volume_reassert_at = 0; volume_restore(); }

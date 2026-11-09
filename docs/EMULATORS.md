@@ -99,15 +99,6 @@ to one of the image's **Slang** presets in `/usr/share/libretro/shaders/slang` (
 of MB of small files in exFAT's large clusters and a long first start). Slang, not GLSL: the game's video driver is
 Vulkan, whose shader backend is Slang, and a GLSL preset under it crashes RetroArch (a backend mismatch).
 
-**Suspending a game** (Settings > Sleep & power, `suspend_mode` in `banana/bananad.conf`, default `freeze`):
-`freeze` is the long-standing behaviour -- the game's process group is `SIGSTOP`ped before the SoC sleeps and
-`SIGCONT`ed on the way up, so it resumes exactly where it was. `savestate` sends RetroArch a `SAVE_STATE` over its stdin
-pipe, waits for the state file it names (50 ms polls, 1500 ms at most, size steady across two polls), stages a copy as
-the automatic state, writes the ROM to `banana/resume`, closes the game and suspends. On the way up `bananad` writes
-`/run/banana/load-pending` and `resume-now`; the menu relaunches the ROM at once (a wake has no cancel window) with
-`savestate_auto_load` forced on for that launch, so RetroArch loads the staged state while it starts the content --
-no `LOAD_STATE` command, no wait for the core. A failed save in this mode cancels the sleep and leaves the game running. `hybrid` does the same but falls back to `freeze` on any failure.
-
 **Screen bezels** (Settings > RetroArch, `bezels` in `banana/settings.conf`, on by default) draws SkyWalker541's CC0
 console frame — with its 1px LCD grid — around Game Boy, Game Boy Color and Game Boy Advance games
 (`/usr/share/banana/overlays`, licence beside them). Every frame's window is cut for one integer multiple (GB/GBC

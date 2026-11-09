@@ -330,33 +330,5 @@ for s in settings settings-list settings-system settings-tz; do
     [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ] || { echo "FAIL $size: $f is blank"; fail=1; }
 done
 for s in settings settings-system; do golden "$s-top" "$OUT/$size-$s-top.png"; done
-
-# Hibernation resume: bananad closes the game for a sleep and writes /run/banana/resume-now on the way up. The menu
-# opens the same 0.5 s any-key window as a boot resume; a press cancels it, otherwise the ROM is launched. BANANA_RUN
-# points the markers at the harness's own tree (the UI never writes /run in a test), and the headless `wake` op runs
-# the same marker decision the main loop does.
-HIB="$FX/roms/nds/Monkey Puzzle League.nds"
-mkdir -p "$FX/run/banana"
-rm -f "$FX/data/resume" "$FX/data/resume-tries" "$FX/run/banana/resume-now"
-printf '%s\n' "$HIB" > "$FX/data/resume"
-: > "$FX/run/banana/resume-now"
-BANANA_RUN="$FX/run/banana" "$HERE/banana-ui" --headless "$OUT/$size-hib-" --single --size 640x557 --assets "$HERE/assets/rnds" \
-    --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
-    --script "home 0; wait 100; wake cancel; wait 1" 2> "$OUT/$size-hib.log" ||
-    { echo "FAIL $size: banana-ui (hibernate cancel) exited $?"; fail=1; }
-grep -q "wake: ready $HIB" "$OUT/$size-hib.log" || { echo "FAIL $size: the wake marker was not seen"; fail=1; }
-[ ! -e "$FX/run/banana/resume-now" ] || { echo "FAIL $size: the wake marker was not consumed"; fail=1; }
-[ ! -e "$FX/data/resume" ] || { echo "FAIL $size: a cancelled wake resume was left behind"; fail=1; }
-printf '%s\n' "$HIB" > "$FX/data/resume"
-: > "$FX/run/banana/resume-now"
-BANANA_RUN="$FX/run/banana" "$HERE/banana-ui" --headless "$OUT/$size-hibt-" --single --size 640x557 --assets "$HERE/assets/rnds" \
-    --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
-    --script "home 0; wait 100; wake take; wait 1" 2> "$OUT/$size-hib-take.log" ||
-    { echo "FAIL $size: banana-ui (hibernate take) exited $?"; fail=1; }
-grep -q "wake: ready $HIB" "$OUT/$size-hib-take.log" || { echo "FAIL $size: the wake marker was not seen for the launch"; fail=1; }
-[ -f "$FX/data/resume-tries" ] || { echo "FAIL $size: a taken wake resume was not counted"; fail=1; }
-[ ! -e "$FX/data/resume" ] || { echo "FAIL $size: a taken wake resume was left behind"; fail=1; }
-rm -rf "$FX/run"
-
 [ $fail = 0 ] && echo "banana-ui: all checks passed ($OUT)"
 exit $fail

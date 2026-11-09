@@ -89,13 +89,6 @@ static void logf(const char* fmt, ...)
 // device must not loop the boot). These three are the whole policy, so the headless harness can check it.
 enum class Resume { None, Ready, Missing, Blocked };
 
-// the file-IPC markers under /run/banana (BANANA_RUN: another tree, for the headless harness)
-static std::string runFile(const char* name)
-{
-	const char* d = getenv("BANANA_RUN");
-	return std::string(d && *d ? d : "/run/banana") + "/" + name;
-}
-
 static Resume resumePlan(const std::string& data, std::string& rom)
 {
 	int tries = 0;
@@ -115,21 +108,6 @@ static void resumeTake(const std::string& data)	// it launched: count it and con
 	std::ofstream(data + "/resume-tries") << (tries + 1) << "\n";
 	unlink((data + "/resume").c_str());
 }
-static void resumeCancel(const std::string& data);
-
-// A hibernation wake: bananad wrote /run/banana/resume-now after closing the game. True when it opens a resume
-// window (the marker is consumed either way; a missing/invalid ROM forgets it). The loop then runs the same 0.5 s
-// cancellation window as a boot resume.
-static bool takeWakeResume(const std::string& data, std::string& rom)
-{
-	const std::string marker = runFile("resume-now");
-	if (access(marker.c_str(), F_OK) != 0) return false;
-	unlink(marker.c_str());
-	if (resumePlan(data, rom) == Resume::Ready) return true;
-	resumeCancel(data);
-	return false;
-}
-
 static void resumeCancel(const std::string& data)	// cancelled, missing or exhausted: forget it all
 {
 	unlink((data + "/resume").c_str());
@@ -667,16 +645,6 @@ static int runHeadless(const Options& o, Host& lib, const std::string& variant, 
 			cs >> lib.testPower.percent >> ch;
 			lib.testPower.charging = ch == "charging";
 			if (low.check(lib.power(), shutdownPercent(o.data), now)) logf("battery %d%%: notice %s", lib.testPower.percent, low.showing(now) ? low.title.c_str() : "hidden");
-		}
-		else if (op == "wake")
-		{
-			// wake [take|cancel]: bananad's hibernation marker, for the headless checks (test only)
-			std::string what, rom;
-			cs >> what;
-			bool ready = takeWakeResume(o.data, rom);
-			logf("wake: %s%s%s", ready ? "ready" : "none", ready ? " " : "", ready ? rom.c_str() : "");
-			if (ready && what == "take") resumeTake(o.data);
-			else if (ready && what == "cancel") resumeCancel(o.data);
 		}
 		else if (op == "resume")
 		{
@@ -1687,10 +1655,7 @@ int main(int argc, char** argv)
 		sound.warm();				// the game handed the DSP frontend back: have it open before the next press
 		// a game that ended because it was quit goes back to a menu the next boot should show too; one a shutdown
 		// stopped leaves the marker bananad wrote, for the next boot to resume
-		// a game that quit on its own is not resumed; a hibernation closed it and owns the marker, and a shutdown
-		// leaves it for the next boot
-		if (access("/run/banana/shutting-down", F_OK) != 0 && access(runFile("hibernating").c_str(), F_OK) != 0)
-			resumeCancel(o.data);
+		if (access("/run/banana/shutting-down", F_OK) != 0) resumeCancel(o.data);
 		guard.input(nowMs());			// the game's own time doesn't count as menu idle
 		dirty = true;
 		batteryDue = true;	// a step passed during the game shows now
@@ -1718,7 +1683,7 @@ int main(int argc, char** argv)
 		if (resumeDue > 0 && now >= resumeDue)
 		{
 			// the launch file the menu already watches; the game then owns the panel as usual
-			std::ofstream(runFile("launch")) << resumeRom << "\n";
+			std::ofstream("/run/banana/launch") << resumeRom << "\n";
 			resumeTake(o.data);
 			logf("resume: launching %s", resumeRom.c_str());
 			resumeDue = 0;
@@ -1743,27 +1708,18 @@ int main(int argc, char** argv)
 			if (settingsView.takeLibraryChanged()) roms.due = now;	// box art fetched: the library again, at home
 			if (settingsView.takeNightLightChanged()) nightLight();	// the panel's gamma follows the row
 		}
-		// a hibernated game comes back: bananad closed it before the sleep and wrote this marker on the way up. A wake
-		// is not a boot -- the player pressed power to get straight back -- so it launches at once (no cancel window,
-		// which stays for a boot resume), and the state was staged as the automatic one, so the game starts on it.
-		if (resumeDue <= 0 && takeWakeResume(o.data, resumeRom))
-		{
-			logf("resume: launching after a wake %s", resumeRom.c_str());
-			std::ofstream(runFile("launch")) << resumeRom << "\n";
-			resumeTake(o.data);
-		}
 		// for testing over SSH: a game's path written to /run/banana/launch starts it, as A on it in the library would
 		if (launchSeen || launchWatch < 0)
 		{
 			launchSeen = false;
-			if (access(runFile("launch").c_str(), F_OK) == 0)
+			if (access("/run/banana/launch", F_OK) == 0)
 			{
 				std::string want;
 				{
-					std::ifstream f(runFile("launch"));
+					std::ifstream f("/run/banana/launch");
 					std::getline(f, want);
 				}
-				unlink(runFile("launch").c_str());
+				unlink("/run/banana/launch");
 				bool found = false;
 				for (int s = 0; s < lib.systemCount() && !found; s++)
 					for (int i = 0; i < (int)lib.shelf(s).games.size(); i++)
