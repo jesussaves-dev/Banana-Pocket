@@ -9,6 +9,17 @@ and OTA updates over Wi-Fi are done (see *Done*). Next:
 
 ## In progress
 
+- **Hybrid hibernation (built 2026-11-08, ships in the next image).** `suspend_mode` in `banana/bananad.conf`
+  (Settings > Sleep & power, default `freeze`): `freeze` is the existing SIGSTOP/SIGCONT path, untouched; `savestate`
+  sends `SAVE_STATE` down RetroArch's stdin, verifies the state file (50 ms polls, 1500 ms, steady size), persists the
+  ROM atomically, closes the game, suspends, and on waking has the menu relaunch it (same 0.5 s cancel window) while
+  `bananad` delivers `LOAD_STATE` once the new pipe accepts writes; `hybrid` falls back to freezing if the save fails.
+  `savestate_auto_load` is forced off for the relaunch so the two cannot both load. Host tests: 75/75 in
+  `system/bananad/tests/sleep-test.sh` and the UI wake marker in `ui/tests/run.sh`. **Hardware to check:** the exact
+  state filename RetroArch writes (derived from `savestate_directory`/`state_slot`, not hardcoded), a SAVE_STATE ->
+  LOAD_STATE round trip in a real game, deep-suspend after the game has closed, whether `savestate_auto_load` alone
+  would be enough (then the explicit LOAD_STATE could go), and the resume reliability over several cycles.
+
 - **Night light: backburner (2026-11-08).** The menu half ships: `night_light = off|warm|warmer`
   (Settings > Display & sound) writes a gamma LUT from `kms.cpp`, verified on the panel. **Games are not covered**:
   cage's wlroots gamma control accepts the ramp (`gamma_size 1024`, no `failed`), but the CRTC's `GAMMA_LUT` property

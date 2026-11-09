@@ -87,6 +87,30 @@ import struct, sys
 t, c, v = (int(x) for x in sys.argv[1:4])
 sys.stdout.buffer.write(struct.pack('llHHi', 0, 0, t, c, v) + struct.pack('llHHi', 0, 0, 0, 0, 0))" "$@" >&3; }
 EV_KEY=1 KEY_POWER=116
+
+# The RetroArch stand-in for hibernation: its command FIFO (the daemon's stdin channel) and a state writer. What it does
+# with SAVE_STATE is /run/test/ra-mode: ok (half the file, pause, the rest -- so the size changes and then settles),
+# none (never writes it). The state path is the one RetroArch would use (savestate_directory + content name + .state).
+mkdir -p /data/states /data/retroarch
+printf 'savestate_directory = "/data/states"\nstate_slot = "0"\n' > /data/retroarch/retroarch.cfg
+rm -f /run/banana/retroarch.cmd; mkfifo /run/banana/retroarch.cmd
+: > /run/test/ra-mode; : > /run/test/ra-cmds
+(
+    exec 4<>/run/banana/retroarch.cmd
+    while IFS= read -r cmd <&4; do
+        printf '%s\n' "$cmd" >> /run/test/ra-cmds
+        if [ "$cmd" = SAVE_STATE ]; then
+            rom=$(cat /run/banana/game.path 2>/dev/null)
+            if [ -n "$rom" ]; then
+                base=${rom##*/}; base=${base%.*}
+                case $(cat /run/test/ra-mode 2>/dev/null) in
+                ok) printf 'half' > "/data/states/$base.state"; sleep 0.2; printf ' rest' >> "/data/states/$base.state" ;;
+                esac
+            fi
+        fi
+    done
+) &
+
 # press and release power: bananad sleeps on the release
 power() { ev $EV_KEY $KEY_POWER 1; sleep 0.1; ev $EV_KEY $KEY_POWER 0; }
 # is bananad blocked writing "mem" (asleep)? wait up to 3 s
@@ -115,6 +139,7 @@ echo "1. the power button sleeps and wakes it"
 start
 power
 if asleep; then ok "suspended on the power button"; else bad "no suspend on the power button"; fi
+grep -qx SAVE_STATE /run/test/ra-cmds && bad "freeze mode wrote SAVE_STATE" || ok "freeze mode writes no SAVE_STATE"
 [ "$(gstate)" = T ] && ok "game stopped while asleep" || bad "game not stopped ($(gstate))"
 [ "$(cat /sys/power/pm_async)" = 1 ] && ok "devices resume in parallel (pm_async 1)" || bad "pm_async $(cat /sys/power/pm_async)"
 grep -q "\[deep\]" /sys/power/mem_sleep && ok "deep sleep chosen" || bad "mem_sleep $(cat /sys/power/mem_sleep)"
@@ -139,6 +164,109 @@ grep -qx 'wifi up' /run/test/hook-calls 2>/dev/null && ok "the post hook brought
 grep -qx 'sound-server up' /run/test/hook-calls 2>/dev/null && ok "the post hook brought the sound server back" || bad "no sound-server up"
 grep -qx 'usb-gadget' /run/test/hook-calls 2>/dev/null && ok "the post hook bound the USB gadget again" || bad "no usb-gadget re-bind"
 stop
+
+echo "1c. savestate: SAVE_STATE, a verified state, the game closed, and the state handed back after the wake"
+printf 'ok\n' > /run/test/ra-mode
+: > /run/test/ra-cmds
+rm -f /data/banana/resume /data/banana/resume-tries /run/banana/load-pending /run/banana/resume-now
+setsid sleep 600 & HG=$!; sleep 0.1
+echo $HG > /run/banana/game.pid
+echo '/data/roms/gba/Test Game.zip' > /run/banana/game.path
+start "suspend_mode = savestate"
+power
+asleep && ok "suspended after a verified save" || bad "no suspend after the save"
+grep -qx SAVE_STATE /run/test/ra-cmds && ok "SAVE_STATE went down the pipe before the close" || bad "no SAVE_STATE: $(tr '\n' ' ' < /run/test/ra-cmds)"
+grep -q 'hibernate: state saved to /data/states/Test Game.state, game closed' /data/banana/logs/sleep.log && ok "the finished state was verified" || bad "state not verified: $(tail -n1 /data/banana/logs/sleep.log)"
+grep -qx '/data/roms/gba/Test Game.zip' /data/banana/resume 2>/dev/null && ok "the ROM was persisted" || bad "no resume marker"
+[ ! -e /data/banana/resume.tmp ] && ok "the marker was renamed into place" || bad "a .tmp resume file was left"
+[ ! -e /run/banana/shutting-down ] && ok "hibernation is not a shutdown" || bad "shutting-down was created"
+wake
+for i in $(seq 20); do [ -f /run/banana/load-pending ] && break; sleep 0.1; done
+[ -f /run/banana/load-pending ] && ok "a pending state after the wake" || bad "no load-pending after the wake"
+[ -f /run/banana/resume-now ] && ok "the menu was asked to resume" || bad "no resume-now marker"
+[ ! -e /data/banana/resume-tries ] && ok "no resume try was counted for a wake" || bad "resume-tries was created"
+setsid sleep 600 & HG2=$!; sleep 0.1
+echo $HG2 > /run/banana/game.pid
+for i in $(seq 40); do grep -qx LOAD_STATE /run/test/ra-cmds 2>/dev/null && break; sleep 0.1; done
+[ "$(grep -c '^LOAD_STATE$' /run/test/ra-cmds)" = 1 ] && ok "LOAD_STATE delivered once, after the launch" || bad "LOAD_STATE $(grep -c '^LOAD_STATE$' /run/test/ra-cmds) times"
+[ ! -e /run/banana/load-pending ] && ok "the pending state was consumed" || bad "load-pending was left behind"
+kill $HG2 2>/dev/null; rm -f /run/banana/game.pid
+stop
+
+echo "1d. savestate is strict: no state within 1500 ms means no sleep, and the game keeps running"
+printf 'none\n' > /run/test/ra-mode
+: > /run/test/ra-cmds
+rm -f /data/banana/resume /run/banana/load-pending /run/banana/resume-now
+setsid sleep 600 & SB=$!; sleep 0.1
+echo $SB > /run/banana/game.pid
+echo '/data/roms/gba/Test Game.zip' > /run/banana/game.path
+start "suspend_mode = savestate"
+power
+sleep 2.2
+asleep 2>/dev/null && bad "it slept without a state" || ok "refused to sleep without a verified state"
+[ "$(awk '{print $3}' /proc/$SB/stat)" != T ] && ok "the game kept running" || bad "the game was stopped"
+[ ! -e /data/banana/resume ] && ok "no resume marker was written" || bad "a resume marker was left"
+grep -q 'no finished state at /data/states/Test Game.state within 1500 ms' /data/banana/logs/sleep.log && ok "the timeout was logged" || bad "timeout not logged: $(tail -n1 /data/banana/logs/sleep.log)"
+kill $SB 2>/dev/null; rm -f /run/banana/game.pid
+stop
+
+echo "1e. hybrid: a save that fails falls back to the freeze"
+printf 'none\n' > /run/test/ra-mode
+rm -f /data/banana/resume /run/banana/load-pending /run/banana/resume-now
+setsid sleep 600 & HY=$!; sleep 0.1
+echo $HY > /run/banana/game.pid
+echo '/data/roms/gba/Test Game.zip' > /run/banana/game.path
+start "suspend_mode = hybrid"
+power
+sleep 2
+asleep && ok "slept the fallback way" || bad "no sleep after the fallback"
+[ "$(awk '{print $3}' /proc/$HY/stat)" = T ] && ok "the game was frozen" || bad "the game was not frozen"
+grep -q 'hibernate failed: freezing the game instead' /data/banana/logs/sleep.log && ok "the fallback was logged" || bad "fallback not logged"
+[ ! -e /data/banana/resume ] && ok "a frozen sleep leaves no resume marker" || bad "a resume marker was left"
+wake; sleep 0.2
+[ "$(awk '{print $3}' /proc/$HY/stat)" != T ] && ok "the game ran on after the wake" || bad "the game stayed frozen"
+kill $HY 2>/dev/null; rm -f /run/banana/game.pid
+stop
+
+echo "1f. a state is never loaded into another ROM"
+printf 'ok\n' > /run/test/ra-mode
+: > /run/test/ra-cmds
+rm -f /data/banana/resume /run/banana/load-pending /run/banana/resume-now
+setsid sleep 600 & A=$!; sleep 0.1
+echo $A > /run/banana/game.pid
+echo '/data/roms/gba/Test Game.zip' > /run/banana/game.path
+start "suspend_mode = savestate"
+power
+asleep && ok "hibernated for the mismatch check" || bad "no hibernation sleep"
+wake
+for i in $(seq 20); do [ -f /run/banana/load-pending ] && break; sleep 0.1; done
+setsid sleep 600 & B=$!; sleep 0.1
+echo $B > /run/banana/game.pid
+echo '/data/roms/gba/Other.gba' > /run/banana/game.path
+sleep 0.8
+grep -qx LOAD_STATE /run/test/ra-cmds && bad "a state was loaded into another ROM" || ok "no state for a different ROM"
+[ ! -e /run/banana/load-pending ] && ok "the pending state was dropped" || bad "load-pending survived"
+grep -q 'started instead of' /data/banana/logs/sleep.log && ok "the mismatch was logged" || bad "mismatch not logged"
+kill $B 2>/dev/null; rm -f /run/banana/game.pid
+stop
+
+echo "1g. a failed suspend drops the hibernation markers (the state file stays)"
+printf 'ok\n' > /run/test/ra-mode
+: > /run/test/ra-cmds
+rm -f /data/banana/resume /run/banana/load-pending /run/banana/resume-now
+setsid sleep 600 & F=$!; sleep 0.1
+echo $F > /run/banana/game.pid
+echo '/data/roms/gba/Test Game.zip' > /run/banana/game.path
+start "suspend_mode = savestate"
+rm -f /sys/power/state; mkdir /sys/power/state		# every write there fails
+power
+sleep 2.5
+[ ! -e /data/banana/resume ] && ok "the resume request was dropped" || bad "a resume marker survived a failed suspend"
+[ ! -e /run/banana/load-pending ] && [ ! -e /run/banana/resume-now ] && ok "no wake markers were left" || bad "wake markers left behind"
+[ -f '/data/states/Test Game.state' ] && ok "the state file stayed on the card" || bad "the state file was deleted"
+grep -q 'suspend failed, the resume request is dropped' /data/banana/logs/sleep.log && ok "the drop was logged" || bad "drop not logged"
+stop
+rmdir /sys/power/state; mkfifo /sys/power/state
 
 echo "2. the battery guard: an RTC wake with the battery nearly empty shuts down cleanly"
 echo $GAME > /run/banana/game.pid
