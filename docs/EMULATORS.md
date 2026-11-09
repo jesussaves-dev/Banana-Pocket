@@ -38,8 +38,10 @@ The launcher runs in its own session (`setsid`), with signals at their defaults 
 
 - **Sleep**: a short power press (there is no lid on this handheld) sends `SIGSTOP` to the game's process group,
   then suspends; on waking, `SIGCONT`, within a millisecond of the kernel returning. The emulator sees nothing but a
-  gap in time: don't drop audio on a timing jump, and don't treat a vblank that took seconds as an error. The panel
-  comes back on by itself (the kernel's DRM resume restores the last framebuffer), so no modeset is needed on wake.
+  gap in time: don't drop audio on a timing jump, and don't treat a vblank that took seconds as an error. The sound
+  server is stopped for the sleep, so the game's audio stream dies with it; once the server answers on ALSA again
+  (~1.7 s), `bananad` sends `AUDIO_REINIT` down the game's stdin and the driver starts again. The panel comes back on
+  by itself (the kernel's DRM resume restores the last framebuffer), so no modeset is needed on wake.
 - **Quitting**: a hotkey of RetroArch's own (F + Start; `quit_press_twice` is off). On exit, banana-ui reopens the
   panel and records the play (anything over 5 s). Exit code 0 is a normal quit; anything else is logged.
 - **Shutdown while playing**: a long power press or an empty battery sends `SIGTERM` to the process group and waits
