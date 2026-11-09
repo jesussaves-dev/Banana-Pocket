@@ -1,8 +1,11 @@
 # Plan: a native DRM/KMS plane compositor (replacing `cage`)
 
 Status: draft for `feat/drm-plane-compositor`. No compositor code, defconfig or launcher is changed by this plan.
-**Phase 1A is measured on the Retroid Pocket Classic (2026-11-09): GO (EGL rotate)** — overlay + full-panel overlay +
-stacking + scaling pass; primary rotate-90 is rejected with linear buffers. Phase 2 is authorised; Phase 3 is not.
+**Phase 1A is measured (2026-11-09): GO (EGL rotate)** — overlay + full-panel overlay + stacking + scaling pass;
+primary rotate-90 is rejected with linear buffers. **Phase 2 is measured (2026-11-09): GO (EGL rotate)** — all three
+real clients' compressed buffers are rejected by `AddFB2WithModifiers`; linear-forced buffers import and pass
+primary + overlay, rotation still rejects; a live flip works. Phase 3 is authorised only with the EGL rotate pass,
+not as direct-plane zero-copy.
 
 ## Milestones (authoritative)
 
@@ -12,8 +15,8 @@ These names are the only phase numbers used from here on; older headings below k
 |---|---|---|
 | **1A** | DRM probe: plane enumeration and the TEST_ONLY matrix on the target (this work) | a reviewed target report |
 | **1B** | `banana-ui` atomic KMS (prerequisite; independent of the compositor) | the 1A report, then its own hardware smoke test |
-| **2** | real-client DMA-BUF import and modifier compatibility (RetroArch/SDL2 buffers) | a real client's frames imported and scanned out |
-| **3** | compositor implementation (3A plane assignment and lease spike, 3B overlay/toasts, 3C input) | 2 passed; the Phase 3 acceptance list |
+| **2** | real-client DMA-BUF import and modifier compatibility (RetroArch/SDL2 buffers) | **measured**: compressed rejected; linear imports/scans; rotation EGL |
+| **3** | compositor implementation (3A plane assignment and lease spike, 3B overlay/toasts, 3C input) | 2 measured; GO (EGL rotate); the Phase 3 acceptance list |
 | **4** | Buildroot cleanup, ports/BananaTube integration and the merge gate | the full acceptance list |
 
 A 1A GO authorises **1B and Phase 2 (client-buffer validation)**, not the compositor. TEST_ONLY results never prove real-client buffer
@@ -319,8 +322,8 @@ The rotation rejection used **linear dumb buffers**. The plane lists a COMPRESSE
 may only rotate compressed frames; Phase 2 must retest rotation with a real client buffer before assuming an EGL
 pass is permanent. Until then the report's verdict stands: budget one EGL rotate pass.
 
-**GO/NO-GO: GO (EGL rotate).** Phase 2 (real-client DMA-BUF import) is authorised; Phase 3 is not. The decision
-table below still governs, and the 3 rejected rotation rows are the measured basis for this verdict.
+**Phase 1A verdict: GO (EGL rotate).** Phase 2 was subsequently run and measured (see the Phase 2 section); the
+decision table below remains the Phase 1A decision, and the 3 rejected rotation rows are its basis.
 
 ### 1.8 Buffer synchronisation contract (documented now, implemented in Phase 3)
 
@@ -370,17 +373,95 @@ hardware smoke mode (render N frames, flip, restore) and a before/after `make be
 The probe is a tool on `/data`: delete it. 1B is behind `banana.kms=legacy`. Nothing in this phase changes the
 image, the launchers or the fallback (cage).
 
-## Phase 2 — real-client DMA-BUF import and modifier compatibility (new milestone)
+## Phase 2 — real-client DMA-BUF import and modifier compatibility
 
-The probe's frames are linear dumb buffers. Phase 2 takes **one real RetroArch frame (Vulkan and glcore) and one
-SDL2 frame** (a port or BananaTube), imports each with `drmModeAddFB2WithModifiers` using the client's fourcc,
-modifier, stride and offset, and scans it out on the target plane in a TEST_ONLY and then a controlled live commit.
-The requirements are §1.8 (fences, buffer lifetime, release ordering); the modifier list is the probe's
-`IN_FORMATS` report. **A 1A GO does not authorise Phase 3**: Phase 2 must pass first, and a TEST_ONLY result in 1A
-says nothing about a tiled/compressed client buffer.
+**Implemented and measured on the Retroid Pocket Classic, 2026-11-09.** This phase is the test harness only; the
+compositor is not started.
 
-Gate: every client used by the image imports and scans out; any rejected modifier is documented; the frame pacing
-check is repeated with a real client.
+### 2.1 What was built
+
+- `tools/dmabuf-capture/capture-server.c` — a **test-only** Wayland server (not the compositor): `wl_compositor`,
+  `xdg_wm_base`, `wl_output` (logical 1240×1080), `wl_seat`, `wl_shm`, `wl_drm`, `zwp_linux_dmabuf_v1` **v4 with
+  feedback**, a real client's fds captured via `zwp_linux_buffer_params_v1`, `drmModeAddFB2WithModifiers` import,
+  TEST_ONLY primary/overlay/rotation, and a bounded live scanout. It takes DRM master only inside the wrapper.
+- `tools/dmabuf-capture/sdl2-gl-client.c` — a minimal SDL2/GLES client (same Wayland/EGL path as a port).
+- `tools/dmabuf-capture/ra-client.sh` — direct RetroArch (no cage) for Vulkan/SwanStation and glcore/Flycast.
+- `tools/dmabuf-capture/window.sh` — detached exclusive window: stand-in with its own pid, autosleep/dim off and
+  restored transactionally, `timeout` plus TERM→KILL watchdog, menu-back verification.
+- `tools/dmabuf-capture/build.sh` — generates xdg-shell/linux-dmabuf/wl_drm and cross-builds both binaries.
+
+### 2.2 Measured results
+
+All three clients, by default, produced **XR24 + modifier `0x0500000000000001` (COMPRESSED)**, 1240×1080, one
+plane, stride 5120. The DRM import of that buffer failed with **`EINVAL`**. The same buffer imported successfully
+with `AddFB2` (no modifier) and with the modifier declared **LINEAR**, so the buffer/stride are valid and the
+**compressed modifier is what `msm` rejects** (a width-alignment cause at 1240 is possible and untested; see 2.4).
+
+With the feedback advertising **linear only**, all three clients produced **XR24 LINEAR** and the full matrix ran:
+
+| client | default buffer | import (real modifier) | import (linear forced) | primary TEST_ONLY | overlay TEST_ONLY | rotate 90 | live scanout |
+|---|---|---|---|---|---|---|---|
+| SDL2 (GLES) | XR24 COMPRESSED | **reject EINVAL** | **ok** | **ok** | **ok** | **reject EINVAL** | 1 flip (5 buffers) |
+| RetroArch Vulkan (SwanStation) | XR24 COMPRESSED | **reject EINVAL** | **ok** | **ok** | **ok** | **reject EINVAL** | 1 flip |
+| RetroArch glcore (Flycast) | XR24 COMPRESSED | **reject EINVAL** | **ok** | **ok** | **ok** | **reject EINVAL** | not run (same path) |
+
+Raw reports: [`docs/reports/phase2-sdl2-comp-2b2.txt`](reports/phase2-sdl2-comp-2b2.txt),
+[`phase2-sdl2-linear-2b.txt`](reports/phase2-sdl2-linear-2b.txt), [`phase2-ra-vk-4.txt`](reports/phase2-ra-vk-4.txt),
+[`phase2-ra-vk-lin.txt`](reports/phase2-ra-vk-lin.txt), [`phase2-ra-gl.txt`](reports/phase2-ra-gl.txt),
+[`phase2-ra-gl-lin.txt`](reports/phase2-ra-gl-lin.txt), [`phase2-ra-vk-live.txt`](reports/phase2-ra-vk-live.txt),
+[`phase2-sdl2-live.txt`](reports/phase2-sdl2-live.txt).
+
+**Import vs scanout:** the import (`AddFB2WithModifiers`) and TEST_ONLY are separate rows; the live runs above are
+real page flips with the client's buffer plus the test ARGB overlay (one flip for RetroArch, one for SDL2 before the
+short window ended). They are not a frame-pacing measurement.
+
+The rotation rejection therefore applies to **actual linear client buffers**, not only to the Phase 1A dumb
+buffers. Compressed rotation could not be tested through `AddFB2` because the compressed import fails first; an EGL
+import is the remaining path.
+
+### 2.3 Decision for Phase 3
+
+**GO (EGL rotate).** The evidence supports the compositor with the EGL fallback, not direct-plane zero-copy:
+
+- direct primary + overlay scanout works for **linear** client buffers, and all three clients honour a linear-only
+  feedback;
+- the panel's portrait rotation is rejected by the plane for linear client buffers, so the game frame needs one
+  EGL rotation pass into a linear scanout buffer; the menu/toast overlay can stay on the overlay plane;
+- the clients' default **compressed** buffer cannot be imported with `AddFB2WithModifiers` on msm 1.13.0 at this
+  width, so the compositor must either advertise linear (losing UBWC bandwidth) or import compressed through EGL
+  and decompress/rotate in the same pass.
+
+Phase 3 is not started. It must keep the overlay direct and budget the EGL pass; it must not assume the advertised
+COMPRESSED modifier is usable.
+
+### 2.4 Reproduce on the unit
+
+```
+tools/dmabuf-capture/build.sh
+scp -O tools/dmabuf-capture/build/dmabuf-capture tools/dmabuf-capture/build/sdl2-gl-client \
+      tools/dmabuf-capture/window.sh tools/dmabuf-capture/ra-client.sh root@<handheld>:/data/
+ssh root@<handheld> 'chmod +x /data/dmabuf-capture /data/sdl2-gl-client /data/window.sh /data/ra-client.sh'
+
+# compressed (the client's default): import is rejected
+/data/window.sh --name sdl2-comp --timeout 45 -- \
+    /data/dmabuf-capture --drm --test --seconds 12 --client /data/sdl2-gl-client 8
+# linear-forced: import + primary + overlay pass, rotation rejects
+/data/window.sh --name sdl2-lin --timeout 45 -- \
+    /data/dmabuf-capture --drm --test --linear --seconds 12 --client /data/sdl2-gl-client 8
+# RetroArch: ra-client.sh vk|gl; add --linear for the accepted path
+/data/window.sh --name ra-vk --timeout 60 -- \
+    /data/dmabuf-capture --drm --test --linear --seconds 25 --client /data/ra-client.sh vk
+```
+
+The wrapper detaches and prints its log path; the report is `/data/banana/logs/dmabuf-<name>-<UTC>.txt`. Copy it off
+before rebooting. The live variant is `--live` (bounded; the menu is stopped and restored by the wrapper).
+
+### 2.5 Remaining validation
+
+1. A 1280-wide (UBWC-aligned) client buffer, to separate the compressed import failure from panel width 1240.
+2. EGL import/rotation with a real compressed client buffer and its cost (the fallback pass).
+3. Live frame pacing across a longer run; the Phase 2 live window was one flip, enough to prove scanout, not pacing.
+4. The same matrix on a second boot/driver state (the card index and feedback are auto-detected).
 
 ## Phase 3 — The compositor: leases out, a single-client Wayland compositor in (was Phase 2)
 
