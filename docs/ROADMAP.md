@@ -22,7 +22,11 @@ and OTA updates over Wi-Fi are done (see *Done*). Next:
   `/run/banana/hibernating` says the exit was a hibernation; a `LOAD_STATE` in the first frames after the core starts
   is dropped, which the staged auto state avoids entirely. Still open: a few more cycles for confidence, the 3%
   battery trigger (same `suspend_now()` path, not yet exercised), and whether the menu flash before the relaunch is
-  worth hiding (the panel could stay closed from the hibernation close until the game starts).
+  worth hiding (the panel could stay closed from the hibernation close until the game starts). **Audio (fixed
+  2026-11-09):** a game launched into a still-starting sound server makes RetroArch fail its ALSA set-up once and run
+  silent for the session; `bananad` now waits (bounded, 3 s) for the server to accept real PCM parameters (with
+  `XDG_RUNTIME_DIR` set -- the daemon has no session) before the wake relaunch. Measured: the server takes ~1.7 s to
+  come back after the sleep, which is the cost of keeping the sleep's low drain (the server is stopped for it).
 
 ## Ideas (unscheduled)
 Not commitments: sketches to weigh against the list above. Each one builds on something the image already has.

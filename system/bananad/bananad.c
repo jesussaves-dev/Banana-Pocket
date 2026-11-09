@@ -87,6 +87,7 @@ static void jack_settle_poll(void);
 static void jack_log(void);
 static int ra_cmd(const char *cmd);
 static int hibernate_game(pid_t game, const char *rom);
+static void sound_wait(double seconds);
 static int write_atomic(const char *path, const char *text);
 static void undim(void);
 static void find_panel_bl(void);
@@ -805,13 +806,7 @@ static void suspend_now(const char *why)
 	double t_wake = mono();
 	backlights_power(1);
 	sleep_quiet_end();
-	if (hibernated) {
-		/* the game was closed, not frozen: the menu relaunches it (with the 0.5 s cancel window) and the menu loop's
-		 * load-pending block hands the state over once the new RetroArch's stdin takes commands */
-		if (write_atomic("/run/banana/load-pending", hrom)) sleep_log("hibernate: could not write load-pending");
-		if (write_atomic("/run/banana/resume-now", "1")) sleep_log("hibernate: could not write resume-now");
-		unlink("/run/banana/hibernating");	/* from here the wake path owns the resume marker */
-	} else if (pg > 0) kill(-pg, SIGCONT);
+	if (!hibernated && pg > 0) kill(-pg, SIGCONT);
 	/* The compositor's output too: a panel its driver disabled on the way down can come back dark, with cage's
 	 * frames going nowhere, and only a modeset clears it. cage has no session manager to hear that the system
 	 * slept (Banana's seat is deliberately not VT-bound), so it re-modesets on SIGUSR1 -- the pid run-retroarch
@@ -825,6 +820,14 @@ static void suspend_now(const char *why)
 	double t_back = mono();
 	undim();
 	hooks("post", 1);
+	if (hibernated) {
+		/* the game was closed, not frozen: once the post hooks have started the sound server, and it answers on ALSA,
+		 * ask the menu to relaunch it (it launches at once: a wake is not a boot) */
+		sound_wait(3.0);
+		if (write_atomic("/run/banana/load-pending", hrom)) sleep_log("hibernate: could not write load-pending");
+		if (write_atomic("/run/banana/resume-now", "1")) sleep_log("hibernate: could not write resume-now");
+		unlink("/run/banana/hibernating");	/* from here the wake path owns the resume marker */
+	}
 	/* the press that woke us comes in now: it is not a new request */
 	drain_inputs();
 	power_update();
@@ -1245,6 +1248,41 @@ static void sleep_quiet_end(void)
 		if (sleep_rx1[0]) cset(card_ar, "RX_RX1 Digital Volume", sleep_rx1);
 	}
 	sleep_rx0[0] = sleep_rx1[0] = 0;
+}
+
+/* The sound server comes back in the background after a sleep (sleep.d/20-sound). A game started before it is up
+ * makes RetroArch fail to open ALSA once and run silent for the whole session (measured on the unit: "Failed to
+ * initialize audio driver. Will continue without audio"), so the wake waits for the server's PCM before the menu is
+ * allowed to relaunch. Bounded; without a server (the host test) there is nothing to wait for. */
+static void sound_wait(double seconds)
+{
+	/* the daemon has no session: the ALSA PipeWire plugin needs the server's runtime dir to find it (run-retroarch
+	 * and the menu set it in their own children; bananad is started by rcS) */
+	setenv("XDG_RUNTIME_DIR", "/run/banana/wayland", 1);
+	setenv("PIPEWIRE_RUNTIME_DIR", "/run/banana/wayland", 1);
+	double t = mono();
+	int seen = 0;
+	for (;;) {
+		/* open *and* set the format: opening the PCM succeeds as soon as the server answers, while the parameters
+		 * are what fails (EIO, "Host is down") until the sink and its DSP graph are up -- and what RetroArch then
+		 * fails on for good. 48 kHz S16 stereo, the menu's own shape. */
+		snd_pcm_t *pc = NULL;
+		if (snd_pcm_open(&pc, "default", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) == 0) {
+			int ok = snd_pcm_set_params(pc, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, 48000, 1, 15000) == 0;
+			snd_pcm_close(pc);
+			if (ok) { sleep_log("audio: the server answered after %.0f ms", (mono() - t) * 1000); return; }
+		}
+		/* the post hook starts the server in the background: give it a moment to appear before deciding there is
+		 * none (the host test) and not waiting at all */
+		if (!seen) {
+			FILE *p = popen("pidof pipewire 2>/dev/null", "r");
+			seen = p && fgetc(p) != EOF;
+			if (p) pclose(p);
+		}
+		if (!seen && mono() - t >= 1.5) return;
+		if (mono() - t >= seconds) { sleep_log("audio: the server is not back after %.0f ms; the game may start silent", (mono() - t) * 1000); return; }
+		sleep_us(100000);
+	}
 }
 
 /* The jack's answer, confirmed without blocking the loop. The WCD937x's MBHC answers before it has measured the socket:
@@ -2556,7 +2594,7 @@ int main(int argc, char **argv)
 				sleep_log("hibernate: the staged state was loaded (confirmed)");
 				unlink("/run/banana/load-pending");
 				load_at = -1;
-			} else if (g && strcmp(rom, load_rom)) {
+			} else if (g && rom[0] && strcmp(rom, load_rom)) {
 				sleep_log("hibernate: %s started instead of %s: no state loaded", rom, load_rom);
 				unlink("/run/banana/load-pending");
 				load_at = -1;
