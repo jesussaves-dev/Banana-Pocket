@@ -17,10 +17,12 @@
 #      would otherwise idle-suspend in the middle of the probe), remembering the file's exact bytes
 #   3. writes a uniquely named stand-in and bind-mounts it over /usr/bin/banana-ui-session, verifies the mount,
 #      then stops the menu; init respawns the stand-in and its pid is recorded
-#   4. runs the probe with --take-master under `timeout`; the report carries board, SoC/panel (from the probe),
-#      kernel, driver, UTC time, probe commit and sha256
-#   5. restores: unmounts first (so init respawns the real launcher), kills the stand-in by pid, restores
-#      bananad.conf only if nobody else changed it, and verifies banana-ui is back
+#   4. starts the probe under `timeout` through a one-line supervisor that writes the probe's pid before exec,
+#      so the real probe -- not the timeout wrapper -- is the process this script stops; the report carries
+#      board, SoC/panel (from the probe), kernel, driver, UTC time, probe commit and sha256
+#   5. restores: stops the probe and waits for it to exit *first* (no DRM master held), unmounts (so init
+#      respawns the real launcher), kills the stand-in, restores bananad.conf only if nobody else changed it,
+#      and verifies banana-ui is back
 #
 # Ultimate recovery: if this process is killed with SIGKILL (or the handheld loses power) the stand-in can stay in
 # the respawn slot; a reboot always restores the normal system (the bind mount is per-boot).
@@ -72,6 +74,8 @@ REPORT=
 BACKUP=
 WROTE_SUM=
 STANDIN_PID=
+TPID=
+PROBE_PIDFILE=/tmp/banana-drm-probe.pid
 RESTORED=0
 HAD_CONF=0
 BOUND=0
@@ -79,9 +83,44 @@ MENU_STOPPED=0
 
 say() { echo "drm-probe-window: $*"; }
 
+# BusyBox timeout (1.37, the image) execs the program in the timeout process itself, while GNU timeout forks it:
+# `$!` is the probe on BusyBox but the timeout wrapper on a host. So the probe is started through a tiny shell that
+# records its own pid and then execs the probe; that pid is exact on both. Stop it, wait for it to go, and only
+# then let the menu take DRM master back.
+stop_probe() {
+	[ -n "${TPID:-}" ] || [ -s "$PROBE_PIDFILE" ] || return 0
+	p=
+	i=0
+	while [ $i -lt 20 ] && [ ! -s "$PROBE_PIDFILE" ]; do sleep 0.1; i=$((i+1)); done	# the exec may just be starting
+	[ -s "$PROBE_PIDFILE" ] && p=$(cat "$PROBE_PIDFILE" 2>/dev/null)
+	if [ -n "$p" ]; then
+		kill -TERM "$p" 2>/dev/null
+		i=0
+		while [ $i -lt 50 ] && kill -0 "$p" 2>/dev/null; do sleep 0.1; i=$((i+1)); done
+		if kill -0 "$p" 2>/dev/null; then kill -KILL "$p" 2>/dev/null; fi
+		i=0
+		while [ $i -lt 20 ] && kill -0 "$p" 2>/dev/null; do sleep 0.1; i=$((i+1)); done
+	fi
+	if [ -n "${TPID:-}" ]; then
+		kill -TERM "$TPID" 2>/dev/null
+		wait "$TPID" 2>/dev/null
+		TPID=
+	fi
+	rm -f "$PROBE_PIDFILE"
+	if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
+		say "WARNING: probe pid $p did not exit; DRM master may still be held"
+	elif [ -n "$p" ]; then
+		say "probe stopped (pid $p)"
+	else
+		say "probe stopped (pid unknown: no pidfile; the timeout process was stopped)"
+	fi
+}
+
 restore() {
 	[ "$RESTORED" = 1 ] && return 0
 	RESTORED=1
+	# stop the probe first: the menu cannot take DRM master while it is still alive
+	stop_probe
 	[ "$BOUND" = 1 ] && say "restoring the launcher"
 	# 1. unmount first: while the bind is in place, init would respawn the stand-in again
 	if [ "$BOUND" = 1 ]; then
@@ -215,10 +254,17 @@ say "exclusive window: stand-in pid $STANDIN_PID, menu stopped"
 set -- --take-master --card "$CARD"
 [ -n "$CONNECTOR" ] && set -- "$@" --connector "$CONNECTOR"
 say "running: timeout $TIMEOUT $PROBE $*"
-timeout "$TIMEOUT" "$PROBE" "$@" >> "$REPORT" 2>&1
+rm -f "$PROBE_PIDFILE"
+DRM_PROBE_PID="$PROBE_PIDFILE" DRM_PROBE_BIN="$PROBE" \
+	timeout "$TIMEOUT" sh -c 'echo $$ > "$DRM_PROBE_PID"; exec "$DRM_PROBE_BIN" "$@"' sh "$@" \
+	>> "$REPORT" 2>&1 &
+TPID=$!
+wait "$TPID"
 rc=$?
+TPID=
+rm -f "$PROBE_PIDFILE"
 echo
-echo "probe exit: $rc (0 = decision, 2 = HOLD/incomplete)" >> "$REPORT"
+echo "probe exit: $rc (0 = decision, 2 = HOLD/incomplete; 143/137 = timeout or signal)" >> "$REPORT"
 say "probe finished (exit $rc); report: $REPORT"
 
 restore

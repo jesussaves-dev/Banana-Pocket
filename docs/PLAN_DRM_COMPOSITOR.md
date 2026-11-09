@@ -2,6 +2,21 @@
 
 Status: draft for `feat/drm-plane-compositor`. No compositor code, defconfig or launcher is changed by this plan.
 
+## Milestones (authoritative)
+
+These names are the only phase numbers used from here on; older headings below keep a "was Phase N" note.
+
+| milestone | content | gate |
+|---|---|---|
+| **1A** | DRM probe: plane enumeration and the TEST_ONLY matrix on the target (this work) | a reviewed target report |
+| **1B** | `banana-ui` atomic KMS (prerequisite; independent of the compositor) | the 1A report, then its own hardware smoke test |
+| **2** | real-client DMA-BUF import and modifier compatibility (RetroArch/SDL2 buffers) | a real client's frames imported and scanned out |
+| **3** | compositor implementation (3A plane assignment and lease spike, 3B overlay/toasts, 3C input) | 2 passed; the Phase 3 acceptance list |
+| **4** | Buildroot cleanup, ports/BananaTube integration and the merge gate | the full acceptance list |
+
+A 1A GO authorises **1B and Phase 2 (client-buffer validation)**, not the compositor. TEST_ONLY results never prove real-client buffer
+compatibility.
+
 ## Terminology (read before the decision)
 
 - **Direct plane presentation** — the client's frame reaches a KMS plane without a CPU/GPU render or copy into a
@@ -13,7 +28,7 @@ Status: draft for `feat/drm-plane-compositor`. No compositor code, defconfig or 
   needed, so the copy is gone but a render pass returns.
 - **Real-client DMA-BUF compatibility** is a **separate** requirement: the probe's frames are linear dumb buffers;
   RetroArch/SDL2 hand over tiled/compressed buffers with their own modifiers, and that import must be validated
-  with a real client (Phase 2 spike), not inferred from a GO here.
+  with a real client (Phase 2), not inferred from a GO here.
 
 ## 0. What the code does today (verified in this tree)
 
@@ -45,7 +60,7 @@ Status: draft for `feat/drm-plane-compositor`. No compositor code, defconfig or 
 | `/userdata/bgm.wav` | `/data/bgm.wav` or `/data/music/bgm.wav` (`ui/src/sound.cpp:143`). |
 | "Adreno A12" | The kernel tree calls it `a613` (`buildroot/board/retroid-pocket-classic/linux-patches/0001-…-a613-catalog-entry.patch`); the firmware in use is `a630_sqe.fw`. This plan uses the tree's names. |
 
-## 1. Architecture decision (read this before Phase 2)
+## 1. Architecture decision (read this before Phase 3)
 
 **The goal "game on `PRIMARY`, menu/toasts on `OVERLAY`, `banana-ui` resident" is a compositor problem, not a DRM
 lease problem.** Three facts decide it:
@@ -69,21 +84,21 @@ protocol) and should be rejected for v1 on cost and risk.
 
 | Option | What it is | Verdict |
 |---|---|---|
-| A. Lease | `banana-ui` leases the CRTC/planes to the game | **Rejected for the overlay goal.** Single CRTC; the menu loses the display. Only reproduces today's full handover. The lease test belongs to the Phase 2 spike (2.1), as evidence, not to Phase 1. |
+| A. Lease | `banana-ui` leases the CRTC/planes to the game | **Rejected for the overlay goal.** Single CRTC; the menu loses the display. Only reproduces today's full handover. The lease test belongs to the Phase 3 spike (3.1), as evidence, not to Phase 1A. |
 | B. DMA-BUF socket | Game sends frames to `banana-ui` over a socket | **Rejected for v1.** No client can produce it without patches to every frontend. |
 | B′. Custom DRM compositor, clients speak Wayland | `banana-ui` owns DRM + the Wayland socket; `cage`/`wlroots` removed | **Recommended (D1).** Biggest piece of work, but the only one that meets the goal with the current clients. |
 | C. Keep the handover | Game owns DRM; OSD drawn in-process (RetroArch patch) | **Fallback.** Today's behaviour. Works for RetroArch; ports/BananaTube get no OS overlay. |
 
-**Fallback rules (decided by the Phase 1 probe, not by hope):** if no overlay plane exists that can scan out
+**Fallback rules (decided by the Phase 1A probe, not by hope):** if no overlay plane exists that can scan out
 1080×1240 ARGB8888 with `zpos` and alpha, or if plane rotation is absent and an EGL rotate costs more than 1 ms per
 frame, or if the clients' DMA-BUF import fails, stop at option C and ship only Phase 1B (atomic menu) plus the
 in-process OSD. Do not half-build a compositor.
 
 ---
 
-## Phase 1 — plane discovery and the atomic test matrix
+## Phase 1A — DRM probe: plane discovery and the atomic test matrix (was Phase 1)
 
-**This phase ships a probe and a hardware report.** It does not change `banana-ui`, the defconfig or the launchers,
+**Phase 1A ships a probe and a hardware report.** It does not change `banana-ui`, the defconfig or the launchers,
 and it does not replace `cage`. Moving `banana-ui` to atomic KMS is **1B**, and starts only after the report is in.
 
 ### 1.0 Which device this applies to
@@ -172,7 +187,11 @@ What the wrapper guarantees:
 - `autosleep_minutes`/`dim_minutes` are set to 0 for the window and restored afterwards; `bananad.conf` is put back
   only if nobody changed it during the window (otherwise only this script's block is removed, never the other
   change);
-- the probe runs under `timeout 180`; `EXIT`/`INT`/`TERM`/`HUP` all restore;
+- the probe runs under `timeout 180` through a one-line supervisor that records the probe's own pid before
+  `exec`, so `restore` stops the **probe** (not just the `timeout` wrapper), waits for it to exit, and only then
+  lets the menu take DRM master back. This works under both BusyBox `timeout` (which execs the program in the
+  timeout process) and GNU `timeout` (which forks it);
+- `EXIT`/`INT`/`TERM`/`HUP` all restore;
 - restore unmounts first (so init respawns the real launcher), kills the stand-in, HUPs bananad, and verifies
   `banana-ui` is running again;
 - it detaches with `setsid`, so a dropped SSH session does not kill the restore path.
@@ -256,7 +275,7 @@ supported" case.
 
 **Real-client buffers.** These rows use linear dumb buffers via `AddFB2WithModifiers(LINEAR)`. RetroArch (Vulkan/GL)
 and SDL2 hand over tiled/compressed DMA-BUFs with their own modifiers; the report lists the plane's full
-`(format, modifier)` set, but importing a real client buffer is **separate validation** (Phase 2 spike) and cannot
+`(format, modifier)` set, but importing a real client buffer is **separate validation** (Phase 2) and cannot
 be inferred from a GO here.
 
 Exit codes: `0` = a decision (GO or NO-GO); `2` = HOLD/incomplete; `1` = fatal.
@@ -319,8 +338,8 @@ code:
 
 | measured result | verdict | next |
 |---|---|---|
-| rows 2a/2b `[ok]`, stacking verified, rows 4a/4b `[ok]` | **GO (direct plane)** | Phase 2 with the plane assignment as planned |
-| rows 2a/2b `[ok]`, stacking verified, rotation not advertised or rejected | **GO (EGL rotate)** | Phase 2, but budget one GPU pass per frame |
+| rows 2a/2b `[ok]`, stacking verified, rows 4a/4b `[ok]` | **GO (direct plane)** | Phase 2 (client import), then Phase 3 |
+| rows 2a/2b `[ok]`, stacking verified, rotation not advertised or rejected | **GO (EGL rotate)** | Phase 2, then Phase 3 with one GPU pass per frame |
 | no overlay plane, or rows 2a/2b rejected, or stacking impossible | **NO-GO** | retain cage; Phase 1B can still ship |
 | any required row skipped, no master, no mode, z-order unknown | **HOLD** | do not proceed; rerun when it can be measured |
 | overlay has no AR24 / no alpha | partial | record it; opaque cards only, or a different plane |
@@ -344,17 +363,29 @@ hardware smoke mode (render N frames, flip, restore) and a before/after `make be
 The probe is a tool on `/data`: delete it. 1B is behind `banana.kms=legacy`. Nothing in this phase changes the
 image, the launchers or the fallback (cage).
 
-## Phase 2 — The compositor: leases out, a single-client Wayland compositor in
+## Phase 2 — real-client DMA-BUF import and modifier compatibility (new milestone)
+
+The probe's frames are linear dumb buffers. Phase 2 takes **one real RetroArch frame (Vulkan and glcore) and one
+SDL2 frame** (a port or BananaTube), imports each with `drmModeAddFB2WithModifiers` using the client's fourcc,
+modifier, stride and offset, and scans it out on the target plane in a TEST_ONLY and then a controlled live commit.
+The requirements are §1.8 (fences, buffer lifetime, release ordering); the modifier list is the probe's
+`IN_FORMATS` report. **A 1A GO does not authorise Phase 3**: Phase 2 must pass first, and a TEST_ONLY result in 1A
+says nothing about a tiled/compressed client buffer.
+
+Gate: every client used by the image imports and scans out; any rejected modifier is documented; the frame pacing
+check is repeated with a real client.
+
+## Phase 3 — The compositor: leases out, a single-client Wayland compositor in (was Phase 2)
 
 **Goal:** `banana-ui` keeps DRM master while a game runs and owns the plane assignment.
 
-### 2.1 Prove the lease answer (a day, not a phase)
+### 3.1 Prove the lease answer (a day, not a phase)
 
 Run `drm-plane-probe --lease-test` in an exclusive window (see 1.4). Expected, and the basis for option A being
 rejected: the master can no longer touch the leased CRTC, so a menu overlay cannot be shown; the lessee can. Record
 the exact `errno`s in the probe output.
 
-### 2.2 Scope of the compositor (D1)
+### 3.2 Scope of the compositor (D1)
 
 `banana-ui` creates `/run/banana/wayland/wayland-0` itself (the same path cage used, so the launchers only lose the
 `cage --` prefix and `SEATD_VTBOUND`). Objects, in order of need:
@@ -362,7 +393,7 @@ the exact `errno`s in the probe output.
 - `wl_display`, `wl_compositor`, `wl_region`, `wl_subcompositor` (not required at first).
 - `xdg_wm_base`: **one** toplevel, always fullscreen at the panel size; a second client is refused (kiosk rule).
 - `wl_output`: mode 1080×1240, `transform` = the panel's orientation, scale 1.
-- `wl_seat`: keyboard, pointer and touch. Gamepads are **not** forwarded — clients read evdev directly (see Phase 4).
+- `wl_seat`: keyboard, pointer and touch. Gamepads are **not** forwarded — clients read evdev directly (see Phase 3C).
 - `wl_shm` and `zwp_linux_dmabuf_v1` (import): shm for software clients (mpv/SDL software), dmabuf for GL/Vulkan
   clients. Accept the modifiers the probe listed; reject unknown ones with a clear error.
 - Renderer: import the client buffer, and if the probe showed hardware plane rotation, scan it out as-is; otherwise
@@ -379,7 +410,7 @@ the exact `errno`s in the probe output.
   dropped, since it is already running) and bananad's wake path is updated in the same change.
 - The RetroArch patch stays: the in-process OSD is the fallback when the compositor path is off.
 
-### 2.3 Fallback rules
+### 3.3 Fallback rules
 
 - Probe shows no usable overlay plane, or no plane rotation and an EGL rotate > 1 ms/frame: **stop**, keep cage, ship
   Phase 1B only.
@@ -393,7 +424,7 @@ running (20 cycles); audio alive on wake; the menu's return path has no "panel r
 
 ---
 
-## Phase 3 — Quick-menu and OS toast layer on the hardware overlay plane
+## Phase 3B — Quick-menu and OS toast layer on the hardware overlay plane (was Phase 3)
 
 **Goal:** volume/brightness, achievements, low battery, unplug and errors render above any client, without waking the
 GPU.
@@ -422,7 +453,7 @@ from RetroArch and one from a port both show.
 
 ---
 
-## Phase 4 — Input interception and `EVIOCGRAB` multiplexing
+## Phase 3C — Input interception and `EVIOCGRAB` multiplexing (was Phase 4)
 
 **Goal:** while the quick menu is up, the game gets no controller input; power and volume keep working.
 
@@ -448,9 +479,9 @@ own controls; sleep while the overlay is open resumes with the overlay consisten
 
 ---
 
-## Phase 5 — Buildroot cleanup and the merge gate
+## Phase 4 — Buildroot cleanup and the merge gate (was Phase 5)
 
-### 5.1 Packages
+### 4.1 Packages
 
 - `BR2_PACKAGE_CAGE=y` (`buildroot/configs/banana_retroid_pocket_classic_defconfig:109`) goes. `wlroots` is only
   pulled by cage and disappears with it — verify in `output/…/build/*/` and in the installed file list.
@@ -464,7 +495,7 @@ own controls; sleep while the overlay is open resumes with the overlay consisten
 - Keep one release of escape hatch: `banana.compositor=cage` on the kernel command line (or a `bananad.conf` key)
   that restores the old launchers and the cage package, so a field failure is a reboot away, not a reflash.
 
-### 5.2 Acceptance on the handheld (all required before merging)
+### 4.2 Acceptance on the handheld (all required before merging)
 
 1. **Frame pacing:** 60.00 fps in RetroArch (`statistics_show`) over 10 minutes, dropped frames within 1% of the
    cage baseline, on PSX (Vulkan) and Dreamcast (glcore).
@@ -477,12 +508,12 @@ own controls; sleep while the overlay is open resumes with the overlay consisten
    guard's rule is explicit and tested (recommended: the guard is suspended while a client is focused).
 6. **Memory:** menu RSS at boot and with a game running; total of `banana-ui + cage + wlroots` before vs. after; the
    plan's target is a net reduction (cage and wlroots gone), and the overlay buffers must not exceed +12 MB.
-7. **Input:** Phase 4's checks, plus the analog toggle and volume keys.
+7. **Input:** Phase 3C's checks, plus the analog toggle and volume keys.
 8. **Everything else:** `make -s test` (goldens included), `make bench` within noise, QEMU boot test still passes
    (cage is exercised there too — update the expectation), thermals unchanged, the update path untouched.
 9. **Rollback:** `banana.compositor=cage` boots the old path; the A/B update and **Previous version** still work.
 
-### 5.3 Documentation and merge
+### 4.3 Documentation and merge
 
 `docs/ARCHITECTURE.md` §3/§4 (the handover is gone; the compositor owns DRM), README's "What runs the show" (cage
 leaves the list), `docs/ROADMAP.md` (this plan becomes Done with the measured numbers), and a note in
@@ -497,16 +528,16 @@ leaves the list), `docs/ROADMAP.md` (this plan becomes Done with the measured nu
 | msm planes cannot rotate 90° | The panel is portrait (1080×1240) while every client draws 1240×1080; cage does the turn today | Probe `rotation` on each plane; if absent, budget one EGL pass and the direct-plane saving is lost |
 | DMA-BUF import fails for Vulkan/GL clients | Turnip + Vulkan WSI allocate from the driver; modifiers must match | Probe formats/modifiers; test with RetroArch first (Vulkan and glcore), then SDL2 |
 | A single CRTC makes the overlay impossible | One DSI output; planes are tied to a CRTC | This is why leases are out; the compositor owns the one CRTC and composites everything |
-| Being resident changes sleep | The menu currently leaves the panel to the game; bananad's SIGHUP/SIGUSR1 logic assumes cage | Explicit task in Phase 2 (`compositor.pid`, resume re-commit), tested in 5.2.3 |
+| Being resident changes sleep | The menu currently leaves the panel to the game; bananad's SIGHUP/SIGUSR1 logic assumes cage | Explicit task in Phase 3 (`compositor.pid`, resume re-commit), tested in 4.2 item 3 |
 | Input regressions | Three readers today, none grabbing | Grab only the pad/touch, only while the overlay is up, and only after the press is released |
 | Atomic KMS regression in the menu | The renderer is hand-tuned and the tests do not open DRM | Legacy kill switch, `--kms-selftest`, before/after bench, 30-minute soak |
-| Scope | A correct single-client compositor is thousands of lines, not 500 | Phase 1A ships regardless; Phase 2 stops at the fallback gate |
+| Scope | A correct single-client compositor is thousands of lines, not 500 | Phase 1A ships regardless; Phase 3 stops at the fallback gate |
 
 ## Suggested sequencing
 
 1. Phase 1A probe + report (this change); 1B atomic menu after the GO.
-2. Phase 2 lease test (one day) → decision gate.
-3. Phase 2 compositor spike on a branch: RetroArch only, no overlay, no ports.
-4. Phase 3 overlay plane + bananad's `/run/banana/overlay`.
-5. Phase 4 input grab.
-6. Phase 5 ports/BananaTube, package removal, acceptance.
+2. Phase 2: one real RetroArch and one SDL2 DMA-BUF import → gate.
+3. Phase 3: lease test, then the compositor spike (RetroArch only, no overlay, no ports).
+4. Phase 3B: overlay plane + bananad's `/run/banana/overlay`.
+5. Phase 3C: input grab.
+6. Phase 4: ports/BananaTube, package removal, acceptance.
