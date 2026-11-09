@@ -33,7 +33,7 @@ set -u
 
 PROBE=/data/drm-plane-probe
 CONNECTOR=
-CARD=/dev/dri/card0
+CARD=
 COMMIT=unknown
 FOREGROUND=0
 TARGET=/usr/bin/banana-ui-session
@@ -59,6 +59,10 @@ if [ "${DRM_PROBE_DETACHED:-0}" != 1 ] && [ "$FOREGROUND" != 1 ]; then
 	mkdir -p "$LOGDIR" 2>/dev/null
 	ts=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%S)
 	log="$LOGDIR/drm-probe-window-$ts.log"
+	# the options were consumed by the parser above: hand the child a canonical list, not "$@"
+	set -- --probe "$PROBE" --commit "$COMMIT"
+	[ -n "$CONNECTOR" ] && set -- "$@" --connector "$CONNECTOR"
+	[ -n "$CARD" ] && set -- "$@" --card "$CARD"
 	if command -v setsid >/dev/null 2>&1; then
 		DRM_PROBE_DETACHED=1 setsid "$0" "$@" </dev/null >>"$log" 2>&1 &
 	else
@@ -206,7 +210,7 @@ REPORT="$LOGDIR/drm-probe-$board-$ts.txt"
 	echo "kernel: $(uname -a)"
 	echo "probe commit: $COMMIT"
 	echo "probe sha256: $(sha256sum "$PROBE" | cut -d' ' -f1)"
-	echo "probe args: --take-master --card $CARD${CONNECTOR:+ --connector $CONNECTOR}"
+	echo "probe args: --take-master${CARD:+ --card $CARD}${CONNECTOR:+ --connector $CONNECTOR}"
 	echo
 } > "$REPORT" || fail "cannot write $REPORT"
 
@@ -258,7 +262,8 @@ while [ $i -lt 50 ] && [ ! -s "$STANDIN_PIDFILE" ]; do sleep 0.1; i=$((i+1)); do
 say "exclusive window: stand-in pid $STANDIN_PID, menu stopped"
 
 # 4. the matrix
-set -- --take-master --card "$CARD"
+set -- --take-master
+[ -n "$CARD" ] && set -- "$@" --card "$CARD"
 [ -n "$CONNECTOR" ] && set -- "$@" --connector "$CONNECTOR"
 say "running: timeout $TIMEOUT $PROBE $*"
 rm -f "$PROBE_PIDFILE"

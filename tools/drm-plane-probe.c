@@ -26,6 +26,7 @@
 // 1 = fatal (cannot open the card or read resources).
 
 #define _GNU_SOURCE
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -120,8 +121,39 @@ static const char *conn_name(uint32_t type, uint32_t id, char out[32])
 static int fd = -1;
 static bool opt_take_master;
 static bool opt_no_atomic;
-static const char *opt_card = "/dev/dri/card0";
+static const char *opt_card;
 static const char *opt_connector;
+
+// the DRM card: the card whose connector reports "connected" in sysfs, preferring a DSI panel. The msm DPU is
+// not always card0 (the RPC's is card1); --card still overrides.
+static const char *find_card(void)
+{
+	static char path[64];
+	for (int want_dsi = 1; want_dsi >= 0; want_dsi--)
+	{
+		DIR *d = opendir("/sys/class/drm");
+		if (!d) break;
+		struct dirent *e;
+		while ((e = readdir(d)))
+		{
+			if (strncmp(e->d_name, "card", 4) || !strchr(e->d_name, '-')) continue;
+			if (want_dsi && !strstr(e->d_name, "-DSI")) continue;
+			char f[320], status[32] = "";
+			snprintf(f, sizeof f, "/sys/class/drm/%s/status", e->d_name);
+			FILE *sf = fopen(f, "r");
+			if (!sf) continue;
+			if (fgets(status, sizeof status, sf)) {}
+			fclose(sf);
+			if (strncmp(status, "connected", 9)) continue;
+			int n = (int)(strchr(e->d_name, '-') - e->d_name);
+			snprintf(path, sizeof path, "/dev/dri/%.*s", n, e->d_name);
+			closedir(d);
+			return path;
+		}
+		closedir(d);
+	}
+	return "/dev/dri/card0";
+}
 
 // ---- properties ---------------------------------------------------------------------------------------------------
 
@@ -942,6 +974,7 @@ int main(int argc, char **argv)
 		else { usage(); return 1; }
 	}
 
+	if (!opt_card) opt_card = find_card();
 	fd = open(opt_card, O_RDWR | O_CLOEXEC);
 	if (fd < 0)
 	{
