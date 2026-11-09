@@ -87,6 +87,13 @@ import struct, sys
 t, c, v = (int(x) for x in sys.argv[1:4])
 sys.stdout.buffer.write(struct.pack('llHHi', 0, 0, t, c, v) + struct.pack('llHHi', 0, 0, 0, 0, 0))" "$@" >&3; }
 EV_KEY=1 KEY_POWER=116
+
+# The game's stdin channel: after a wake bananad reinitialises the game's audio driver through it (the stream died
+# with the sound server, which is stopped for the sleep).
+mkfifo /run/banana/retroarch.cmd 2>/dev/null || true
+: > /run/test/ra-cmds
+( exec 4<>/run/banana/retroarch.cmd; while IFS= read -r cmd <&4; do printf '%s\n' "$cmd" >> /run/test/ra-cmds; done ) &
+
 # press and release power: bananad sleeps on the release
 power() { ev $EV_KEY $KEY_POWER 1; sleep 0.1; ev $EV_KEY $KEY_POWER 0; }
 # is bananad blocked writing "mem" (asleep)? wait up to 3 s
@@ -95,7 +102,11 @@ asleep() { for i in $(seq 30); do [ "$(cat /proc/$BD/wchan 2>/dev/null)" = wait_
 # read "mem": the write returns, it is awake. A real power-key wake carries a KEY_POWER press (the spurious-wake
 # guard re-sleeps a wake with no key and no cable), so wake() queues one before releasing the FIFO; an RTC wake
 # (the battery check's alarm) has no key. 0.4.54 added the guard after this test, which is why wake() has the press.
-wake() { ev $EV_KEY $KEY_POWER 1; head -c 3 /sys/power/state > /dev/null; sleep 0.4; }
+# (the wake log now comes after the sound server's wait, so wait for a new "awake" line rather than a fixed pause)
+wake() { ev $EV_KEY $KEY_POWER 1; head -c 3 /sys/power/state > /dev/null
+    n=$(grep -ac 'awake (' /data/banana/logs/sleep.log 2>/dev/null || true); n=${n:-0}
+    i=0; while [ $i -lt 30 ]; do m=$(grep -ac 'awake (' /data/banana/logs/sleep.log 2>/dev/null || true); m=${m:-0}
+        [ "$m" -gt "$n" ] && break; sleep 0.1; i=$((i+1)); done; }
 rtc_wake() { head -c 3 /sys/power/state > /dev/null; sleep 0.4; }
 gstate() { awk '{print $3}' /proc/$GAME/stat; }
 start() {   # start [bananad.conf lines]
@@ -121,6 +132,8 @@ grep -q "\[deep\]" /sys/power/mem_sleep && ok "deep sleep chosen" || bad "mem_sl
 grep -q 'going to sleep (power button)' /data/banana/logs/sleep-state && ok "the pre-sleep note was written" || bad "no sleep-state note"
 wake
 [ "$(gstate)" != T ] && ok "game running again after the wake" || bad "game still stopped"
+for i in $(seq 30); do grep -qx AUDIO_REINIT /run/test/ra-cmds 2>/dev/null && break; sleep 0.1; done
+grep -qx AUDIO_REINIT /run/test/ra-cmds && ok "the game's audio driver was reinitialised after the wake" || bad "no AUDIO_REINIT after the wake"
 rm -f /run/banana/game.pid; sleep 0.1
 grep -q 'awake (power button)' /data/banana/logs/sleep.log && ok "sleep.log: $(tail -n1 /data/banana/logs/sleep.log | cut -c21-)" || bad "no wake in sleep.log"
 grep -q 'battery 50% -> 50%' /data/banana/logs/sleep.log && ok "the sleep's battery cost is in sleep.log" || bad "no battery change in sleep.log"

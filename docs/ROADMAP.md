@@ -58,6 +58,12 @@ and OTA updates over Wi-Fi are done (see *Done*). Next:
   - The meter (`battery_charge_uah`, the awake line) is in the image (0.5.8+); the `30-usb` hook ships in it too
     (0.5.10), so the unit's bind-mounted copy went away with the update. The unit runs **0.5.12, slot b**
     (updated 2026-11-08).
+  - **A game's audio after a wake (fixed 2026-11-09).** The sound server is stopped for the sleep, which kills the
+    running game's audio stream; RetroArch does not reopen it on resume, so the game came back silent for the rest of
+    the session. `bananad` now waits for the server (with its runtime dir set -- it has no session) and sends
+    `AUDIO_REINIT` down the game's stdin after a wake, the same command the headphone jack uses. Measured on the unit:
+    the server takes ~1.7 s to answer, then the game's driver starts again (client and both outputs active in
+    PipeWire).
 
 - **BananaTube: what is left of the YouTube work.** A1 (idle frames), A2 (cards, keyboard, thumbnail bound), B1 (player
   OSD + Y quality) and the Pocket shell all shipped in 0.5.9. Left: **captions** (Track B3 -- yt-dlp's subtitle path

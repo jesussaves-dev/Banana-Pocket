@@ -85,6 +85,7 @@ static void jack_settle_begin(void);
 static void jack_settle_poll(void);
 static void jack_log(void);
 static int ra_cmd(const char *cmd);
+static void sound_wait(double seconds);
 static void undim(void);
 static void find_panel_bl(void);
 static char panel_bl[64];	/* the panel's backlight name; banana-ui's idle dim owns it while it runs */
@@ -791,6 +792,13 @@ static void suspend_now(const char *why)
 	double t_back = mono();
 	undim();
 	hooks("post", 1);
+	if (pg > 0) {
+		/* the game's stream died with the server when it was stopped for the sleep: the driver has to be restarted
+		 * (AUDIO_REINIT, the same command the jack uses), or the game runs on without sound for good */
+		sound_wait(3.0);
+		if (ra_cmd("AUDIO_REINIT")) sleep_log("audio: the game's driver was reinitialised after the wake");
+		else sleep_log("audio: could not reinitialise the game's driver after the wake");
+	}
 	/* the press that woke us comes in now: it is not a new request */
 	drain_inputs();
 	power_update();
@@ -1208,6 +1216,35 @@ static void sleep_quiet_end(void)
 		if (sleep_rx1[0]) cset(card_ar, "RX_RX1 Digital Volume", sleep_rx1);
 	}
 	sleep_rx0[0] = sleep_rx1[0] = 0;
+}
+
+/* The sound server is stopped for a sleep and comes back in the background on the way up (sleep.d/20-sound). A game
+ * resumed before it is up finds its audio stream gone for good (RetroArch does not reopen the device on its own), so
+ * the wake waits for the server to accept real PCM parameters before reinitialising the game's audio driver. The
+ * daemon has no session, so the PipeWire runtime dir has to be set here. Bounded; without a server (the host test)
+ * there is nothing to wait for. */
+static void sound_wait(double seconds)
+{
+	setenv("XDG_RUNTIME_DIR", "/run/banana/wayland", 1);
+	setenv("PIPEWIRE_RUNTIME_DIR", "/run/banana/wayland", 1);
+	double t = mono();
+	int seen = 0;
+	for (;;) {
+		snd_pcm_t *pc = NULL;
+		if (snd_pcm_open(&pc, "default", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) == 0) {
+			int ok = snd_pcm_set_params(pc, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, 48000, 1, 15000) == 0;
+			snd_pcm_close(pc);
+			if (ok) return;
+		}
+		if (!seen) {
+			FILE *p = popen("pidof pipewire 2>/dev/null", "r");
+			seen = p && fgetc(p) != EOF;
+			if (p) pclose(p);
+		}
+		if (!seen && mono() - t >= 1.5) return;
+		if (mono() - t >= seconds) { sleep_log("audio: the server is not back after %.0f ms", (mono() - t) * 1000); return; }
+		sleep_us(100000);
+	}
 }
 
 /* The jack's answer, confirmed without blocking the loop. The WCD937x's MBHC answers before it has measured the socket:
