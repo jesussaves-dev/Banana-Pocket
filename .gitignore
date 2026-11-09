@@ -29,3 +29,10 @@ __pycache__/
 # fetched icon references (tools/fetch-ref.py): local artifacts, not shipped
 /tmp/
 /ui/assets/refs/
+
+# icon source art and scratch previews: local working files, the shipped 32x32 icons are in the tree
+/Fantasy Icons/
+/test icons/
+/tmp_new_style_preview.png
+/tmp_pixellab_preview.png
+/ui/assets/overrides/palette_master.png
