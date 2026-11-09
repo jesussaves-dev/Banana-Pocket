@@ -56,6 +56,13 @@ namespace banana
 		// the night light: 0 off, 1 warm, 2 warmer. A gamma LUT on the panel, so it covers a game too (set from the
 		// menu, which holds the master; the kernel keeps the LUT across the compositor hand-over)
 		void setWarmth(int level);
+		// Phase 3B: the DRM fd (the compositor imports a client's DMA-BUF on it), whether the atomic overlay path
+		// is in use, and the two compositor frames. presentGame() puts a client's framebuffer on the primary and
+		// hides the menu overlay; showMenu() puts the menu back. Both honor the one-flip-in-flight rule.
+		int drmFd() const { return fd; }
+		bool atomic() const { return count > 0 && p[0].atomic; }
+		bool presentGame(uint32_t fb, uint32_t w, uint32_t h);
+		bool showMenu();
 
 	private:
 		struct Buf { uint32_t handle = 0, fb = 0, pitch = 0; uint64_t size = 0; uint8_t* map = nullptr; };
@@ -91,5 +98,6 @@ namespace banana
 		uint32_t propId(uint32_t obj, uint32_t type, const char* name, uint64_t* value = nullptr);
 		bool findPlanes(Panel& pn, uint32_t crtc_index);
 		bool atomicModeset(Panel& pn);
+		bool commitFrame(Panel& pn, uint32_t primaryFb, uint32_t srcW, uint32_t srcH, uint32_t overlayFb);
 	};
 }

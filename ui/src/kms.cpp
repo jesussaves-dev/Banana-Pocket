@@ -474,25 +474,8 @@ namespace banana
 			pn.missed[pn.front] = dmg[s];	// the buffer going hidden misses this frame
 			if (pn.atomic)
 			{
-				drmModeAtomicReq* r = drmModeAtomicAlloc();
-				auto addp = [&](uint32_t obj, uint32_t prop, uint64_t v) { if (r && prop) drmModeAtomicAddProperty(r, obj, prop, v); };
-				auto addPlane = [&](const Plane& pl, uint32_t fb) {
-					addp(pl.id, pl.crtc_id, pn.crtc);
-					addp(pl.id, pl.fb_id, fb);
-					addp(pl.id, pl.src_x, 0);
-					addp(pl.id, pl.src_y, 0);
-					addp(pl.id, pl.src_w, (uint64_t)SW << 16);
-					addp(pl.id, pl.src_h, (uint64_t)SH << 16);
-					addp(pl.id, pl.crt_x, 0);
-					addp(pl.id, pl.crt_y, 0);
-					addp(pl.id, pl.crt_w, SW);
-					addp(pl.id, pl.crt_h, SH);
-				};
-				addPlane(pn.primary, pn.black.fb);
-				addPlane(pn.overlay, bf.fb);
-				if (drmModeAtomicCommit(fd, r, DRM_MODE_PAGE_FLIP_EVENT, &pending) == 0)
+				if (commitFrame(pn, pn.black.fb, SW, SH, bf.fb))
 				{
-					pending++;
 					pn.front = back;
 					any = true;
 				}
@@ -502,7 +485,6 @@ namespace banana
 					drmModeSetCrtc(fd, pn.crtc, bf.fb, 0, 0, &pn.conn, 1, (drmModeModeInfo*)pn.mode);
 					pn.front = back;
 				}
-				drmModeAtomicFree(r);
 			}
 			else if (drmModePageFlip(fd, pn.crtc, bf.fb, DRM_MODE_PAGE_FLIP_EVENT, &pending) == 0)
 			{
@@ -518,6 +500,48 @@ namespace banana
 			}
 		}
 		return any;
+	}
+
+	// One atomic frame on a panel: the primary (a game buffer or the black one) and the overlay (the menu, or 0 to
+	// hide it). srcW/srcH are the source size in pixels; the destination is always the panel mode, so a 1240x1080
+	// client buffer is scaled to the 1080x1240 panel here (Phase 3B; 3C rotates it in EGL instead). The 3A menu
+	// path passes the panel size for both and is pixel-identical to before.
+	bool Display::commitFrame(Panel& pn, uint32_t primaryFb, uint32_t srcW, uint32_t srcH, uint32_t overlayFb)
+	{
+		if (fd < 0 || pending || !pn.atomic) return false;
+		drmModeAtomicReq* r = drmModeAtomicAlloc();
+		if (!r) return false;
+		auto addp = [&](uint32_t obj, uint32_t prop, uint64_t v) { if (prop) drmModeAtomicAddProperty(r, obj, prop, v); };
+		auto addPlane = [&](const Plane& pl, uint32_t fb, uint32_t sw, uint32_t sh, bool on) {
+			addp(pl.id, pl.crtc_id, on ? pn.crtc : 0);
+			addp(pl.id, pl.fb_id, fb);
+			if (!on) return;
+			addp(pl.id, pl.src_x, 0);
+			addp(pl.id, pl.src_y, 0);
+			addp(pl.id, pl.src_w, (uint64_t)sw << 16);
+			addp(pl.id, pl.src_h, (uint64_t)sh << 16);
+			addp(pl.id, pl.crt_x, 0);
+			addp(pl.id, pl.crt_y, 0);
+			addp(pl.id, pl.crt_w, SW);
+			addp(pl.id, pl.crt_h, SH);
+		};
+		addPlane(pn.primary, primaryFb, srcW, srcH, primaryFb != 0);
+		addPlane(pn.overlay, overlayFb, SW, SH, overlayFb != 0);
+		int ret = drmModeAtomicCommit(fd, r, DRM_MODE_PAGE_FLIP_EVENT, &pending);
+		drmModeAtomicFree(r);
+		if (ret) return false;
+		pending++;
+		return true;
+	}
+
+	bool Display::presentGame(uint32_t fb, uint32_t w, uint32_t h)
+	{
+		return commitFrame(p[0], fb, w, h, 0);
+	}
+
+	bool Display::showMenu()
+	{
+		return commitFrame(p[0], p[0].black.fb, SW, SH, p[0].buf[p[0].front].fb);
 	}
 
 	void Display::handleEvents()

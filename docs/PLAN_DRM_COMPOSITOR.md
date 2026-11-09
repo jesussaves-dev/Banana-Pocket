@@ -16,7 +16,7 @@ These names are the only phase numbers used from here on; older headings below k
 | **1A** | DRM probe: plane enumeration and the TEST_ONLY matrix on the target (this work) | a reviewed target report |
 | **1B** | `banana-ui` atomic KMS (prerequisite; independent of the compositor) | the 1A report, then its own hardware smoke test |
 | **2** | real-client DMA-BUF import and modifier compatibility (RetroArch/SDL2 buffers) | **measured**: compressed rejected; linear imports/scans; rotation EGL |
-| **3** | compositor implementation: 3A atomic primary/overlay in `banana-ui` (done), 3B Wayland + one client, 3C EGL rotate, 3D UI overlay, 3E input/lifecycle, 3F performance | 2 measured; GO (EGL rotate); each milestone's own hardware gate |
+| **3** | compositor implementation: 3A atomic primary/overlay in `banana-ui` (done), 3B Wayland + one client (done, unrotated), 3C EGL rotate, 3D UI overlay, 3E input/lifecycle, 3F performance | 2 measured; GO (EGL rotate); each milestone's own hardware gate |
 | **4** | Buildroot cleanup, ports/BananaTube integration and the merge gate | the full acceptance list |
 
 A 1A GO authorises **1B and Phase 2 (client-buffer validation)**, not the compositor. TEST_ONLY results never prove real-client buffer
@@ -510,7 +510,44 @@ ownership seam (`ui/src/compositor.h`), keep every other path (menu, input, soun
   `cage` and the menu returns with `panel back after the game (0 tries)`; one power-button suspend/wake reopened the
   display atomically (a new `kms: panel ... atomic=1` line, planes restored).
 
-### 3.2 Scope of the compositor (D1)
+### 3.2 Phase 3B — minimal Wayland, one client, no rotation (implemented and measured 2026-11-09)
+
+Scope: an in-process `libwayland-server` (in `ui/src/compositor.cpp`) for one kiosk client. cage stays the game
+launch path; this server is reached only by a client that connects to `/run/banana/wayland/banana-0`.
+
+- **Globals:** `wl_compositor` 4, `wl_output` 3 (1240×1080, transform normal, scale 1), `wl_seat` 5 (capabilities
+  0 until 3E), `wl_shm` 1, `xdg_wm_base` 1 (one fullscreen toplevel), `zwp_linux_dmabuf_v1` 4 with feedback, and
+  `wl_drm` 2 (device, AR24/XR24, PRIME) because Mesa's Wayland WSI asks for it. Protocol code is generated at build
+  time from the sysroot XMLs (plus the vendored `ui/src/wayland/wayland-drm.xml`).
+- **Buffers:** only the pair the Phase 2 matrix proved: XR24/AR24, one plane, `DRM_FORMAT_MOD_LINEAR`. Nothing else
+  is advertised; a compressed modifier or a second plane is a protocol error, not an EINVAL loop. The feedback's
+  `main_device` is the card's `st_rdev`.
+- **Presentation:** the client's buffer is imported once (`drmPrimeFDToHandle` + `AddFB2WithModifiers(LINEAR)`), put
+  on the primary with `Display::presentGame()` and the menu overlay hidden (`CRTC_ID=0, FB_ID=0`). The source is
+  1240×1080 and the destination is the panel's 1080×1240: 3B scales and does **not** rotate, so the picture is
+  sideways until 3C's EGL pass. One flip in flight, as in 3A.
+- **Lifetimes:** the wl_buffer resource owns its imported FB; the compositor also holds a reference for the frame
+  presented and a separate one for the FB the plane is still scanning, so a client destroying its buffer after
+  `wl_buffer.release` can never `RmFB` the scanout FB. Release and the frame callback fire on the flip event.
+  `wl_resource_destroy` for the client runs its destroy signal *before* its resources: the surface objects are
+  therefore freed by the resource callback, not by the client handler.
+- **One client:** a second `wl_client` is destroyed immediately (logged). A second surface is allowed (SDK/EGL make
+  more than one) but only the first that commits a buffer presents; the others' buffers are released.
+- **Coexistence:** while a client frame is pending or on screen `gameActive()` is true and the menu neither renders
+  nor presents. A disconnect drops the client's frames, addresses the menu commit after the last flip and the main
+  loop redraws it in full. `runGame` stops the server before `disp.close()` and starts it after the panel reopens;
+  the SIGUSR1 wake path does the same. cage is untouched.
+- **Measured on the unit:** SDL2 GLES (`tools/dmabuf-capture/sdl2-gl-client`) connects, is configured at 1240×1080,
+  presents XR24 linear frames on the primary (`plane[38]` 1240×1080, `allocated by = banana-ui`, `crtc-pos
+  1080x1240`) with the overlay off (`crtc=(null), fb=0`); frames advance past 120 with buffer cycling; a second
+  client is refused and leaves the first running; `kill -9` returns the menu without restarting it; `SIGTERM`
+  closes the menu and the respawned one restores the panel and the socket; a cage game launches (cage's FB on the
+  primary, socket gone) and returns (`panel back after the game (0 tries)`, socket recreated); `SIGUSR1` reopens
+  the panel and restarts the server. Host tests and the AArch64 build pass.
+- **Not in 3B:** correct orientation (3C), quick menu/toasts over a game (3D), real input/focus (3E), frame pacing
+  (3F). No launcher, session or bananad change: production still uses cage.
+
+### 3.3 Scope of the compositor (D1)
 
 `banana-ui` creates `/run/banana/wayland/wayland-0` itself (the same path cage used, so the launchers only lose the
 `cage --` prefix and `SEATD_VTBOUND`). Objects, in order of need:
@@ -535,7 +572,7 @@ ownership seam (`ui/src/compositor.h`), keep every other path (menu, input, soun
   dropped, since it is already running) and bananad's wake path is updated in the same change.
 - The RetroArch patch stays: the in-process OSD is the fallback when the compositor path is off.
 
-### 3.3 Fallback rules
+### 3.4 Fallback rules
 
 - Probe shows no usable overlay plane, or no plane rotation and an EGL rotate > 1 ms/frame: **stop**, keep cage, ship
   Phase 1B only.

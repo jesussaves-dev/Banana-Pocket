@@ -1317,8 +1317,13 @@ int main(int argc, char** argv)
 	Input input;
 	input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
 
+	// Phase 3B: the in-process Wayland server (one kiosk client; cage stays the game path). It needs the atomic
+	// display, so a legacy panel logs why it is off and the menu runs exactly as before.
+	if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
+
 	Repeat rep;
 	bool dirty = true, quit = false, drawn = false;	// drawn: a frame on the canvas waiting for the flips
+	bool gameWas = false;	// a Wayland client owned the primary last pass: the menu is restored when it goes
 	double quietUntil = 0;	// no frame before this: the last one flipped nothing (see present below)
 	// the AMOLED burn-in guard: the panel's backlight, owned here while the menu runs (bananad's own idle dim leaves
 	// it to us while /run/banana/panel-ui is there). IdleGuard does the dim/blank/wake; attached just below.
@@ -1567,6 +1572,7 @@ int main(int argc, char** argv)
 		boost.release();
 		forgetDecoded();
 		input.close();
+		comp.stop();	// a Wayland client's buffers belong to the closing DRM fd
 		disp.close();
 		drawn = false;	// the menu is drawn afresh when the panel comes back
 		rep.key = Key::NONE;
@@ -1584,6 +1590,7 @@ int main(int argc, char** argv)
 			for (int tries = 0; !disp.openSingle(o.top, err) && tries < 100; tries++) sleepUs(50000);
 			be.invalidate();
 			input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
+			if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
 			sound.setBgm(settings["bgm"] != "off");
 			sound.warm();
 			guard.input(nowMs());
@@ -1629,6 +1636,7 @@ int main(int argc, char** argv)
 		}
 		be.invalidate();
 		input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
+		if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
 		std::lock_guard<std::mutex> l(worker.uiLock);
 		{
 			int achA = -1, achB = 0;
@@ -1813,7 +1821,7 @@ int main(int argc, char** argv)
 		// the next frame is drawn while the last one's flips are still pending (present copies it out, so the canvas is
 		// free again at once), and handed over when the panel has flipped: drawing and the wait
 		// for the panel's vblank overlap instead of adding up to two refreshes a frame
-		if (want && disp.isOpen() && !drawn && nowMs() >= quietUntil)
+		if (want && disp.isOpen() && !drawn && !comp.gameActive() && nowMs() >= quietUntil)
 		{
 			double t0 = nowMs();
 			{
@@ -1825,7 +1833,7 @@ int main(int argc, char** argv)
 			drawn = true;
 			dirty = false;
 		}
-		if (drawn && disp.isOpen() && !disp.flipPending())
+		if (drawn && disp.isOpen() && !disp.flipPending() && !comp.gameActive())
 		{
 			const uint32_t* scr[2] = { be.pixels(0), be.pixels(1) };
 			Damage dmg[2] = { be.takeDamage(0), be.takeDamage(1) };
@@ -1912,6 +1920,7 @@ int main(int argc, char** argv)
 		auto addFd = [&](int fd) { if (fd >= 0 && nf < (int)(sizeof fds / sizeof fds[0])) { fds[nf].fd = fd; fds[nf].events = POLLIN; fds[nf].revents = 0; nf++; } };
 		addFd(sigPipe[0]); addFd(worker.wakeFd); addFd(roms.fd); addFd(launchWatch); addFd(powerFd);
 		if (disp.isOpen()) addFd(disp.pollFd());
+		addFd(comp.wlFd());
 		nf = input.fillFds(fds, nf, (int)(sizeof fds / sizeof fds[0]));
 		if (timeout == 0) timeout = 1;	// a deadline that is due is handled above; never spin on poll(2)
 		int n = poll(fds, nf, timeout);
@@ -1936,8 +1945,10 @@ int main(int argc, char** argv)
 						// back dark -- the kernel re-does its own part of the display, but a hold in the pipeline
 						// (a DPU encoder that timed out going down) is only cleared by a modeset, so take the
 						// panel again rather than redraw into a dead one
+						comp.stop();
 						disp.close();
 						for (int tries = 0; !disp.openSingle(o.top, err) && tries < 50; tries++) sleepUs(20000);
+						if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
 						std::lock_guard<std::mutex> l(worker.uiLock);
 						be.invalidate(); ui->dataChanged(); dirty = true; batteryDue = true; guard.wake(nowMs(), &sound); sound.setBgm(settings["bgm"] != "off"); sound.warm();
 					}
@@ -1994,11 +2005,20 @@ int main(int argc, char** argv)
 				if (read(worker.wakeFd, &v, 8) < 0) {}
 				dirty = true;
 			}
+			else if (comp.wlFd() >= 0 && p.fd == comp.wlFd())
+				comp.dispatch();
 			else if (disp.isOpen() && p.fd == disp.pollFd())
+			{
 				disp.handleEvents();
+				comp.vblank();	// a flip completed: release the client buffer, present the next frame
+			}
 			else
 				input.read(p.fd, handle);
 		}
+		// the client went away (or its last frame completed): give the panel back to the menu with a full redraw
+		bool gameNow = comp.gameActive();
+		if (gameWas && !gameNow) { be.invalidate(); dirty = true; drawn = false; }
+		gameWas = gameNow;
 		// A screen dump, asked for by writing /run/banana/screen.req (the launch watch above fires for it): the frame
 		// the menu has composed, which is what a person looking at the handheld sees -- Display turns it for the panel
 		// afterwards -- written as a JPEG to /run/banana/screen.jpg, with the request removed. For development over

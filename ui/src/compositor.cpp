@@ -1,0 +1,810 @@
+// Phase 3B: the in-process Wayland server. One kiosk client, one fullscreen xdg toplevel, linear DMA-BUFs only,
+// presented on the DRM primary plane with the menu overlay hidden. No rotation here (3C): the client's 1240x1080
+// buffer is scaled to the 1080x1240 panel by the plane, so the picture is sideways on purpose until the EGL pass.
+//
+// The server is a peer of the menu loop: its event loop fd joins the existing poll(), and its frames go through
+// the same one-flip-in-flight gate in Display. A client buffer is imported once (drmPrimeFDToHandle + AddFB2 with
+// LINEAR), kept alive by the compositor while it is on screen, and released with wl_buffer.release after the page
+// flip event. A disconnect puts the menu back.
+#include "compositor.h"
+#include "dmabuf.h"
+#include <cerrno>
+#include <cstdarg>
+#include <cstdlib>
+#include <cstdio>
+#include <cstring>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
+#include <vector>
+#include <drm_fourcc.h>
+#include <wayland-server.h>
+#include <xf86drm.h>
+#include <xf86drmMode.h>
+#include "xdg-shell-server-protocol.h"
+#include "linux-dmabuf-unstable-v1-server-protocol.h"
+#include "wayland-drm-server-protocol.h"
+
+namespace banana
+{
+	namespace
+	{
+		constexpr const char* kWaylandDir = "/run/banana/wayland";
+		constexpr const char* kSocket = "banana-0";
+		constexpr int kClientFormatW = 1240;	// the measured client buffer / the menu canvas
+		constexpr int kClientFormatH = 1080;
+
+		void logf(const char* fmt, ...)
+		{
+			va_list ap;
+			va_start(ap, fmt);
+			fputs("compositor: ", stderr);
+			vfprintf(stderr, fmt, ap);
+			fputc('\n', stderr);
+			va_end(ap);
+		}
+	}
+
+	struct Compositor::Impl
+	{
+		struct Buffer
+		{
+			Impl* im = nullptr;
+			wl_resource* res = nullptr;
+			int fd = -1;
+			uint32_t off = 0, stride = 0, format = 0, w = 0, h = 0, fb = 0;
+			uint64_t modifier = 0;
+			int refs = 0;	// 1 for the wl_buffer resource, +1 for each frame slot that holds it
+		};
+		struct Surface
+		{
+			Impl* im = nullptr;
+			wl_resource* res = nullptr;	// wl_surface
+			wl_resource* xdg = nullptr;	// xdg_surface
+			wl_resource* top = nullptr;	// xdg_toplevel
+			bool configured = false;
+			Buffer* pend = nullptr;		// attached, not committed
+		};
+
+		Display* d = nullptr;
+		wl_display* wl = nullptr;
+		wl_event_loop* loop = nullptr;
+		wl_client* client = nullptr;
+		wl_listener clientCreated = {};
+		wl_listener clientGone = {};
+		std::vector<Surface*> surfaces;	// every wl_surface the client made; only one may present
+		Surface* surf = nullptr;		// the one presenting (the first that commits a buffer)
+
+		Buffer* pending = nullptr;		// committed, not yet presented
+		Buffer* inflight = nullptr;		// presented, flip not completed
+		Buffer* onScreen = nullptr;		// the FB the primary is scanning now (kept until replaced)
+		wl_resource* pendCb = nullptr;		// a frame callback requested for the next commit
+		wl_resource* pendingCb = nullptr;
+		wl_resource* inflightCb = nullptr;
+		wl_listener pendCbGone = {};
+		wl_listener pendingCbGone = {};
+		wl_listener inflightCbGone = {};
+
+		bool hidMenu = false;			// presentGame() is on screen and the overlay is off
+		bool restoreMenu = false;		// show the menu as soon as the current flip completes
+		bool stopping = false;
+		bool saidShm = false;
+		bool saidSecondary = false;
+		unsigned frames = 0;
+		dev_t dev = 0;
+		char devName[128] = "";
+
+		struct Adv { uint32_t format; uint64_t modifier; } adv[2] = {
+			{ DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR },
+			{ DRM_FORMAT_ARGB8888, DRM_FORMAT_MOD_LINEAR },
+		};
+		int nadv = 2;
+
+		void bufferFree(Buffer* b)
+		{
+			if (b->fb && d->drmFd() >= 0) drmModeRmFB(d->drmFd(), b->fb);
+			if (b->fd >= 0) close(b->fd);
+			delete b;
+		}
+		void bufferDrop(Buffer* b) { if (--b->refs <= 0) bufferFree(b); }
+		void bufferRelease(Buffer* b)	// after the frame is no longer in use
+		{
+			if (b->res) wl_buffer_send_release(b->res);
+			bufferDrop(b);
+		}
+		void dropPending()
+		{
+			if (!pending) return;
+			Buffer* b = pending;
+			pending = nullptr;
+			bufferRelease(b);
+		}
+		bool import(Buffer* b)
+		{
+			int fd = d->drmFd();
+			if (fd < 0 || b->fd < 0) return false;
+			uint32_t handle = 0;
+			if (drmPrimeFDToHandle(fd, b->fd, &handle))
+			{
+				logf("import: drmPrimeFDToHandle failed (%s)", strerror(errno));
+				return false;
+			}
+			uint32_t handles[4] = { handle }, pitches[4] = { b->stride }, offsets[4] = { b->off };
+			uint64_t mods[4] = { b->modifier };
+			int ret = drmModeAddFB2WithModifiers(fd, b->w, b->h, b->format, handles, pitches, offsets, mods, &b->fb, DRM_MODE_FB_MODIFIERS);
+			drmCloseBufferHandle(fd, handle);
+			if (ret)
+			{
+				b->fb = 0;
+				logf("import: AddFB2 %ux%u fmt=%.4s mod=0x%016llx failed (%s)", b->w, b->h,
+				     (const char*)&b->format, (unsigned long long)b->modifier, strerror(errno));
+				return false;
+			}
+			close(b->fd);
+			b->fd = -1;
+			return true;
+		}
+		void putPendingCb(wl_resource* cb)
+		{
+			if (pendingCb) wl_resource_destroy(pendingCb);	// its destroy handler nulls the slot and unlinks
+			pendingCb = cb;
+			if (cb) wl_resource_add_destroy_listener(cb, &pendingCbGone);
+		}
+		void fireCb(wl_resource*& slot, wl_listener& l)
+		{
+			if (!slot) return;
+			wl_resource* cb = slot;
+			slot = nullptr;
+			struct timespec ts;
+			clock_gettime(CLOCK_MONOTONIC, &ts);
+			wl_callback_send_done(cb, (uint32_t)((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000));
+			wl_resource_destroy(cb);
+		}
+		void frame()
+		{
+			if (!pending || d->flipPending()) return;
+			Buffer* b = pending;
+			if (!b->fb && !import(b)) { dropPending(); return; }
+			if (!d->presentGame(b->fb, b->w, b->h))
+			{
+				if (!d->flipPending())
+				{
+					logf("presenting a client frame failed; dropped it");
+					dropPending();
+				}
+				return;
+			}
+			pending = nullptr;
+			inflight = b;
+			hidMenu = true;
+			if (onScreen != b)
+			{
+				if (onScreen) bufferDrop(onScreen);	// the new commit replaced it on the plane
+				b->refs++;
+				onScreen = b;
+			}
+			if (frames++ < 3 || frames % 60 == 0) logf("present %ux%u fb=%u (frame %u)", b->w, b->h, b->fb, frames);
+			if (pendingCb)
+			{
+				wl_resource* cb = pendingCb;
+				pendingCb = nullptr;
+				wl_list_remove(&pendingCbGone.link);
+				// the callback becomes the in-flight one
+				inflightCb = cb;
+				wl_resource_add_destroy_listener(cb, &inflightCbGone);
+			}
+		}
+		void vblank()
+		{
+			if (inflight && !d->flipPending())
+			{
+				Buffer* b = inflight;
+				inflight = nullptr;
+				bufferRelease(b);
+				fireCb(inflightCb, inflightCbGone);
+			}
+			if (restoreMenu && !inflight && !d->flipPending())
+			{
+				restoreMenu = false;
+				showMenu();
+			}
+			if (!restoreMenu) frame();
+		}
+		void surfaceGone(Surface* s)
+		{
+			s->res = nullptr;
+			if (s->pend) { bufferRelease(s->pend); s->pend = nullptr; }
+			s->xdg = s->top = nullptr;	// the client's resources are going away too
+			if (surf == s) surf = nullptr;
+			for (size_t i = 0; i < surfaces.size(); i++)
+				if (surfaces[i] == s) { surfaces.erase(surfaces.begin() + i); break; }
+			delete s;
+		}
+		void showMenu()
+		{
+			if (stopping) return;
+			if (d->showMenu())
+			{
+				hidMenu = false;
+				if (onScreen) { bufferDrop(onScreen); onScreen = nullptr; }
+			}
+		}
+		void clientDisconnected()
+		{
+			client = nullptr;
+			if (pendCb) { pendCb = nullptr; }		// their resource destroy handlers unlink the listeners
+			if (pendingCb) { pendingCb = nullptr; }
+			// the Surface objects are freed by their wl_surface resource destroy callback (surfaceGone), which runs
+			// after this: wl_client_destroy emits the client destroy signal before it destroys the resources
+			surf = nullptr;
+			dropPending();
+			if (inflight) restoreMenu = true;
+			else if (hidMenu && !stopping) showMenu();
+			logf("client disconnected");
+		}
+	};
+
+	namespace
+	{
+		using Impl = Compositor::Impl;
+
+		// ---- buffers ------------------------------------------------------------------------------------------------
+
+		void bufferResourceGone(wl_resource* res)
+		{
+			auto* b = (Impl::Buffer*)wl_resource_get_user_data(res);
+			if (!b) return;
+			b->res = nullptr;
+			b->im->bufferDrop(b);
+		}
+		void bufferDestroy(wl_client*, wl_resource* res) { wl_resource_destroy(res); }
+		const struct wl_buffer_interface bufferImpl = { .destroy = bufferDestroy };
+
+		void cbGonePending(wl_listener* l, void* data)
+		{
+			Impl* im = wl_container_of(l, im, pendingCbGone);
+			if ((wl_resource*)data == im->pendingCb) im->pendingCb = nullptr;
+			wl_list_remove(&l->link);
+		}
+		void cbGoneInflight(wl_listener* l, void* data)
+		{
+			Impl* im = wl_container_of(l, im, inflightCbGone);
+			if ((wl_resource*)data == im->inflightCb) im->inflightCb = nullptr;
+			wl_list_remove(&l->link);
+		}
+		void cbGonePend(wl_listener* l, void* data)
+		{
+			Impl* im = wl_container_of(l, im, pendCbGone);
+			if ((wl_resource*)data == im->pendCb) im->pendCb = nullptr;
+			wl_list_remove(&l->link);
+		}
+
+		// ---- xdg-shell ----------------------------------------------------------------------------------------------
+
+		void xdgTopDestroy(wl_client*, wl_resource* res)
+		{
+			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
+			if (s && s->top == res) s->top = nullptr;
+			wl_resource_destroy(res);
+		}
+		void xdgTopNoop2(wl_client*, wl_resource* r, wl_resource*) { (void)r; }
+		void xdgTopNoopStr(wl_client*, wl_resource* r, const char*) { (void)r; }
+		void xdgTopNoopSeat(wl_client*, wl_resource* r, wl_resource*, uint32_t, int32_t, int32_t) { (void)r; }
+		void xdgTopMove(wl_client*, wl_resource* r, wl_resource*, uint32_t) { (void)r; }
+		void xdgTopResize(wl_client*, wl_resource* r, wl_resource*, uint32_t, uint32_t) { (void)r; }
+		void xdgTop2i(wl_client*, wl_resource* r, int32_t, int32_t) { (void)r; }
+		void xdgTopNoop0(wl_client*, wl_resource* r) { (void)r; }
+		const struct xdg_toplevel_interface toplevelImpl = {
+			.destroy = xdgTopDestroy, .set_parent = xdgTopNoop2, .set_title = xdgTopNoopStr, .set_app_id = xdgTopNoopStr,
+			.show_window_menu = xdgTopNoopSeat, .move = xdgTopMove, .resize = xdgTopResize,
+			.set_max_size = xdgTop2i, .set_min_size = xdgTop2i,
+			.set_maximized = xdgTopNoop0, .unset_maximized = xdgTopNoop0,
+			.set_fullscreen = xdgTopNoop2, .unset_fullscreen = xdgTopNoop0, .set_minimized = xdgTopNoop0,
+		};
+
+		void xdgSurfDestroy(wl_client*, wl_resource* res)
+		{
+			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
+			if (s && s->xdg == res) s->xdg = nullptr;
+			wl_resource_destroy(res);
+		}
+		void xdgSurfToplevel(wl_client* c, wl_resource* res, uint32_t id)
+		{
+			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
+			if (!s) return;
+			if (s->top) { wl_resource_post_error(res, XDG_SURFACE_ERROR_ALREADY_CONSTRUCTED, "a second toplevel"); return; }
+			s->top = wl_resource_create(c, &xdg_toplevel_interface, wl_resource_get_version(res), id);
+			wl_resource_set_implementation(s->top, &toplevelImpl, s, nullptr);
+		}
+		void xdgSurfPopup(wl_client*, wl_resource* res, uint32_t, wl_resource*, wl_resource*)
+		{
+			wl_resource_post_error(res, XDG_SURFACE_ERROR_ALREADY_CONSTRUCTED, "popups are not supported");
+		}
+		void xdgSurfGeom(wl_client*, wl_resource*, int32_t, int32_t, int32_t, int32_t) {}
+		void xdgSurfAck(wl_client*, wl_resource*, uint32_t) {}
+		const struct xdg_surface_interface xdgSurfaceImpl = {
+			.destroy = xdgSurfDestroy, .get_toplevel = xdgSurfToplevel, .get_popup = xdgSurfPopup,
+			.set_window_geometry = xdgSurfGeom, .ack_configure = xdgSurfAck,
+		};
+
+		void xdgPosDestroy(wl_client*, wl_resource* r) { wl_resource_destroy(r); }
+		void xdgPosSize(wl_client*, wl_resource*, int32_t, int32_t) {}
+		void xdgPosRect(wl_client*, wl_resource*, int32_t, int32_t, int32_t, int32_t) {}
+		void xdgPosAnchor(wl_client*, wl_resource*, uint32_t) {}
+		void xdgPosGravity(wl_client*, wl_resource*, uint32_t) {}
+		void xdgPosAdjust(wl_client*, wl_resource*, uint32_t) {}
+		void xdgPosOffset(wl_client*, wl_resource*, int32_t, int32_t) {}
+		void xdgPosReactive(wl_client*, wl_resource*) {}
+		void xdgPosParentSize(wl_client*, wl_resource*, int32_t, int32_t) {}
+		void xdgPosParentCfg(wl_client*, wl_resource*, uint32_t) {}
+		const struct xdg_positioner_interface positionerImpl = {
+			.destroy = xdgPosDestroy, .set_size = xdgPosSize, .set_anchor_rect = xdgPosRect,
+			.set_anchor = xdgPosAnchor, .set_gravity = xdgPosGravity, .set_constraint_adjustment = xdgPosAdjust,
+			.set_offset = xdgPosOffset, .set_reactive = xdgPosReactive,
+			.set_parent_size = xdgPosParentSize, .set_parent_configure = xdgPosParentCfg,
+		};
+
+		void xdgWmDestroy(wl_client*, wl_resource* r) { wl_resource_destroy(r); }
+		void xdgWmPositioner(wl_client* c, wl_resource* res, uint32_t id)
+		{
+			wl_resource* r = wl_resource_create(c, &xdg_positioner_interface, wl_resource_get_version(res), id);
+			wl_resource_set_implementation(r, &positionerImpl, nullptr, nullptr);
+		}
+		void xdgWmGetSurface(wl_client* c, wl_resource* res, uint32_t id, wl_resource* surface)
+		{
+			auto* s = (Impl::Surface*)wl_resource_get_user_data(surface);
+			if (!s) return;
+			if (s->xdg) { wl_resource_post_error(res, XDG_WM_BASE_ERROR_ROLE, "a second xdg_surface"); return; }
+			s->xdg = wl_resource_create(c, &xdg_surface_interface, wl_resource_get_version(res), id);
+			wl_resource_set_implementation(s->xdg, &xdgSurfaceImpl, s, nullptr);
+		}
+		void xdgWmPong(wl_client*, wl_resource*, uint32_t) {}
+		const struct xdg_wm_base_interface xdgWmImpl = {
+			.destroy = xdgWmDestroy, .create_positioner = xdgWmPositioner,
+			.get_xdg_surface = xdgWmGetSurface, .pong = xdgWmPong,
+		};
+
+		void xdgBind(wl_client* c, void* data, uint32_t version, uint32_t id)
+		{
+			wl_resource* r = wl_resource_create(c, &xdg_wm_base_interface, version < 1 ? version : 1, id);
+			wl_resource_set_implementation(r, &xdgWmImpl, data, nullptr);
+		}
+
+		// ---- wl_surface ---------------------------------------------------------------------------------------------
+
+		void surfDestroy(wl_client*, wl_resource* res) { wl_resource_destroy(res); }
+		void surfAttach(wl_client*, wl_resource* res, wl_resource* buf, int32_t, int32_t)
+		{
+			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
+			Impl* im = s->im;
+			Impl::Buffer* b = nullptr;
+			if (buf)
+			{
+				if (wl_shm_buffer_get(buf))
+				{
+					if (!im->saidShm) { im->saidShm = true; logf("shm frame ignored (linux-dmabuf only)"); }
+				}
+				else
+				{
+					b = (Impl::Buffer*)wl_resource_get_user_data(buf);
+					if (b) b->refs++;
+				}
+			}
+			if (s->pend) im->bufferRelease(s->pend);
+			s->pend = b;
+		}
+		void surfDamage(wl_client*, wl_resource*, int32_t, int32_t, int32_t, int32_t) {}
+		void surfFrame(wl_client* c, wl_resource* res, uint32_t id)
+		{
+			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
+			Impl* im = s->im;
+			wl_resource* cb = wl_resource_create(c, &wl_callback_interface, wl_resource_get_version(res), id);
+			if (im->pendCb) wl_resource_destroy(im->pendCb);	// its destroy handler nulls the slot and unlinks
+			im->pendCb = cb;
+			wl_resource_add_destroy_listener(cb, &im->pendCbGone);
+		}
+		void surfRegion(wl_client*, wl_resource*, wl_resource*) {}
+		void surfCommit(wl_client*, wl_resource* res)
+		{
+			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
+			Impl* im = s->im;
+			if (!s->configured)
+			{
+				// the first commit after the role is assigned: answer with one fullscreen configure (a commit
+				// before the role exists only sets up the surface; keep waiting for the one that asks)
+				if (s->top && s->xdg)
+				{
+					struct wl_array states;
+					wl_array_init(&states);
+					if (uint32_t* st = (uint32_t*)wl_array_add(&states, sizeof *st)) *st = XDG_TOPLEVEL_STATE_ACTIVATED;
+					xdg_toplevel_send_configure(s->top, kClientFormatW, kClientFormatH, &states);
+					xdg_surface_send_configure(s->xdg, wl_display_next_serial(im->wl));
+					logf("configure %dx%d", kClientFormatW, kClientFormatH);
+					wl_array_release(&states);
+					s->configured = true;
+				}
+				return;
+			}
+			if (s->pend && im->surf && im->surf != s)
+			{
+				// a second surface's buffer: a kiosk shows the first surface that presents, not this one
+				if (!im->saidSecondary) { im->saidSecondary = true; logf("a second surface committed a buffer; ignored"); }
+				im->bufferRelease(s->pend);
+				s->pend = nullptr;
+				return;
+			}
+			if (s->pend)
+			{
+				if (!im->surf) im->surf = s;
+				if (im->pending) im->dropPending();
+				im->pending = s->pend;
+				s->pend = nullptr;
+				if (im->pendCb)
+				{
+					wl_resource* cb = im->pendCb;
+					im->pendCb = nullptr;
+					wl_list_remove(&im->pendCbGone.link);
+					im->putPendingCb(cb);
+				}
+			}
+			im->frame();
+		}
+		void surfTransform(wl_client*, wl_resource*, int32_t) {}
+		void surfScale(wl_client*, wl_resource*, int32_t) {}
+		void surfDamageBuffer(wl_client*, wl_resource*, int32_t, int32_t, int32_t, int32_t) {}
+		const struct wl_surface_interface surfaceImpl = {
+			.destroy = surfDestroy, .attach = surfAttach, .damage = surfDamage, .frame = surfFrame,
+			.set_opaque_region = surfRegion, .set_input_region = surfRegion, .commit = surfCommit,
+			.set_buffer_transform = surfTransform, .set_buffer_scale = surfScale, .damage_buffer = surfDamageBuffer,
+		};
+
+		void regionDestroy(wl_client*, wl_resource* r) { wl_resource_destroy(r); }
+		void regionAdd(wl_client*, wl_resource*, int32_t, int32_t, int32_t, int32_t) {}
+		void regionSub(wl_client*, wl_resource*, int32_t, int32_t, int32_t, int32_t) {}
+		const struct wl_region_interface regionImpl = { .destroy = regionDestroy, .add = regionAdd, .subtract = regionSub };
+
+		void compSurface(wl_client* c, wl_resource* res, uint32_t id)
+		{
+			Impl* im = (Impl*)wl_resource_get_user_data(res);
+			auto* s = new Impl::Surface();
+			s->im = im;
+			s->res = wl_resource_create(c, &wl_surface_interface, wl_resource_get_version(res), id);
+			wl_resource_set_implementation(s->res, &surfaceImpl, s, [](wl_resource* r) {
+				if (auto* s = (Impl::Surface*)wl_resource_get_user_data(r)) s->im->surfaceGone(s);
+			});
+			im->surfaces.push_back(s);
+		}
+		void compRegion(wl_client* c, wl_resource* res, uint32_t id)
+		{
+			wl_resource* r = wl_resource_create(c, &wl_region_interface, wl_resource_get_version(res), id);
+			wl_resource_set_implementation(r, &regionImpl, nullptr, nullptr);
+		}
+		const struct wl_compositor_interface compositorImpl = { .create_surface = compSurface, .create_region = compRegion };
+
+		void compositorBind(wl_client* c, void* data, uint32_t version, uint32_t id)
+		{
+			wl_resource* r = wl_resource_create(c, &wl_compositor_interface, version < 4 ? version : 4, id);
+			wl_resource_set_implementation(r, &compositorImpl, data, nullptr);
+		}
+
+		// ---- output and seat ------------------------------------------------------------------------------------------
+
+		void outputRelease(wl_client*, wl_resource* r) { wl_resource_destroy(r); }
+		const struct wl_output_interface outputImpl = { .release = outputRelease };
+		void outputBind(wl_client* c, void* data, uint32_t version, uint32_t id)
+		{
+			(void)data;
+			wl_resource* r = wl_resource_create(c, &wl_output_interface, version < 3 ? version : 3, id);
+			wl_resource_set_implementation(r, &outputImpl, nullptr, nullptr);
+			wl_output_send_geometry(r, 0, 0, 0, 0, WL_OUTPUT_SUBPIXEL_UNKNOWN, "Banana", "Retroid Pocket Classic", WL_OUTPUT_TRANSFORM_NORMAL);
+			wl_output_send_mode(r, WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED, kClientFormatW, kClientFormatH, 60000);
+			if (version >= 2) wl_output_send_scale(r, 1);
+			if (version >= 2) wl_output_send_done(r);
+		}
+
+		void seatGetPtr(wl_client* c, wl_resource* res, uint32_t id)
+		{
+			wl_resource* r = wl_resource_create(c, &wl_pointer_interface, wl_resource_get_version(res), id);
+			static const struct wl_pointer_interface ptrImpl = {
+				.set_cursor = [](wl_client*, wl_resource*, uint32_t, wl_resource*, int32_t, int32_t) {},
+				.release = [](wl_client*, wl_resource* r) { wl_resource_destroy(r); },
+			};
+			wl_resource_set_implementation(r, &ptrImpl, nullptr, nullptr);
+		}
+		void seatGetKb(wl_client* c, wl_resource* res, uint32_t id)
+		{
+			wl_resource* r = wl_resource_create(c, &wl_keyboard_interface, wl_resource_get_version(res), id);
+			static const struct wl_keyboard_interface kbImpl = {
+				.release = [](wl_client*, wl_resource* r) { wl_resource_destroy(r); },
+			};
+			wl_resource_set_implementation(r, &kbImpl, nullptr, nullptr);
+		}
+		void seatGetTouch(wl_client* c, wl_resource* res, uint32_t id)
+		{
+			wl_resource* r = wl_resource_create(c, &wl_touch_interface, wl_resource_get_version(res), id);
+			static const struct wl_touch_interface touchImpl = {
+				.release = [](wl_client*, wl_resource* r) { wl_resource_destroy(r); },
+			};
+			wl_resource_set_implementation(r, &touchImpl, nullptr, nullptr);
+		}
+		void seatRelease(wl_client*, wl_resource* r) { wl_resource_destroy(r); }
+		const struct wl_seat_interface seatImpl = {
+			.get_pointer = seatGetPtr, .get_keyboard = seatGetKb, .get_touch = seatGetTouch, .release = seatRelease,
+		};
+		void seatBind(wl_client* c, void* data, uint32_t version, uint32_t id)
+		{
+			(void)data;
+			wl_resource* r = wl_resource_create(c, &wl_seat_interface, version < 5 ? version : 5, id);
+			wl_resource_set_implementation(r, &seatImpl, nullptr, nullptr);
+			wl_seat_send_capabilities(r, 0);	// input forwarding is Phase 3E
+			if (version >= 2) wl_seat_send_name(r, "seat0");
+		}
+
+		// ---- wl_drm (Mesa's WSI asks for it; buffers still arrive through linux-dmabuf) -------------------------------
+
+		void drmAuthenticate(wl_client*, wl_resource* res, uint32_t magic)
+		{
+			Impl* im = (Impl*)wl_resource_get_user_data(res);
+			if (im->d->drmFd() >= 0 && drmAuthMagic(im->d->drmFd(), magic) == 0) wl_drm_send_authenticated(res);
+			else wl_resource_post_error(res, 0, "authenticate failed");
+		}
+		void drmCreateBuffer(wl_client*, wl_resource* res, uint32_t, uint32_t, int32_t, int32_t, uint32_t, uint32_t)
+		{
+			wl_resource_post_error(res, 0, "GEM-name buffers are not supported; use linux-dmabuf");
+		}
+		void drmCreatePlanar(wl_client*, wl_resource* res, uint32_t, uint32_t, int32_t, int32_t, uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t)
+		{
+			wl_resource_post_error(res, 0, "GEM-name buffers are not supported; use linux-dmabuf");
+		}
+		void drmCreatePrime(wl_client*, wl_resource* res, uint32_t, int32_t, int32_t, int32_t, uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t)
+		{
+			wl_resource_post_error(res, 0, "GEM-name buffers are not supported; use linux-dmabuf");
+		}
+		const struct wl_drm_interface drmImpl = {
+			.authenticate = drmAuthenticate, .create_buffer = drmCreateBuffer,
+			.create_planar_buffer = drmCreatePlanar, .create_prime_buffer = drmCreatePrime,
+		};
+		void drmBind(wl_client* c, void* data, uint32_t version, uint32_t id)
+		{
+			Impl* im = (Impl*)data;
+			wl_resource* r = wl_resource_create(c, &wl_drm_interface, version < 2 ? version : 2, id);
+			wl_resource_set_implementation(r, &drmImpl, data, nullptr);
+			wl_drm_send_device(r, im->devName);
+			wl_drm_send_format(r, DRM_FORMAT_ARGB8888);
+			wl_drm_send_format(r, DRM_FORMAT_XRGB8888);
+			wl_drm_send_capabilities(r, WL_DRM_CAPABILITY_PRIME);
+		}
+
+		// ---- linux-dmabuf v4 ------------------------------------------------------------------------------------------
+
+		void feedbackDestroy(wl_client*, wl_resource* r) { wl_resource_destroy(r); }
+		const struct zwp_linux_dmabuf_feedback_v1_interface feedbackImpl = { .destroy = feedbackDestroy };
+		void sendFeedback(wl_client* c, Impl* im, uint32_t id)
+		{
+			wl_resource* res = wl_resource_create(c, &zwp_linux_dmabuf_feedback_v1_interface, 1, id);
+			if (!res) return;
+			wl_resource_set_implementation(res, &feedbackImpl, nullptr, nullptr);
+			struct entry { uint32_t format, padding; uint64_t modifier; } table[2];
+			for (int i = 0; i < im->nadv; i++) { table[i].format = im->adv[i].format; table[i].padding = 0; table[i].modifier = im->adv[i].modifier; }
+			int fd = memfd_create("banana-dmabuf-table", MFD_CLOEXEC);
+			if (fd >= 0)
+			{
+				size_t sz = (size_t)im->nadv * sizeof table[0];
+				if (write(fd, table, sz) == (ssize_t)sz) zwp_linux_dmabuf_feedback_v1_send_format_table(res, fd, (uint32_t)sz);
+				close(fd);
+			}
+			struct wl_array dev;
+			wl_array_init(&dev);
+			if (void* p = wl_array_add(&dev, sizeof im->dev)) memcpy(p, &im->dev, sizeof im->dev);
+			zwp_linux_dmabuf_feedback_v1_send_main_device(res, &dev);
+			zwp_linux_dmabuf_feedback_v1_send_tranche_target_device(res, &dev);
+			wl_array_release(&dev);
+			struct wl_array idx;
+			wl_array_init(&idx);
+			for (int i = 0; i < im->nadv; i++) if (uint16_t* p = (uint16_t*)wl_array_add(&idx, sizeof *p)) *p = (uint16_t)i;
+			zwp_linux_dmabuf_feedback_v1_send_tranche_formats(res, &idx);
+			wl_array_release(&idx);
+			zwp_linux_dmabuf_feedback_v1_send_tranche_flags(res, 0);
+			zwp_linux_dmabuf_feedback_v1_send_tranche_done(res);
+			zwp_linux_dmabuf_feedback_v1_send_done(res);
+		}
+
+		void paramsResourceGone(wl_resource* res)
+		{
+			auto* b = (Impl::Buffer*)wl_resource_get_user_data(res);
+			if (b && !b->res) b->im->bufferFree(b);	// a created buffer is owned by its wl_buffer resource
+		}
+		void paramsDestroy(wl_client*, wl_resource* res) { wl_resource_destroy(res); }
+		void paramsAdd(wl_client*, wl_resource* res, int32_t fd, uint32_t plane, uint32_t off, uint32_t stride, uint32_t hi, uint32_t lo)
+		{
+			auto* b = (Impl::Buffer*)wl_resource_get_user_data(res);
+			if (!b) return;
+			if (plane != 0) { wl_resource_post_error(res, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_PLANE_IDX, "one plane"); return; }
+			if (b->fd >= 0) close(b->fd);
+			b->fd = dup(fd);
+			b->off = off;
+			b->stride = stride;
+			b->modifier = ((uint64_t)hi << 32) | lo;
+		}
+		bool paramsValidate(wl_resource* res, Impl::Buffer* b, int32_t w, int32_t h, uint32_t format)
+		{
+			if (w <= 0 || h <= 0 || !banana::dmabufSupported(format, b->modifier, b->fd >= 0 ? 1 : 0))
+			{
+				logf("rejecting a buffer: %dx%d fmt=%u mod=0x%016llx planes=%d", w, h, format,
+				     (unsigned long long)b->modifier, b->fd >= 0 ? 1 : 0);
+				wl_resource_post_error(res, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_INVALID_FORMAT,
+				                       "only linear XRGB8888/ARGB8888, one plane");
+				return false;
+			}
+			b->w = (uint32_t)w;
+			b->h = (uint32_t)h;
+			b->format = format;
+			return true;
+		}
+		void paramsCreate(wl_client* c, wl_resource* res, int32_t w, int32_t h, uint32_t format, uint32_t)
+		{
+			auto* b = (Impl::Buffer*)wl_resource_get_user_data(res);
+			if (!b || !paramsValidate(res, b, w, h, format)) return;
+			wl_resource* buf = wl_resource_create(c, &wl_buffer_interface, 1, 0);
+			if (!buf) return;
+			b->res = buf;
+			b->refs = 1;
+			wl_resource_set_implementation(buf, &bufferImpl, b, bufferResourceGone);
+			zwp_linux_buffer_params_v1_send_created(res, buf);
+		}
+		void paramsCreateImmed(wl_client* c, wl_resource* res, uint32_t id, int32_t w, int32_t h, uint32_t format, uint32_t)
+		{
+			auto* b = (Impl::Buffer*)wl_resource_get_user_data(res);
+			if (!b || !paramsValidate(res, b, w, h, format)) return;
+			wl_resource* buf = wl_resource_create(c, &wl_buffer_interface, 1, id);
+			if (!buf) return;
+			b->res = buf;
+			b->refs = 1;
+			wl_resource_set_implementation(buf, &bufferImpl, b, bufferResourceGone);
+		}
+		const struct zwp_linux_buffer_params_v1_interface paramsImpl = {
+			.destroy = paramsDestroy, .add = paramsAdd, .create = paramsCreate, .create_immed = paramsCreateImmed,
+		};
+		void dmabufDestroy(wl_client*, wl_resource* r) { wl_resource_destroy(r); }
+		void dmabufCreateParams(wl_client* c, wl_resource* res, uint32_t id)
+		{
+			Impl* im = (Impl*)wl_resource_get_user_data(res);
+			auto* b = new Impl::Buffer();
+			b->im = im;
+			wl_resource* r = wl_resource_create(c, &zwp_linux_buffer_params_v1_interface, wl_resource_get_version(res), id);
+			wl_resource_set_implementation(r, &paramsImpl, b, paramsResourceGone);
+		}
+		void dmabufDefaultFeedback(wl_client* c, wl_resource* res, uint32_t id)
+		{
+			sendFeedback(c, (Impl*)wl_resource_get_user_data(res), id);
+		}
+		void dmabufSurfaceFeedback(wl_client* c, wl_resource* res, uint32_t id, wl_resource*)
+		{
+			sendFeedback(c, (Impl*)wl_resource_get_user_data(res), id);
+		}
+		const struct zwp_linux_dmabuf_v1_interface dmabufImpl = {
+			.destroy = dmabufDestroy, .create_params = dmabufCreateParams,
+			.get_default_feedback = dmabufDefaultFeedback, .get_surface_feedback = dmabufSurfaceFeedback,
+		};
+		void dmabufBind(wl_client* c, void* data, uint32_t version, uint32_t id)
+		{
+			wl_resource* r = wl_resource_create(c, &zwp_linux_dmabuf_v1_interface, version < 4 ? version : 4, id);
+			wl_resource_set_implementation(r, &dmabufImpl, data, nullptr);
+		}
+
+		// ---- client lifecycle ----------------------------------------------------------------------------------------
+
+		void onClientCreated(wl_listener* l, void* data)
+		{
+			Impl* im = wl_container_of(l, im, clientCreated);
+			wl_client* c = (wl_client*)data;
+			if (im->client)
+			{
+				logf("a second client is refused (one fullscreen client)");
+				wl_client_destroy(c);
+				return;
+			}
+			im->client = c;
+			wl_client_add_destroy_listener(c, &im->clientGone);
+			logf("client connected");
+		}
+		void onClientGone(wl_listener* l, void*)
+		{
+			Impl* im = wl_container_of(l, im, clientGone);
+			im->clientDisconnected();
+		}
+	}
+
+	// ---- public ----------------------------------------------------------------------------------------------------
+
+	Compositor::~Compositor() { stop(); }
+
+	bool Compositor::start(std::string& err)
+	{
+		if (impl) return true;
+		if (!d.isOpen()) { err = "the panel is not open"; return false; }
+		if (!d.atomic()) { err = "atomic KMS with an overlay plane is needed"; return false; }
+
+		Impl* im = new Impl();
+		im->d = &d;
+		if (mkdir(kWaylandDir, 0700) && errno != EEXIST) { err = std::string("mkdir ") + kWaylandDir + ": " + strerror(errno); delete im; return false; }
+		unlink((std::string(kWaylandDir) + "/" + kSocket).c_str());
+		setenv("XDG_RUNTIME_DIR", kWaylandDir, 1);
+		im->wl = wl_display_create();
+		if (!im->wl) { err = "wl_display_create failed"; delete im; return false; }
+		im->loop = wl_display_get_event_loop(im->wl);
+		if (wl_display_add_socket(im->wl, kSocket))
+		{
+			err = std::string("wl_display_add_socket ") + kSocket + ": " + strerror(errno);
+			wl_display_destroy(im->wl);
+			delete im;
+			return false;
+		}
+		char* name = drmGetDeviceNameFromFd2(d.drmFd());
+		snprintf(im->devName, sizeof im->devName, "%s", name ? name : "/dev/dri/card0");
+		free(name);
+		struct stat st;
+		if (fstat(d.drmFd(), &st) == 0) im->dev = st.st_rdev;
+
+		im->clientCreated.notify = onClientCreated;
+		im->clientGone.notify = onClientGone;
+		im->pendCbGone.notify = cbGonePend;
+		im->pendingCbGone.notify = cbGonePending;
+		im->inflightCbGone.notify = cbGoneInflight;
+
+		wl_display_add_client_created_listener(im->wl, &im->clientCreated);
+		wl_global_create(im->wl, &wl_compositor_interface, 4, im, compositorBind);
+		wl_global_create(im->wl, &wl_output_interface, 3, im, outputBind);
+		wl_global_create(im->wl, &wl_seat_interface, 5, im, seatBind);
+		wl_global_create(im->wl, &xdg_wm_base_interface, 1, im, xdgBind);
+		wl_global_create(im->wl, &zwp_linux_dmabuf_v1_interface, 4, im, dmabufBind);
+		wl_global_create(im->wl, &wl_drm_interface, 2, im, drmBind);
+		wl_display_init_shm(im->wl);
+		impl = im;
+		logf("wayland-0 at %s/%s (xdg-shell 1, linux-dmabuf 4 linear, wl_drm; primary %s)", kWaylandDir, kSocket, im->devName);
+		return true;
+	}
+
+	void Compositor::stop()
+	{
+		if (!impl) return;
+		Impl* im = impl;
+		im->stopping = true;
+		if (im->pending) { im->bufferDrop(im->pending); im->pending = nullptr; }
+		if (im->inflight) { im->bufferDrop(im->inflight); im->inflight = nullptr; }
+		if (im->onScreen) { im->bufferDrop(im->onScreen); im->onScreen = nullptr; }
+		im->pendingCb = im->inflightCb = im->pendCb = nullptr;
+		wl_display_destroy_clients(im->wl);
+		wl_display_destroy(im->wl);
+		unlink((std::string(kWaylandDir) + "/" + kSocket).c_str());
+		delete im;
+		impl = nullptr;
+	}
+
+	int Compositor::wlFd() const { return impl && impl->loop ? wl_event_loop_get_fd(impl->loop) : -1; }
+
+	void Compositor::dispatch()
+	{
+		if (!impl) return;
+		wl_event_loop_dispatch(impl->loop, 0);
+		wl_display_flush_clients(impl->wl);
+		frame();
+	}
+
+	void Compositor::vblank()
+	{
+		if (impl) impl->vblank();
+	}
+
+	void Compositor::frame()
+	{
+		if (impl) impl->frame();
+	}
+
+	bool Compositor::gameActive() const
+	{
+		return impl && (impl->pending || impl->inflight);
+	}
+}
