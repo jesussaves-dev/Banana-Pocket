@@ -1498,10 +1498,22 @@ static int cheevos_poll(void)
 	char ln[1024];
 	while (fgets(ln, sizeof ln, f)) {
 		cheevos_off += (long)strlen(ln);
-		if (hud_on() && cheevos_line(ln)) {
+		if (!cheevos_line(ln)) continue;
+		if (hud_on()) {
 			shown++;
 			FILE *m = fopen(hud_live_path, "w");	/* the menu must not toast it again */
 			if (m) fclose(m);
+		} else if (compositor_on()) {
+			char c[1024];
+			snprintf(c, sizeof c, "%s", ln);
+			size_t len = strlen(c);
+			while (len && (c[len - 1] == '\n' || c[len - 1] == '\r')) c[--len] = 0;
+			char *f[7];
+			int nf = 0;
+			f[nf++] = c;
+			for (char *p = c; *p && nf < 7; ++p)
+				if (*p == '\t') { *p = 0; f[nf++] = p + 1; }
+			if (nf == 7 && f[2][0]) overlay_show("achievement", f[2], f[3], f[6], 4000);
 		}
 	}
 	fclose(f);
@@ -1921,7 +1933,11 @@ static void power_update(void)
 	if (!battery_state(bat, sizeof bat, &pct, &charging)) pct = 100;
 	int plugged = charger_online();
 	static int prev_plugged = -1;
-	if (prev_plugged >= 0 && prev_plugged != plugged) say("charger %s", plugged ? "plugged in" : "unplugged");
+	if (prev_plugged >= 0 && prev_plugged != plugged) {
+		say("charger %s", plugged ? "plugged in" : "unplugged");
+		overlay_show(plugged ? "charger" : "unplug", "Charger",
+		             plugged ? "Plugged in" : "Unplugged", "", 3000);
+	}
 	if (prev_plugged == 0 && plugged) vibrate(cfg.vibrate_ms);	/* the cable went in (not at boot, nor on unplug) */
 	prev_plugged = plugged;
 	if (plugged) charging = 1;	/* plugged in counts as charging (see charger_online) */
