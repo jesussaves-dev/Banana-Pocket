@@ -1,5 +1,7 @@
 #include "input.h"
+#include <cerrno>
 #include <climits>
+#include <cstdio>
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
@@ -42,6 +44,7 @@ namespace banana
 
 	void Input::open(int panelW, int panelH, int turn, int scanoutW, int scanoutH)
 	{
+		bool regrab = grabWanted;	// a hotplug while the quick menu is up
 		close();
 		pw = panelW; ph = panelH;						// the menu's own size
 		rot = turn; sw = scanoutW; sh = scanoutH;		// the panel's turn and its own size (the touchscreen's axes)
@@ -60,6 +63,9 @@ namespace banana
 			ioctl(fd, EVIOCGBIT(EV_ABS, sizeof abs), abs);
 			Dev dv;
 			dv.fd = fd;
+			dv.path = path;
+			char nm[128] = "";
+			if (ioctl(fd, EVIOCGNAME(sizeof nm - 1), nm) >= 0) dv.name = nm;
 			// a touchscreen (multitouch, or single-touch with BTN_TOUCH), or an absolute pointer (QEMU's tablet, a
 			// graphics tablet: BTN_LEFT on ABS_X/Y, and not a pad's stick)
 			bool mt = testBit(abs, ABS_MT_POSITION_X) && testBit(abs, ABS_MT_POSITION_Y);
@@ -67,6 +73,7 @@ namespace banana
 			if (mt || st)
 			{
 				dv.touch = true;
+				dv.grabbable = true;
 				dv.pointer = st && !testBit(keys, BTN_TOUCH);
 				input_absinfo ax = {}, ay = {};
 				ioctl(fd, EVIOCGABS(mt ? ABS_MT_POSITION_X : ABS_X), &ax);
@@ -86,18 +93,44 @@ namespace banana
 				for (int k = KEY_ESC; k < KEY_MAX && !any; k++)
 					if (testBit(keys, k) && mapKey(k) != Key::NONE) any = true;
 				if (!any) { ::close(fd); continue; }
+				// the power/volume gpio-keys device is bananad's and is never grabbed (power and volume must keep
+				// working with the quick menu up); anything else with game keys is the pad
+				bool keysDev = testBit(keys, KEY_POWER) || testBit(keys, KEY_VOLUMEUP) || testBit(keys, KEY_VOLUMEDOWN) ||
+				               testBit(keys, KEY_SLEEP) || testBit(keys, KEY_WAKEUP);
+				dv.grabbable = !keysDev;
 			}
 			devs.push_back(dv);
 		}
 		closedir(d);
+		if (regrab) grab(true);
+	}
+
+	bool Input::grab(bool on)
+	{
+		bool ok = true;
+		grabWanted = on;
+		for (Dev& d : devs)
+		{
+			if (!d.grabbable) continue;
+			if (ioctl(d.fd, EVIOCGRAB, on ? 1 : 0) < 0)
+			{
+				fprintf(stderr, "input: EVIOCGRAB %s (%s) %d: %s\n", d.path.c_str(), d.name.c_str(), on ? 1 : 0,
+				        strerror(errno));
+				ok = false;
+			}
+		}
+		grabbed = on;
+		return ok;
 	}
 
 	void Input::close()
 	{
-		for (auto& d : devs) ::close(d.fd);
+		for (auto& d : devs) ::close(d.fd);	// closing the fd releases an EVIOCGRAB
 		devs.clear();
 		if (watch >= 0) ::close(watch);
 		watch = -1;
+		grabbed = false;
+		grabWanted = false;
 	}
 
 	int Input::fillFds(struct pollfd* out, int at, int cap) const

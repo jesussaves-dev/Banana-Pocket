@@ -344,6 +344,9 @@ static pid_t ui_pid(void)
 /* while banana-ui's compositor owns the panel it writes the 3D card file; the menu turns it into an overlay above a
  * client. A cage game or a stopped compositor keeps the existing OSD/SHOW_MSG paths. */
 static int compositor_on(void) { return access("/run/banana/compositor", F_OK) == 0; }
+/* the menu's quick menu is up: the pad is grabbed, so its F-combos (F+B analog, F+volume backlight) are suspended
+ * while power and a single volume key keep working */
+static int overlay_open(void) { return access("/run/banana/overlay-open", F_OK) == 0; }
 
 static void overlay_show(const char *kind, const char *title, const char *body, const char *badge, int ms)
 {
@@ -2109,7 +2112,7 @@ static void handle(const struct input_event *e)
 	 * analogue stick (RetroArch's TOGGLE_ANALOG_DPAD, the command banana's RetroArch patch adds). The RPC has no
 	 * analogue stick, so this is what lets a game that reads only the stick -- a Dreamcast racer -- be played with
 	 * the d-pad, and hands the d-pad back for a game that wants it as a d-pad. */
-	case BTN_SOUTH: if (e->value && fn_held) ra_cmd("TOGGLE_ANALOG_DPAD"); break;
+	case BTN_SOUTH: if (e->value && fn_held && !overlay_open()) ra_cmd("TOGGLE_ANALOG_DPAD"); break;
 	case KEY_POWER:
 		if (now < ignore_power_until) break;
 		/* Transfer mode (Settings > System > Mass storage, read-write): the menu is stopped and /data is the
@@ -2136,7 +2139,8 @@ static void handle(const struct input_event *e)
 		if (e->value) {
 			int game = pid_of("/run/banana/game.pid") > 0;
 			if (game && fn_held) break;
-			if ((game && select_held) || (!game && fn_held)) brightness(1, select_held && !fn_held ? 10 : cfg.brightness_step);
+			if (((game && select_held) || (!game && fn_held)) && !overlay_open())
+				brightness(1, select_held && !fn_held ? 10 : cfg.brightness_step);
 			else volume(1);
 		}
 		break;
@@ -2144,7 +2148,8 @@ static void handle(const struct input_event *e)
 		if (e->value) {
 			int game = pid_of("/run/banana/game.pid") > 0;
 			if (game && fn_held) break;
-			if ((game && select_held) || (!game && fn_held)) brightness(-1, select_held && !fn_held ? 10 : cfg.brightness_step);
+			if (((game && select_held) || (!game && fn_held)) && !overlay_open())
+				brightness(-1, select_held && !fn_held ? 10 : cfg.brightness_step);
 			else volume(-1);
 		}
 		break;

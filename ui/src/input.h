@@ -28,6 +28,10 @@ namespace banana
 		// taps are turned from those to the menu's. 0 for rot/scanout: the panel is the menu's own size, unturned.
 		void open(int panelW, int panelH, int rot = 0, int scanoutW = 0, int scanoutH = 0);
 		void close();
+		// grab the gamepad and touchscreen (never the power/volume keys), so a client under the compositor sees
+		// nothing while the quick menu is up. The menu's own fds stay readable.
+		bool grab(bool on);
+		bool grabbing() const { return grabbed; }
 		// a device came or went in /dev/input (watched with inotify): open() again to take it
 		bool rescanDue() { bool r = rescan; rescan = false; return r; }
 		// append this input's fds (devices, then the inotify watch) to out[at...], up to cap; the new count
@@ -44,8 +48,11 @@ namespace banana
 			int x = 0, y = 0;
 			bool down = false, wasDown = false, moved = false;
 			int hatX = 0, hatY = 0;
+			std::string path, name;
+			bool grabbable = false;	// pad or touch, not the power/volume keys
 		};
 		std::vector<Dev> devs;
+		bool grabWanted = false, grabbed = false;
 		int pw = 640, ph = 480;		// what the menu draws in
 		int rot = 0, sw = 0, sh = 0;	// the panel's turn and its own size (0: the same as the menu's)
 		int watch = -1;

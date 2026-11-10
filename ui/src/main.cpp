@@ -1366,6 +1366,60 @@ int main(int argc, char** argv)
 		else settingsView.drawToast(t);	// the achievement toasts, over whatever page is up
 	};
 
+	// 3D cards and the 3E quick menu. showCard draws the menu's own card on a cleared screen and turns only its box
+	// into the double-buffered overlay; while a client owns the primary, the overlay carries it.
+	bool cardUp = false;
+	double cardUntil = 0;
+	bool quickMenu = false, quickPending = false;
+	auto showCard = [&](const std::string& kind, const std::string& title, const std::string& body,
+	                    const std::string& badge, int ms)
+	{
+		double t = nowMs();
+		if (kind == "volume" || kind == "brightness")
+		{
+			osdLabel = kind == "brightness" ? "Brightness" : "Volume";
+			osdPercent = atoi(body.c_str());
+			osdUntil = t + ms;
+		}
+		else
+			settingsView.notify(title, body, 0, badge);
+		if (!comp.clientOnScreen() || !disp.overlayCardBegin()) return;
+		be.beginScreen(0);
+		be.endScreen();	// be.overlay draws the level/toast onto the screen
+		int cx = 0, cy = 0, cw = 0, ch = 0;
+		if (!settingsView.cardRect(cx, cy, cw, ch)) return;
+		disp.overlayCardTurn(be.pixels(0), cx, cy, cx + cw, cy + ch);
+		comp.setOverlayFb(disp.overlayCardFb());
+		cardUp = true;
+		cardUntil = t + ms;
+		logf("overlay card %s for %d ms", kind.empty() ? "?" : kind.c_str(), ms);
+	};
+	auto hideCard = [&]()
+	{
+		if (!cardUp) return;
+		cardUp = false;
+		comp.setOverlayFb(0);
+		logf("overlay card hidden");
+	};
+	auto openQuick = [&]()
+	{
+		bool ok = input.grab(true);
+		quickMenu = true;
+		quickPending = false;
+		if (FILE* f = fopen("/run/banana/overlay-open", "w")) { fputs("1\n", f); fclose(f); }
+		showCard("pause", "Paused", "Press B to resume", "", 1000000000);
+		logf("quick menu: open%s", ok ? "" : " (EVIOCGRAB failed)");
+	};
+	auto closeQuick = [&]()
+	{
+		if (!quickMenu && !quickPending) return;
+		quickMenu = quickPending = false;
+		input.grab(false);
+		unlink("/run/banana/overlay-open");
+		hideCard();
+		logf("quick menu: closed");
+	};
+
 	// ---- AMOLED burn-in guard: the panel's backlight goes to a night level after 90 s idle and off after 180 s, and
 	// the first press or touch restores it and is swallowed (so it can't launch a game or change a setting) ----
 	{
@@ -1474,6 +1528,20 @@ int main(int argc, char** argv)
 			guard.input(t);
 		}
 		if ((ev.type == InputEvent::PRESS || ev.type == InputEvent::TOUCH_DOWN) && low.hide(nowMs())) dirty = true;
+		// 3E: while a client owns the primary the menu does not act on input. MENU opens the quick menu after its
+		// release (so the opening press is not grabbed); while it is up only B closes it and the game sees nothing.
+		if (comp.clientOnScreen())
+		{
+			if (quickMenu)
+			{
+				if (ev.type == InputEvent::PRESS && ev.key == Key::B) closeQuick();
+				return;
+			}
+			if (ev.type == InputEvent::PRESS && ev.key == Key::MENU) { quickPending = true; return; }
+			if (quickPending && ev.type == InputEvent::RELEASE && ev.key == Key::MENU) { openQuick(); return; }
+			return;
+		}
+		quickPending = false;
 		if (settingsView.isOpen())
 		{
 			std::lock_guard<std::mutex> l(worker.uiLock);
@@ -1689,8 +1757,6 @@ int main(int argc, char** argv)
 	bool cheevosSeen = true;	// /run/banana/cheevos: the achievements a game just unlocked, read on this pass
 	bool shotWanted = false;	// /run/banana/screen.req: write the frame to screen.jpg on this pass (below)
 	bool overlaySeen = true;	// /run/banana/overlay: a 3D card over the client on the primary
-	bool cardUp = false;
-	double cardUntil = 0;
 	if (resume == Resume::Ready) resumeDue = nowMs() + 500;	// a short window: the game is the point
 	while (!quit)
 	{
@@ -1781,37 +1847,16 @@ int main(int argc, char** argv)
 					std::string badge = g.size() > 3 ? g[3] : std::string();
 					int ms = g.size() > 4 ? atoi(g[4].c_str()) : 2000;
 					if (ms <= 0) ms = 2000;
-					if (kind == "volume" || kind == "brightness")
-					{
-						osdLabel = kind == "brightness" ? "Brightness" : "Volume";
-						osdPercent = atoi(body.c_str());
-						osdUntil = now + ms;
-					}
-					else
-						settingsView.notify(title, body, 0, badge);
-					if (comp.clientOnScreen() && disp.overlayCardBegin())
-					{
-						be.beginScreen(0);
-						be.endScreen();	// be.overlay draws the level/toast onto the screen
-						int cx = 0, cy = 0, cw = 0, ch = 0;
-						if (settingsView.cardRect(cx, cy, cw, ch))
-						{
-							disp.overlayCardTurn(be.pixels(0), cx, cy, cx + cw, cy + ch);
-							comp.setOverlayFb(disp.overlayCardFb());
-							cardUp = true;
-							cardUntil = now + ms;
-							logf("overlay card %s for %d ms", kind.empty() ? "?" : kind.c_str(), ms);
-						}
-					}
+					showCard(kind, title, body, badge, ms);
 				}
 				unlink("/run/banana/overlay");
 			}
 		}
 		if (cardUp && now >= cardUntil)
 		{
-			cardUp = false;
-			comp.setOverlayFb(0);
-			logf("overlay card hidden");
+			hideCard();
+			// a volume/charger/achievement card over the quick menu: put the pause card back when it expires
+			if (quickMenu) showCard("pause", "Paused", "Press B to resume", "", 1000000000);
 		}
 		int g = lib.pendingLaunch();
 		if (g >= 0)
@@ -2078,6 +2123,7 @@ int main(int argc, char** argv)
 		}
 		// the client went away (or its last frame completed): give the panel back to the menu with a full redraw
 		bool gameNow = comp.gameActive() || comp.clientOnScreen();
+		if (!gameNow) closeQuick();	// the client went away while the quick menu was up
 		if (gameWas && !gameNow) { be.invalidate(); dirty = true; drawn = false; }
 		gameWas = gameNow;
 		// A screen dump, asked for by writing /run/banana/screen.req (the launch watch above fires for it): the frame
