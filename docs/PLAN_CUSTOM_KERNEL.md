@@ -33,7 +33,7 @@ Three facts frame every recommendation below:
 | Kernel source | `linux-7.2.tar.xz` from kernel.org (`BR2_LINUX_KERNEL_CUSTOM_TARBALL`) | mainline |
 | Config | `linux-rocknix.config`: **8,565 lines, ~2,011 `=y`, 267 `=m`** — ROCKNIX's whole distro config | ROCKNIX |
 | Config fragments | `linux-banana.fragment` (47 lines), `linux-qemu.fragment` (17) | **Banana** |
-| Patches | `linux-patches/`: **45**, ~4,700 added lines | **34 named outside authors** (23 by one SM4450 bring-up author, sunshineinabox; the 2,152-line interconnect driver is Qualcomm's), **2 Banana** (0062, 0063), **9 with no author line** (0011, 0018, 0030, 0046–0049, 0051, 0052), added to this repo by Tom — **to confirm**: if Tom (or Jorre) wrote them they are ours; none of the 45 is by Jorre |
+| Patches | `linux-patches/`: **45**, ~4,700 added lines | **34 named outside authors** (23 by one SM4450 bring-up author, sunshineinabox; the 2,152-line interconnect driver is Qualcomm's), **2 Banana** (0062, 0063), **9 Tom's own** (0011, 0018, 0030, 0046–0049, 0051, 0052: no `From:` line, Tom's work per the owner, 2026-11-10); none of the 45 is by Jorre |
 | Device tree | `dts/qcom/sm4450-retroid-pocket-classic*.dts[i]`: 3,328 lines, BSD-3-Clause | adapted, in-tree here |
 | Kernel image | `Image` ~**30.7 MB** (slot status), plus modules | — |
 | Bootloader | OpenABL (`arm-efi`, `extlinux.conf`) | OpenABL project |
@@ -142,9 +142,8 @@ Start with the ones that are the device's identity, smallest first:
    upstream (K6). **S–M.**
 
 ### K5 — Patch-by-patch audit · incremental
-First, settle authorship: the 9 patches with no `From:` line get one — Tom/Jorre if they wrote them (then they are
-ours and stay), or the original author if they came from ROCKNIX or a mailing list (then they join the audit below).
-For each remaining outside patch, decide one of: **upstreamed already** (drop on rebase), **Banana rewrite** (K4),
+The 9 patches with no `From:` line are Tom's (settled 2026-11-10): give them a `From: Tom` header when they move into
+the K3 branch, and they stay. For each remaining outside patch, decide one of: **upstreamed already** (drop on rebase), **Banana rewrite** (K4),
 **send upstream** (K6), or **keep as community code** (credited, in the K3 branch). Record the decision in the patch's
 commit message. Start with the small ones (1–20 lines: 0002, 0008, 0011–0014, 0017–0018, 0033, 0041, 0046–0049, 0052,
 0054, 0056) — they are quick to understand and often already fixed upstream.

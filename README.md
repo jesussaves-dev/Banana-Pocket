@@ -213,6 +213,10 @@ See [`LICENSE`](LICENSE). The `ui/rnds` engine is imported unchanged from ROCKNI
 
 ## 🎨 Credits
 
+**[Jorre (JorreFog)](https://github.com/JorreFog)** is Banana Pocket's co-developer. Banana grew from his codebase, and
+the two projects still share their soul: he keeps his own repo, Tom keeps this one, and fixes travel both ways. A good
+part of what you see here started in his hands. Thank you, Jorre.
+
 The system and handheld icons in `ui/assets/rnds/icons` are **[Ben Jelter's Console Icon Pack](https://benjelter.itch.io/console-icon-pack)** — 32×32 pixel art, name-your-own-price on itch.io. Thank you, Ben; they are half the reason the shelf looks like a real handheld OS. The app tiles, generic kind icons and the systems the pack doesn't cover are drawn in-repo (`tools/gen-icons.py`, `tools/make-blueprints.py`).
 
 The Game Boy, Game Boy Color and Game Boy Advance screen bezels are **[SkyWalker541's Retroid Pocket Classic Overlays](https://github.com/SkyWalker541/Retroid-Pocket-Classic-Overlays)**, released under CC0. Three of his `bezel_grid_integer` frames ship unchanged in `system/rootfs/usr/share/banana/overlays`; the grids, shaders and custom art around them are his too. Thank you — they turn a black border into a console.
