@@ -1327,9 +1327,9 @@ int main(int argc, char** argv)
 		if (cls == InputClass::KEYBOARD) comp.forwardInput(type, code, value);
 	};
 
-	// 4.1: compositor = "ui" runs a game as a client of this process (the launchers read the same key); "cage" is
-	// the one-release escape hatch.
-	const bool residentGames = getConfValue(o.data + "/bananad.conf", "compositor", "cage") != "cage";
+	// 4.1: a game runs as a client of this process by default; compositor = "cage" in bananad.conf is the
+	// one-release escape hatch back to the kiosk launcher (the launchers read the same key).
+	const bool residentGames = getConfValue(o.data + "/bananad.conf", "compositor", "ui") != "cage";
 	Repeat rep;
 	bool dirty = true, quit = false, drawn = false;	// drawn: a frame on the canvas waiting for the flips
 	bool gameWas = false;	// a Wayland client owned the primary last pass: the menu is restored when it goes
@@ -1713,7 +1713,10 @@ int main(int argc, char** argv)
 		const SystemDef& sd = lib.systemOf(game);
 		std::string rom = lib.gameAt(game).path;
 		std::string cmd = replaceAll(replaceAll(sd.run, "%ROM%", shellQuote(rom)), "%SYSTEM%", shellQuote(sd.id));
-		logf("starting %s: %s", sd.id.c_str(), cmd.c_str());
+		// 4.1: only RetroArch draws the panel's 1240x1080. Ports and BananaTube keep cage (PLAN 3.5) until the
+		// EGL presenter can scale and rotate their own window sizes.
+		bool resident = residentGames && sd.run.find("run-retroarch") != std::string::npos;
+		logf("starting %s%s: %s", sd.id.c_str(), resident ? " (resident)" : "", cmd.c_str());
 		{
 			std::ofstream f(o.data + "/last-system");
 			f << ui->systemIndex() << "\n";
@@ -1723,7 +1726,7 @@ int main(int argc, char** argv)
 		sound.release();
 		boost.release();
 		forgetDecoded();
-		if (!residentGames)
+		if (!resident)
 		{
 			input.close();
 			comp.stop();	// a Wayland client's buffers belong to the closing DRM fd
@@ -1742,7 +1745,7 @@ int main(int argc, char** argv)
 		{
 			// the panel, input and sound were handed over above: take them back rather than pretend a game ran
 			logf("fork failed: %s", strerror(errno));
-			if (!residentGames)
+			if (!resident)
 			{
 				for (int tries = 0; !disp.openSingle(o.top, err) && tries < 100; tries++) sleepUs(50000);
 				input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
@@ -1780,8 +1783,8 @@ int main(int argc, char** argv)
 			std::ofstream("/run/banana/game.path") << rom << "\n";	// ... and to resume if a shutdown interrupts it
 			gameIndex = game;
 			gameStart = start;
-			gameResident = residentGames;
-			if (residentGames)
+			gameResident = resident;
+			if (resident)
 			{
 				gamePid = pid;	// the main loop reaps it; the compositor keeps drawing
 				return;
