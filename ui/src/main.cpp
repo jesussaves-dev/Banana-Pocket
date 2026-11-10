@@ -2485,23 +2485,25 @@ int main(int argc, char** argv)
 					if (c == SIGUSR1)
 					{
 						// bananad after a resume: the panel's driver disabled it on the way down, and it can come
-						// back dark. With a resident game, re-modeset the panel and re-arm the client instead of
-						// tearing the compositor down (the client's buffers are tied to this DRM fd). Without a
-						// game, take the panel again as before.
-						if (gamePid > 0 && disp.isOpen())
+						// back dark. Re-modeset on the fd we hold and re-arm the compositor. Closing it to reopen
+						// would give up DRM master, and anything still holding the old file then leaves us locked
+						// out of the panel (EACCES). A full reopen is only for a panel that will not restore.
+						bool restored = false;
+						for (int tries = 0; disp.isOpen() && !restored && tries < 50; tries++)
 						{
-							int tries = 0;
-							while (!disp.restore() && tries < 50) { sleepUs(20000); tries++; }
-							if (tries >= 50) logf("resume: panel restore failed (resident game)");
-							else
-							{
-								comp.resume();
-								// bananad's wake SIGCONTs the game's group: the pause menu keeps it frozen
-								if (quickMenu) { signalTree(gamePid, SIGSTOP); drawQuickView(); }
-							}
+							restored = disp.restore();
+							if (!restored) sleepUs(20000);
 						}
+						if (restored)
+						{
+							comp.resume();
+							// bananad's wake SIGCONTs the game's group: the pause menu keeps it frozen
+							if (gamePid > 0 && quickMenu) { signalTree(gamePid, SIGSTOP); drawQuickView(); }
+						}
+						else if (gamePid > 0) logf("resume: panel restore failed (resident game)");
 						else
 						{
+							logf("resume: panel restore failed, reopening it");
 							comp.stop();
 							disp.close();
 							for (int tries = 0; !disp.openSingle(o.top, err) && tries < 50; tries++) sleepUs(20000);

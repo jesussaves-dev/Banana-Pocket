@@ -588,7 +588,9 @@ namespace banana
 			tracef("diag: variant %s", diagName(im->diag));
 		}
 
-		im->gbmFd = dup(im->d->drmFd());
+		// close-on-exec: this shares the DRM master's open file, so a daemon started from the menu that inherited it
+		// would keep the old master alive and every later open of the card would get EACCES
+		im->gbmFd = fcntl(im->d->drmFd(), F_DUPFD_CLOEXEC, 0);
 		if (im->gbmFd < 0) { err = std::string("dup: ") + strerror(errno); return false; }
 		im->gbm = gbm_create_device(im->gbmFd);
 		if (!im->gbm) { err = "gbm_create_device failed"; return false; }
