@@ -696,6 +696,10 @@ own controls; sleep while the overlay is open resumes with the overlay consisten
 8. **Everything else:** `make -s test` (goldens included), `make bench` within noise, QEMU boot test still passes
    (cage is exercised there too — update the expectation), thermals unchanged, the update path untouched.
 9. **Rollback:** `banana.compositor=cage` boots the old path; the A/B update and **Previous version** still work.
+10. **RetroArch shaders and overlays/bezels:** with the in-process compositor, Slang shaders and overlays/bezels currently
+    make the screen glitchy (reported 2026-11-10). Characterise and fix before merging; the first suspects are a
+    swapchain size/format change from the shader and a second surface from the overlay, neither of which the
+    1240x1080 single-surface EGL path handles.
 
 ### 4.3 Documentation and merge
 
@@ -714,6 +718,7 @@ leaves the list), `docs/ROADMAP.md` (this plan becomes Done with the measured nu
 | A single CRTC makes the overlay impossible | One DSI output; planes are tied to a CRTC | This is why leases are out; the compositor owns the one CRTC and composites everything |
 | Being resident changes sleep | The menu currently leaves the panel to the game; bananad's SIGHUP/SIGUSR1 logic assumes cage | Explicit task in Phase 3 (`compositor.pid`, resume re-commit), tested in 4.2 item 3 |
 | Input regressions | Three readers today, none grabbing | Grab only the pad/touch, only while the overlay is up, and only after the press is released |
+| RetroArch shaders/overlays glitch | Reported 2026-11-10: Slang shaders and overlays/bezels look glitchy on the compositor path; overlays may add a second surface and shaders can change the swapchain size/format | 4.2 item 10; keep shaders/bezels off the compositor path until characterised |
 | Atomic KMS regression in the menu | The renderer is hand-tuned and the tests do not open DRM | Legacy kill switch, `--kms-selftest`, before/after bench, 30-minute soak |
 | Scope | A correct single-client compositor is thousands of lines, not 500 | Phase 1A ships regardless; Phase 3 stops at the fallback gate |
 
