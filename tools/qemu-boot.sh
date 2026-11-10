@@ -218,7 +218,8 @@ grep -q "Boot Test" "$OUT/serial.log" || true
 key ret            # the ready screen: the cartridge goes in and the game starts
 wait_for "starting gba" 30 "the GBA game was started (run-retroarch)"
 sleep 10; shot second-game
-vm 'kill -TERM $(cat /run/banana/game.pid)' || true
+# the resident path removes game.pid as soon as the game ends; a game that already went away is not an error
+vm 'p=$(cat /run/banana/game.pid 2>/dev/null); [ -n "$p" ] && kill -TERM "$p"' || true
 wait_for "game ended" 60 "a TERM ended the GBA game and the menu took the panel back"
 sleep 2; shot second-after-game
 shutdown_from_settings second
@@ -229,8 +230,12 @@ with_data add_update
 boot third
 grep -q "rcS: slot a booted" "$OUT/serial.log" && ok "the third boot ran slot a" || bad "the third boot didn't say it ran slot a"
 # Start > System (L from the first group) > Update (the row under Time zone) > the package > A again to confirm
-key s pgup ret down ret; sleep 1; shot third-updates; key ret ret
-wait_for "written to slot b" 300 "the update was written to slot b and checked"
+key s pgup ret down ret; sleep 1; shot third-updates
+# the page opens on "Check for updates": one Down for the package, then A to write it and A to confirm
+key down; sleep 1; shot third-update-package; key ret; sleep 1; key ret
+sleep 3; shot third-update-applying
+vm 'cat /run/banana/update-status 2>/dev/null' || true
+wait_for "written to slot b" 900 "the update was written to slot b and checked"
 sleep 2; shot third-updated
 key ret            # Restart
 for i in $(seq 120); do kill -0 $QEMU 2>/dev/null || break; sleep 0.5; done
@@ -239,9 +244,9 @@ wait $QEMU 2>/dev/null || true
 boot fourth
 grep -q "rcS: slot b booted" "$OUT/serial.log" && ok "the fourth boot ran slot b: the update" || bad "the fourth boot didn't run slot b"
 shot fourth-menu
-# Start > System > Previous version (four rows under Time zone: Update, Box art, Box art from, Previous version;
-# checked headless) > A twice: back to slot a from the next boot
-key s pgup ret down down down down ret ret
+# Start > System > Previous version (five rows under Time zone: Update, Back up settings, Box art, Box art from,
+# Previous version; checked headless) > A twice: back to slot a from the next boot
+key s pgup ret down down down down down ret ret
 for i in $(seq 120); do kill -0 $QEMU 2>/dev/null || break; sleep 0.5; done
 kill -0 $QEMU 2>/dev/null && { bad "no restart from Previous version"; kill $QEMU; } || ok "restarted from Previous version"
 wait $QEMU 2>/dev/null || true
