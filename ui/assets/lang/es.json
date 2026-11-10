@@ -146,6 +146,13 @@
   "Restart game": "Reiniciar juego",
   "RetroArch menu": "Menú de RetroArch",
   "Quit game": "Salir del juego",
-  "Quit": "Salir"
+  "Quit": "Salir",
+  "Slot": "Ranura",
+  "Empty": "Vacía",
+  "Disc": "Disco",
+  "Change disc": "Cambiar disco",
+  "Fast-forward": "Avance rápido",
+  "Shader": "Shader",
+  "Achievements": "Logros"
 }
 }

@@ -171,6 +171,19 @@ header to "Done".
 - Fixed with it: a card changed while a flip was in flight never reached a frozen client's screen (the
   compositor now re-commits the overlay on the next vblank); a game ending under the menu releases the grab; a
   wake re-freezes the game under an open menu.
+- **Two-column version (2026-11-10, uncommitted):** header with battery/clock/time played; rows Resume, Save
+  state / Load state with `< Slot N >` (0-9) and the slot's thumbnail on the right, Change disc `< Disc k/n >`
+  (`.m3u` games only), Fast-forward On/Off (stays open), Shader (toggle), Achievements `n/total` (when
+  `/run/banana/ra-progress` exists; the panel lists this session's unlocks and the newest badge), Restart,
+  RetroArch menu, Quit. Integer scaling is **not** there: RetroArch has no command for it.
+- **RetroArch stdin facts (1.22.2):** a query (`GET_STATUS`, `GET_CONFIG_PARAM`) on stdin **segfaults RetroArch**:
+  never send one; the menu tracks slot/disc/fast-forward itself. RetroArch keeps one flag per command name per
+  poll, so a repeated command in one frame runs once: banana-ui queues lines and sends one per 100 ms after the
+  thaw. `retroarch.cfg`'s saved `state_slot` is not the slot RetroArch starts on, so `run-retroarch` pins
+  `state_slot = "0"` per launch.
+- Verified on the unit with a uinput pad: slot 3 saved to `.state3`, slot 1 loaded `.state1`, thumbnail shown,
+  fast-forward/shader lines sent (shader on → off seen in the frame dump), achievements panel with test data.
+  **Not tested:** Change disc (no `.m3u` game on the card).
 - Verified on the unit with a uinput pad: every RetroArch row (state saved/loaded, `[Core] Reset.`, RetroArch's
   Quick Menu opened, quit status 0, config restored) and a port (frozen, Quit). **Not yet checked by hand:** a
   real MODE press no longer opening RetroArch's menu, MODE + X opening it, MODE + Start still quitting.

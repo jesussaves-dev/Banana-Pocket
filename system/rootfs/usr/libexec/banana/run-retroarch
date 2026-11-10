@@ -285,6 +285,13 @@ if [ ! -f $M ]; then
     grep -q '^mupen64plus-ThreadedRenderer = ' $O 2>/dev/null && sed -i 's|^mupen64plus-ThreadedRenderer = .*|mupen64plus-ThreadedRenderer = "True"|' $O || echo 'mupen64plus-ThreadedRenderer = "True"' >> $O
     touch $M
 fi
+# A save state gets a screenshot beside it (<state>.png): Banana's pause menu shows it for the slot it is on. Written
+# once (the marker), so turning it off in RetroArch's own menu afterwards is kept.
+M=/data/retroarch/.banana-state-thumbs-1
+if [ ! -f $M ]; then
+    set_cfg savestate_thumbnail_enable true
+    touch $M
+fi
 # Shaders: Shaders > Load Preset opens the image's libretro Slang presets (/usr/share/libretro/shaders/slang), read
 # where they are: copied to the card they took hundreds of MB (a few thousand small files in exFAT's large clusters)
 # and a long first start. Slang, not GLSL: the video driver is Vulkan (above) and its shader backend is Slang, so the
@@ -442,6 +449,9 @@ printf 'stdin_cmd_enable = "true"\n' > $L
 # value is read here and put back after the game (cage keeps the autoconfig's plain MODE).
 R_MTB=$(sed -n 's/^ *input_menu_toggle_btn *= *//p' $CFG 2>/dev/null | sed 's/^"//; s/"$//' | tail -n 1)
 [ "$(/usr/libexec/banana/compositor-mode)" = ui ] && printf 'input_menu_toggle_btn = "3"\n' >> $L
+# The pause menu steps RetroArch's save slot and cannot ask which one it is on (a query on stdin crashes it), so
+# every launch starts on slot 0, the one the menu assumes.
+printf 'state_slot = "0"\n' >> $L
 # RetroArch's ALSA driver aborts (SIGABRT, 134) when the DSP hasn't finished letting go of the frontend the menu
 # had; a second start half a second later takes it. Two extra tries cover a slow teardown, and nothing else.
 # Its own log goes on the card: the one thing worth having after a game that would not start is what RetroArch said

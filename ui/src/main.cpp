@@ -30,6 +30,7 @@
 #include "layout.h"
 
 #include <algorithm>
+#include <deque>
 #include <atomic>
 #include <cerrno>
 #include <cstdarg>
@@ -130,6 +131,50 @@ static bool retroarchCmd(const char* cmd)
 	do w = write(fd, line.data(), line.size()); while (w < 0 && errno == EINTR);
 	close(fd);
 	return w == (ssize_t)line.size();
+}
+
+// A save state of the running game: "<rom stem>.state" for slot 0, ".stateN" for N, in /data/states or one of its
+// per-core folders (RetroArch sorts them by core). The newest match wins; "" when the slot has none.
+static std::string statePath(const std::string& rom, int slot)
+{
+	std::string base = rom.substr(rom.rfind('/') + 1);
+	size_t dot = base.rfind('.');
+	if (dot != std::string::npos && dot > 0) base = base.substr(0, dot);
+	std::string name = base + ".state" + (slot > 0 ? std::to_string(slot) : std::string());
+	std::vector<std::string> dirs = { "/data/states" };
+	if (DIR* d = opendir("/data/states"))
+	{
+		while (dirent* e = readdir(d))
+			if (e->d_name[0] != '.') dirs.push_back(std::string("/data/states/") + e->d_name);
+		closedir(d);
+	}
+	std::string best;
+	time_t bestAt = 0;
+	for (const auto& dir : dirs)
+	{
+		struct stat st;
+		std::string pth = dir + "/" + name;
+		if (stat(pth.c_str(), &st) == 0 && S_ISREG(st.st_mode) && (best.empty() || st.st_mtime > bestAt)) { best = pth; bestAt = st.st_mtime; }
+	}
+	return best;
+}
+
+// How many discs a game has: the entries of an .m3u playlist (RetroArch's multi-disc format), else 1.
+static int discCount(const std::string& rom)
+{
+	size_t dot = rom.rfind('.');
+	std::string ext = dot == std::string::npos ? "" : rom.substr(dot + 1);
+	for (auto& c : ext) c = (char)tolower((unsigned char)c);
+	if (ext != "m3u") return 1;
+	std::ifstream f(rom);
+	std::string line;
+	int n = 0;
+	while (std::getline(f, line))
+	{
+		size_t a = line.find_first_not_of(" \t\r");
+		if (a != std::string::npos && line[a] != '#') n++;
+	}
+	return std::max(1, n);
 }
 
 // ---- resume the game a shutdown interrupted ---------------------------------------------------------------
@@ -1416,8 +1461,17 @@ int main(int argc, char** argv)
 	// the pause menu (MENU over a game on the compositor) and the game it freezes
 	bool quickMenu = false, quickPending = false;
 	int quickSel = 0, quickArmed = -1;
-	std::vector<std::string> quickRows;
-	std::string quickTitle;
+	std::vector<std::string> quickRows;	// the row ids (English labels) for this game
+	Settings::PauseView quickView;		// what be.overlay draws, rebuilt before each draw
+	// what the menu knows of RetroArch (it cannot be asked: a query on its stdin crashes it): the save slot RetroArch
+	// is on and the one picked here, the disc, fast-forward; all set at launch and changed only through this menu
+	int raSlot = 0, pickSlot = 0, discs = 1, discNow = 1, discPick = 1;
+	bool ffOn = false;
+	std::string gameRom;
+	// Lines for RetroArch's stdin, sent one at a time ~100 ms apart while it runs: it keeps one flag per command name
+	// per poll, so two STATE_SLOT_PLUS (or the eject/next/eject of a disc change) in one frame would count once
+	std::deque<std::string> raQueue;
+	double raNextAt = 0;
 	pid_t gamePid = -1;
 	double gameStart = 0;
 	int gameIndex = -1;
@@ -1429,7 +1483,7 @@ int main(int argc, char** argv)
 		if (low.showing(t)) settingsView.notice(low.title, low.body, low.percent);
 		else if (plug.showing(t)) settingsView.notice(plug.title, plug.body, plug.percent);
 		else if (osdUntil > t) settingsView.level(osdLabel, osdPercent);
-		else if (quickMenu) settingsView.pauseMenu(quickTitle, quickRows, quickSel, quickArmed);
+		else if (quickMenu) settingsView.pauseMenu(quickView);
 		else settingsView.drawToast(t);	// the achievement toasts, over whatever page is up
 	};
 
@@ -1476,6 +1530,85 @@ int main(int argc, char** argv)
 	// The pause menu: MENU over a game freezes it (SIGSTOP on the launcher's whole tree, so a port or BananaTube stops
 	// too) and lists what can be done; RetroArch's own menu stays one row away (and on MENU + X). It replaces the
 	// RetroArch menu as the first thing MENU opens: fewer choices, Banana's look, the same for every game.
+	// the right panel and the header for the selected row
+	auto quickBuild = [&]()
+	{
+		Settings::PauseView& v = quickView;
+		v.sel = quickSel;
+		v.armed = quickArmed;
+		v.title = gameIndex >= 0 ? lib.gameAt(gameIndex).title : std::string();
+		std::string status;
+		int pct = lib.power().percent;
+		if (pct >= 0) status = std::to_string(pct) + "%   ";
+		status += lib.clockText();
+		long mins = (long)((nowMs() - gameStart) / 60000);
+		char played[24];
+		snprintf(played, sizeof played, mins >= 60 ? "   %ldh%02ld" : "   %ldm", mins >= 60 ? mins / 60 : mins, mins % 60);
+		v.status = status + played;
+		int prog = -1, total = 0;
+		if (FILE* f = fopen("/run/banana/ra-progress", "r")) { if (fscanf(f, "%d %d", &prog, &total) != 2) prog = -1; fclose(f); }
+		v.rows.clear();
+		for (const auto& id : quickRows)
+		{
+			Settings::PauseRow r;
+			r.label = id;
+			if (id == "Save state" || id == "Load state") { r.value = tr("Slot") + " " + std::to_string(pickSlot); r.arrows = true; }
+			else if (id == "Change disc") { r.value = tr("Disc") + " " + std::to_string(discPick) + "/" + std::to_string(discs); r.arrows = true; }
+			else if (id == "Fast-forward") r.value = ffOn ? "On" : "Off";
+			else if (id == "Achievements" && prog >= 0) r.value = std::to_string(prog) + "/" + std::to_string(total);
+			v.rows.push_back(r);
+		}
+		const std::string row = quickSel >= 0 && quickSel < (int)quickRows.size() ? quickRows[quickSel] : std::string();
+		v.picture.clear();
+		v.caption.clear();
+		v.lines.clear();
+		if (row == "Save state" || row == "Load state")
+		{
+			std::string st = statePath(gameRom, pickSlot);
+			std::string slot = tr("Slot") + " " + std::to_string(pickSlot);
+			struct stat sb;
+			if (!st.empty() && stat(st.c_str(), &sb) == 0)
+			{
+				if (access((st + ".png").c_str(), R_OK) == 0) v.picture = st + ".png";
+				char when[32];
+				struct tm tmv;
+				localtime_r(&sb.st_mtime, &tmv);
+				strftime(when, sizeof when, lib.twelveHour ? "%Y-%m-%d %I:%M %p" : "%Y-%m-%d %H:%M", &tmv);
+				v.caption = slot + "   " + when;
+			}
+			else v.caption = slot + "   " + tr("Empty");
+		}
+		else if (row == "Change disc")
+			v.caption = tr("Disc") + " " + std::to_string(discNow) + "/" + std::to_string(discs) +
+			            (discPick != discNow ? "   ->   " + std::to_string(discPick) : std::string());
+		else if (row == "Achievements")
+		{
+			if (prog >= 0) v.caption = std::to_string(prog) + " / " + std::to_string(total);
+			// this session's unlocks, newest first: cheevos is tab-separated (unlocked, total, title, description,
+			// points, rarity, badge); the newest one's badge is the picture
+			std::vector<std::string> got;
+			std::ifstream f("/run/banana/cheevos");
+			for (std::string line; std::getline(f, line);)
+			{
+				std::vector<std::string> fld;
+				for (size_t a = 0, b; ; a = b + 1)
+				{
+					b = line.find('\t', a);
+					fld.push_back(line.substr(a, b == std::string::npos ? std::string::npos : b - a));
+					if (b == std::string::npos) break;
+				}
+				if (fld.size() < 3 || fld[2].empty()) continue;
+				got.insert(got.begin(), fld[2]);
+				if (fld.size() >= 7 && !fld[6].empty() && access(fld[6].c_str(), R_OK) == 0) v.picture = fld[6];
+			}
+			v.lines = got;
+		}
+		if (v.picture.empty() && gameIndex >= 0) v.picture = lib.gameAt(gameIndex).box;
+	};
+	auto drawQuickView = [&]() { quickBuild(); drawQuick(); };
+	// The pause menu: MENU over a game freezes it (SIGSTOP on the launcher's whole tree, so a port or BananaTube stops
+	// too) and lists what can be done; RetroArch's own menu stays one row away (and on MENU + X). It replaces the
+	// RetroArch menu as the first thing MENU opens: fewer choices, Banana's look, the same for every game.
 	auto openQuick = [&]()
 	{
 		if (gamePid <= 0) { quickPending = false; return; }
@@ -1484,12 +1617,21 @@ int main(int argc, char** argv)
 		quickPending = false;
 		quickSel = 0;
 		quickArmed = -1;
-		quickRows = gameRA ? std::vector<std::string>{ "Resume", "Save state", "Load state", "Restart game", "RetroArch menu", "Quit game" }
-		                   : std::vector<std::string>{ "Resume", "Quit" };
-		quickTitle = gameIndex >= 0 ? lib.gameAt(gameIndex).title : std::string();
+		pickSlot = raSlot;
+		discPick = discNow;
+		if (gameRA)
+		{
+			quickRows = { "Resume", "Save state", "Load state" };
+			if (discs > 1) quickRows.push_back("Change disc");
+			quickRows.push_back("Fast-forward");
+			quickRows.push_back("Shader");
+			if (access("/run/banana/ra-progress", R_OK) == 0) quickRows.push_back("Achievements");
+			for (const char* r : { "Restart game", "RetroArch menu", "Quit game" }) quickRows.push_back(r);
+		}
+		else quickRows = { "Resume", "Quit" };
 		signalTree(gamePid, SIGSTOP);
 		if (FILE* f = fopen("/run/banana/overlay-open", "w")) { fputs("1\n", f); fclose(f); }
-		drawQuick();
+		drawQuickView();
 		logf("quick menu: open, game frozen%s", ok ? "" : " (EVIOCGRAB failed)");
 	};
 	auto closeQuick = [&]()
@@ -1504,32 +1646,66 @@ int main(int argc, char** argv)
 		hideCard();
 		logf("quick menu: closed, game running");
 	};
+	// RetroArch has no "save to slot N": step its slot to the one picked here first (queued: sent once it is thawed)
+	auto syncSlot = [&]()
+	{
+		for (; raSlot < pickSlot; raSlot++) raQueue.push_back("STATE_SLOT_PLUS");
+		for (; raSlot > pickSlot; raSlot--) raQueue.push_back("STATE_SLOT_MINUS");
+	};
 	// A on a row. Load state, Restart and Quit lose progress, so they ask "Press A again" first.
 	auto quickAct = [&]()
 	{
 		const std::string row = quickSel >= 0 && quickSel < (int)quickRows.size() ? quickRows[quickSel] : std::string();
 		bool risky = row == "Load state" || row == "Restart game" || row == "Quit game" || row == "Quit";
-		if (risky && quickArmed != quickSel) { quickArmed = quickSel; drawQuick(); return; }
+		if (risky && quickArmed != quickSel) { quickArmed = quickSel; drawQuickView(); return; }
+		logf("quick menu: %s", row.c_str());
+		if (row == "Achievements" || (row == "Change disc" && discPick == discNow)) return;	// nothing to do
+		if (row == "Fast-forward")
+		{
+			// stays open: the line is queued and goes out on Resume; the row shows the new state
+			raQueue.push_back("FAST_FORWARD");
+			ffOn = !ffOn;
+			drawQuickView();
+			return;
+		}
 		pid_t game = gamePid;
 		closeQuick();	// thawed first: RetroArch reads its stdin only while it runs
-		logf("quick menu: %s", row.c_str());
-		if (row == "Save state") retroarchCmd("SAVE_STATE");
-		else if (row == "Load state") retroarchCmd("LOAD_STATE");
-		else if (row == "Restart game") retroarchCmd("RESET");
-		else if (row == "RetroArch menu") retroarchCmd("MENU_TOGGLE");
-		else if (row == "Quit game") retroarchCmd("QUIT");
+		if (row == "Save state") { syncSlot(); raQueue.push_back("SAVE_STATE"); }
+		else if (row == "Load state") { syncSlot(); raQueue.push_back("LOAD_STATE"); }
+		else if (row == "Change disc")
+		{
+			// the tray opens, the disc index moves, the tray closes: RetroArch's own disc-change sequence
+			raQueue.push_back("DISK_EJECT_TOGGLE");
+			for (; discNow < discPick; discNow++) raQueue.push_back("DISK_NEXT");
+			for (; discNow > discPick; discNow--) raQueue.push_back("DISK_PREV");
+			raQueue.push_back("DISK_EJECT_TOGGLE");
+		}
+		else if (row == "Shader") raQueue.push_back("SHADER_TOGGLE");
+		else if (row == "Restart game") raQueue.push_back("RESET");
+		else if (row == "RetroArch menu") raQueue.push_back("MENU_TOGGLE");
+		else if (row == "Quit game") raQueue.push_back("QUIT");
 		else if (row == "Quit" && game > 0) kill(game, SIGTERM);	// the launcher's trap ends the app's own session
 	};
 	auto quickKey = [&](Key k)
 	{
 		int n = (int)quickRows.size();
+		const std::string row = quickSel >= 0 && quickSel < n ? quickRows[quickSel] : std::string();
 		if (k == Key::B || k == Key::MENU) closeQuick();
 		else if (k == Key::A) quickAct();
 		else if ((k == Key::UP || k == Key::DOWN) && n > 0)
 		{
 			quickSel = (quickSel + (k == Key::UP ? n - 1 : 1)) % n;
 			quickArmed = -1;
-			drawQuick();
+			drawQuickView();
+		}
+		else if (k == Key::LEFT || k == Key::RIGHT)
+		{
+			int d = k == Key::LEFT ? -1 : 1;
+			if (row == "Save state" || row == "Load state") pickSlot = (pickSlot + d + 10) % 10;
+			else if (row == "Change disc") discPick = (discPick - 1 + d + discs) % discs + 1;
+			else return;
+			quickArmed = -1;
+			drawQuickView();
 		}
 	};
 
@@ -1890,6 +2066,14 @@ int main(int argc, char** argv)
 			gameStart = start;
 			gameResident = resident;
 			gameRA = sd.run.find("run-retroarch") != std::string::npos;
+			gameRom = rom;
+			raQueue.clear();
+			// the pause menu's view of RetroArch: slot 0 (run-retroarch starts every launch there; retroarch.cfg's
+			// saved state_slot is not what it starts on), disc 1, fast-forward off
+			raSlot = 0;
+			discs = discCount(rom);
+			discNow = 1;
+			ffOn = false;
 			if (resident)
 			{
 				gamePid = pid;	// the main loop reaps it; the compositor keeps drawing
@@ -1939,6 +2123,13 @@ int main(int argc, char** argv)
 		// the burn-in guard is the menu's: dim after bananad.conf's dim_minutes, blank 90 s later -- but never while a
 		// game is on screen (Settings > Sleep & power promises that; a client's picture is not menu idle, and a video
 		// would go dark) and never blank it while on the charger (a dark panel on the cable read as a sleep)
+		// the pause menu's queued RetroArch lines: one per ~100 ms, only while the game runs (not frozen under the menu)
+		if (!raQueue.empty() && !quickMenu && now >= raNextAt)
+		{
+			if (gamePid > 0 && gameRA) { logf("retroarch: %s", raQueue.front().c_str()); retroarchCmd(raQueue.front().c_str()); }
+			raQueue.pop_front();
+			raNextAt = now + 100;
+		}
 		guard.setCharging(lib.charging());
 		if (!comp.clientOnScreen() && guard.tick(now, &sound) && guard.stage() == 2) sound.setBgm(false);	// blanked: let the sound device go too
 		// 3E.2: keys reach the client only while it owns the primary, the quick menu is down and the guard is awake
@@ -2028,7 +2219,7 @@ int main(int argc, char** argv)
 		{
 			hideCard();
 			// a volume/charger/achievement card over the quick menu: put the pause card back when it expires
-			if (quickMenu) drawQuick();
+			if (quickMenu) drawQuickView();
 		}
 		int g = lib.pendingLaunch();
 		if (g >= 0)
@@ -2179,6 +2370,11 @@ int main(int argc, char** argv)
 			// screen: tick() is skipped then, so an overdue deadline would clamp to 1 ms and spin poll() all game long
 			int g = comp.clientOnScreen() ? -1 : guard.nextMs(now);
 			if (g >= 0 && (timeout < 0 || g < timeout)) timeout = g;
+			if (!raQueue.empty() && !quickMenu)
+			{
+				int q = std::max(1, (int)(raNextAt - now) + 1);	// the next queued RetroArch line
+				if (timeout < 0 || q < timeout) timeout = q;
+			}
 		}
 		if (resumeDue > 0)
 		{
@@ -2229,7 +2425,7 @@ int main(int argc, char** argv)
 							{
 								comp.resume();
 								// bananad's wake SIGCONTs the game's group: the pause menu keeps it frozen
-								if (quickMenu) { signalTree(gamePid, SIGSTOP); drawQuick(); }
+								if (quickMenu) { signalTree(gamePid, SIGSTOP); drawQuickView(); }
 							}
 						}
 						else

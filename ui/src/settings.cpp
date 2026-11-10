@@ -1205,35 +1205,70 @@ namespace banana
 		wrapped(body, 18, 172, 392, 404, 2, p.muted);
 	}
 
-	void Settings::pauseMenu(const std::string& title, const std::vector<std::string>& rows, int sel, int armed)
+	void Settings::pauseMenu(const PauseView& v)
 	{
 		SPal p = pal(light);
-		const int n = (int)rows.size();
-		const float w = 400, rowH = 52, h = 64 + n * rowH + 44, x0 = (640 - w) / 2, y0 = std::max(8.0f, (557 - h) / 2);
+		const float x0 = 12, y0 = 12, w = 616, h = 533;
 		rememberCard(x0, y0, w, h);
 		box("bubble", false, x0, y0, w, h);
-		std::string t = fit(title.empty() ? tr("Paused") : title, true, 22, w - 40);
-		float tw = text(t, true, 22, 0, 0, p.ink, false, 0, true);
-		text(t, true, 22, x0 + (w - tw) / 2, y0 + 18, p.ink);
-		for (int i = 0; i < n; i++)
+		// header: the game, and on the right the battery, the clock and the time played
+		float sw = v.status.empty() ? 0 : text(v.status, false, 16, 0, 0, p.muted, false, 0, true);
+		text(fit(v.title.empty() ? tr("Paused") : v.title, true, 20, w - 48 - sw), true, 20, x0 + 16, y0 + 12, p.ink);
+		if (sw > 0) text(v.status, false, 16, x0 + w - 16 - sw, y0 + 16, p.muted);
+		// left: the rows
+		const float lx = x0 + 12, lw = 320, top = y0 + 48, pitch = 40;
+		for (int i = 0; i < (int)v.rows.size(); i++)
 		{
-			float y = y0 + 60 + i * rowH;
-			box(i == sel ? "pick" : "slot", i == sel, x0 + 16, y, w - 32, rowH - 8);
-			const bool on = i == sel;
-			std::string label = i == armed ? tr("Press A again") : tr(rows[i]);
-			Color c = i == armed ? (on ? p.onPickAccent : p.accent) : on ? p.onPick : p.muted;
-			float lw = text(label, true, 20, 0, 0, c, false, 0, true);
-			text(label, true, 20, x0 + (w - lw) / 2, y + 10, c);
+			const PauseRow& r = v.rows[i];
+			const bool on = i == v.sel, armed = i == v.armed;
+			float y = top + i * pitch;
+			box(on ? "pick" : "slot", on, lx, y, lw, pitch - 6);
+			Color c = armed ? (on ? p.onPickAccent : p.accent) : on ? p.onPick : p.muted;
+			text(fit(armed ? tr("Press A again") : tr(r.label), true, 18, lw - 120), true, 18, lx + 14, y + 7, c);
+			if (!armed && !r.value.empty())
+			{
+				std::string val = tr(r.value);
+				if (r.arrows && on) val = "< " + val + " >";
+				float vw = text(val, true, 18, 0, 0, c, false, 0, true);
+				text(val, true, 18, lx + lw - 14 - vw, y + 7, c);
+			}
 		}
-		// "A Choose   B Resume": the button letter in ink, its word muted, explicit gaps (the pixel font's space is
-		// too narrow to separate them)
-		const std::pair<std::string, std::string> hints[2] = { { "A", tr("Choose") }, { "B", tr("Resume") } };
+		// right: the picture (fitted, aspect kept), its caption and a short list
+		const float px = x0 + 344, pw = w - 344 - 12, ph = 210;
+		box("slot", false, px, top, pw, ph);
+		if (!v.picture.empty())
+		{
+			struct stat st;
+			std::string key = "pause:" + v.picture;
+			if (stat(v.picture.c_str(), &st) == 0) key += ":" + std::to_string((long long)st.st_mtime);	// a new save redraws
+			auto it = cache.find(key);
+			if (it == cache.end())
+			{
+				rnds::Bitmap bm = rnds::decodeFile(v.picture);
+				Cached c;
+				if (!bm.empty()) c.tex = be->upload(bm, true);
+				it = cache.emplace(key, c).first;
+			}
+			if (it->second.tex && it->second.tex->w > 0 && it->second.tex->h > 0)
+			{
+				float iw = (float)it->second.tex->w, ih = (float)it->second.tex->h;
+				float k = std::min((pw - 12) / iw, (ph - 12) / ih);
+				float dw = iw * k, dh = ih * k;
+				be->draw(it->second.tex, std::round(X(px + (pw - dw) / 2)), std::round(X(top + (ph - dh) / 2)),
+				         std::round(X(dw)), std::round(X(dh)), Color::hex(0xffffff));
+			}
+		}
+		float ty = top + ph + 12;
+		if (!v.caption.empty()) { wrapped(v.caption, 16, px + 4, ty, pw - 8, 2, p.ink); ty += 44; }
+		for (size_t i = 0; i < v.lines.size() && i < 7; i++, ty += 24)
+			text(fit(v.lines[i], false, 15, pw - 8), false, 15, px + 4, ty, p.muted);
+		// footer: the button letter in ink, its word muted, explicit gaps (the pixel font's space is narrow)
+		const std::pair<std::string, std::string> hints[3] = { { "A", tr("Choose") }, { "< >", tr("Change") }, { "B", tr("Resume") } };
 		const float gap = 6, sep = 22;
-		float hw = sep;
+		float hw = -sep;
 		for (const auto& hp : hints)
-			hw += text(hp.first, true, 16, 0, 0, p.ink, false, 0, true) + gap + text(hp.second, false, 16, 0, 0, p.muted, false, 0, true);
-		hw -= sep;
-		float hx = x0 + (w - hw) / 2, hy = y0 + h - 32;
+			hw += text(hp.first, true, 16, 0, 0, p.ink, false, 0, true) + gap + text(hp.second, false, 16, 0, 0, p.muted, false, 0, true) + sep;
+		float hx = x0 + (w - hw) / 2, hy = y0 + h - 30;
 		for (const auto& hp : hints)
 		{
 			hx += text(hp.first, true, 16, hx, hy, p.ink) + gap;

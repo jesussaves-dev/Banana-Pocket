@@ -146,6 +146,13 @@
   "Restart game": "Spiel neu starten",
   "RetroArch menu": "RetroArch-Menü",
   "Quit game": "Spiel beenden",
-  "Quit": "Beenden"
+  "Quit": "Beenden",
+  "Slot": "Platz",
+  "Empty": "Leer",
+  "Disc": "Disc",
+  "Change disc": "Disc wechseln",
+  "Fast-forward": "Vorspulen",
+  "Shader": "Shader",
+  "Achievements": "Erfolge"
 }
 }
