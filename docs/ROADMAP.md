@@ -130,9 +130,6 @@ that costs nothing idle). Sizes are rough: **S** a day or two, **M** about a wee
   free: colour-blind filters (protan/deutan/tritan), a GBA colour-correction curve, a
   grayscale "battery saver" mode, a subtle scanline or LCD grid for ports and PICO-8. One Settings row and a pause-menu
   row, for RetroArch, ports and BananaTube alike, with no RetroArch shader and no conflict with the bezel rule.
-- **Bezels by the compositor (M).** Draw the bezel art on the overlay plane instead of through RetroArch's overlay:
-  frames for ports, standalone apps and every system, chosen per game, with no integer-scale lock-in and no clash with
-  a shader. The pause menu gets a *Frame* row.
 - **Screenshots that are the real frame (S).** A button combo (or a pause-menu row) saves the exact frame the panel
   shows -- the `3c-dump-now` path already reads it bit-exact -- with the overlay cards left out, into a per-game
   folder that the game page shows. *(A screenshot gallery was dropped by request on 2026-11-04; this is only the
@@ -260,6 +257,12 @@ accessibility / in-menu log viewer / battery-time item (2026-11-04).)*
 - **Hardware Validation (`docs/RPC-TEST.md`):** In progress on physical units.
 
 ## Done
+- [x] **Bezels by the compositor.** Screen frames moved from RetroArch's overlay to the overlay plane, for every
+  RetroArch system and ports, chosen per system (Settings > Frames) and per game (Game options, or the pause menu's
+  *Frame* row, which applies at once). The game's window is sized to the frame's hole, so no integer scale is forced and
+  a shader runs under a frame. GB, GBC and GBA keep their console art with the LCD grid removed; anything else can use a
+  frame drawn from the theme. Measured: 0 dropped frames with the overlay held through play. Design:
+  `docs/superpowers/specs/2026-11-10-compositor-bezels-design.md`.
 - [x] **0.6.1: the compositor closed out (2026-11-10).** `cage` and `wlroots` are out of the tree and the image, so
   `banana-ui` is the only path for RetroArch, ports and BananaTube (T7/T8 in `docs/PLAN_DRM_COMPOSITOR.md`). A menu wake
   keeps DRM master on the same fd, so a surviving child can no longer leave the panel dark (F15). PSX is settled at 60

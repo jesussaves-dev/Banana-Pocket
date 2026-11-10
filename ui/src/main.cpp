@@ -17,6 +17,7 @@
 #include "kms.h"
 #include "compositor.h"
 #include "library.h"
+#include "frame.h"
 #include "soft.h"
 #include "splash.h"
 #include "settings.h"
@@ -682,8 +683,9 @@ static int runHeadless(const Options& o, Host& lib, const std::string& variant, 
 	settings.setPanelHeight(canvasH);
 	settings.setSync(true);
 	settings.searchCount = [&](const std::string& q) { return lib.countMatches(q); };
-	settings.setOverride = [&](const std::string& s, const std::string& r, const std::string& c, const std::string& sh)
-		{ lib.setOverride(s, r, c, sh); };
+	settings.setOverride = [&](const std::string& s, const std::string& r, const std::string& c, const std::string& sh, const std::string& f)
+		{ lib.setOverride(s, r, c, sh, f); };
+	settings.setFrameSystems(lib.frameSystems());
 	LowBattery low;
 	IdleGuard guard;	// the burn-in guard's logic, driven by the `guard`/`idle` script commands (test only)
 	guard.configure(atoi(getConfValue(o.data + "/bananad.conf", "dim_minutes", "2").c_str()),
@@ -842,7 +844,7 @@ static int runHeadless(const Options& o, Host& lib, const std::string& variant, 
 				const SystemDef& sd = lib.systemOf(g);
 				std::string rel = lib.gameAt(g).rel;
 				auto ov = lib.overrideOf(sd.id, rel);
-				settings.openGame(sd.id, rel, lib.gameAt(g).path, lib.gameAt(g).title, ov.first, ov.second);
+				settings.openGame(sd.id, rel, lib.gameAt(g).path, lib.gameAt(g).title, ov.core, ov.shader, ov.frame, lib.framable(g));
 				logf("press x: game options open (%s/%s)", sd.id.c_str(), rel.c_str());
 				continue;
 			}
@@ -1499,8 +1501,9 @@ int main(int argc, char** argv)
 	settingsView.setPanelHeight(canvasH);
 	settingsView.searchCount = [&](const std::string& q) { return lib.countMatches(q); };
 	settingsView.setVariant(menuTheme());
-	settingsView.setOverride = [&](const std::string& s, const std::string& r, const std::string& c, const std::string& sh)
-		{ lib.setOverride(s, r, c, sh); };
+	settingsView.setOverride = [&](const std::string& s, const std::string& r, const std::string& c, const std::string& sh, const std::string& f)
+		{ lib.setOverride(s, r, c, sh, f); };
+	settingsView.setFrameSystems(lib.frameSystems());
 	LowBattery low;
 	PlugNotice plug;
 	bool batteryDue = true;
@@ -1574,6 +1577,50 @@ int main(int argc, char** argv)
 		pushCard(kind, ms);
 	};
 	auto drawQuick = [&]() { pushCard("pause", 1000000000); };
+	// The running game's screen frame, on the overlay plane under any card. Whole-panel work: at a launch or a Frame
+	// row change, never per frame. Answers the kind actually shown, None when the art could not be used.
+	FrameKind frameKind = FrameKind::None;
+	bool gameFramable = false;
+	auto frameArt = [](const std::string& id) { return "/usr/share/banana/overlays/" + id + ".png"; };
+	auto frameHasArt = [&](const std::string& id) { return access(frameArt(id).c_str(), R_OK) == 0; };
+	auto frameMaster = [&]() { return getConfValue(o.data + "/settings.conf", "bezels", "on") != "off"; };
+	auto applyFrame = [&](const std::string& id, FrameKind k) -> FrameKind
+	{
+		std::vector<uint32_t> px;
+		FrameHole hole;
+		std::string why;
+		const int W = disp.width(), H = disp.height();
+		if (k == FrameKind::Art && !frameLoadArt(frameArt(id), W, H, px, hole, why))
+		{
+			logf("frame: %s", why.c_str());
+			k = FrameKind::None;
+		}
+		else if (k == FrameKind::Banana)
+		{
+			hole = frameBananaHole(id, W, H);
+			frameDrawBanana(px, W, H, hole, settingsView.frameColors());
+		}
+		if (k != FrameKind::None)
+		{
+			frameDim(px.data(), px.size(), atoi(getConfValue(o.data + "/settings.conf", "frame_brightness", "85").c_str()));
+			if (!disp.frameSet(px.data()))
+			{
+				logf("frame: no buffer for it");
+				k = FrameKind::None;
+			}
+		}
+		if (k == FrameKind::None)
+		{
+			disp.frameSet(nullptr);
+			comp.setFrame(0, 0, 0, 0, 0);
+		}
+		else
+		{
+			comp.setFrame(disp.frameFb(), hole.x, hole.y, hole.w, hole.h);
+			logf("frame: %s for %s, hole %d,%d %dx%d", frameKindWord(k), id.c_str(), hole.x, hole.y, hole.w, hole.h);
+		}
+		return k;
+	};
 	auto hideCard = [&]()
 	{
 		if (!cardUp) return;
@@ -1609,6 +1656,7 @@ int main(int argc, char** argv)
 			if (id == "Save state" || id == "Load state") { r.value = tr("Slot") + " " + std::to_string(pickSlot); r.arrows = true; }
 			else if (id == "Change disc") { r.value = tr("Disc") + " " + std::to_string(discPick) + "/" + std::to_string(discs); r.arrows = true; }
 			else if (id == "Fast-forward") r.value = ffOn ? "On" : "Off";
+			else if (id == "Frame") { r.value = frameKind == FrameKind::Art ? "Console" : frameKind == FrameKind::Banana ? "Banana" : "None"; r.arrows = true; }
 			else if (id == "Achievements" && prog >= 0) r.value = std::to_string(prog) + "/" + std::to_string(total);
 			v.rows.push_back(r);
 		}
@@ -1632,6 +1680,7 @@ int main(int argc, char** argv)
 			}
 			else v.caption = slot + "   " + tr("Empty");
 		}
+		else if (row == "Frame") v.caption = tr("Saved for this game");
 		else if (row == "Change disc")
 			v.caption = tr("Disc") + " " + std::to_string(discNow) + "/" + std::to_string(discs) +
 			            (discPick != discNow ? "   ->   " + std::to_string(discPick) : std::string());
@@ -1679,9 +1728,11 @@ int main(int argc, char** argv)
 			if (discs > 1) quickRows.push_back("Change disc");
 			quickRows.push_back("Fast-forward");
 			quickRows.push_back("Shader");
+			if (gameFramable && frameMaster()) quickRows.push_back("Frame");
 			if (access("/run/banana/ra-progress", R_OK) == 0) quickRows.push_back("Achievements");
 			for (const char* r : { "Restart game", "RetroArch menu", "Quit game" }) quickRows.push_back(r);
 		}
+		else if (gameFramable && frameMaster()) quickRows = { "Resume", "Frame", "Quit" };
 		else quickRows = { "Resume", "Quit" };
 		signalTree(gamePid, SIGSTOP);
 		if (FILE* f = fopen("/run/banana/overlay-open", "w")) { fputs("1\n", f); fclose(f); }
@@ -1698,6 +1749,7 @@ int main(int argc, char** argv)
 		input.grab(false);
 		unlink("/run/banana/overlay-open");
 		hideCard();
+		comp.reconfigure();	// a Frame row change: the game hears its new size now that it can answer
 		logf("quick menu: closed, game running");
 	};
 	// RetroArch has no "save to slot N": step its slot to the one picked here first (queued: sent once it is thawed)
@@ -1713,7 +1765,7 @@ int main(int argc, char** argv)
 		bool risky = row == "Load state" || row == "Restart game" || row == "Quit game" || row == "Quit";
 		if (risky && quickArmed != quickSel) { quickArmed = quickSel; drawQuickView(); return; }
 		logf("quick menu: %s", row.c_str());
-		if (row == "Achievements" || (row == "Change disc" && discPick == discNow)) return;	// nothing to do
+		if (row == "Achievements" || row == "Frame" || (row == "Change disc" && discPick == discNow)) return;	// nothing to do
 		if (row == "Fast-forward")
 		{
 			// stays open: the line is queued and goes out on Resume; the row shows the new state
@@ -1757,6 +1809,22 @@ int main(int argc, char** argv)
 			int d = k == Key::LEFT ? -1 : 1;
 			if (row == "Save state" || row == "Load state") pickSlot = (pickSlot + d + 10) % 10;
 			else if (row == "Change disc") discPick = (discPick - 1 + d + discs) % discs + 1;
+			else if (row == "Frame" && gameIndex >= 0)
+			{
+				const SystemDef& sd = lib.systemOf(gameIndex);
+				std::vector<FrameKind> kinds = { FrameKind::None };
+				if (frameHasArt(sd.id)) kinds.push_back(FrameKind::Art);
+				kinds.push_back(FrameKind::Banana);
+				int n = (int)kinds.size(), at = (int)(std::find(kinds.begin(), kinds.end(), frameKind) - kinds.begin());
+				FrameKind want = kinds[(at + d + n) % n];
+				frameKind = applyFrame(sd.id, want);
+				if (frameKind == want)
+				{
+					const std::string rel = lib.gameAt(gameIndex).rel;
+					GameOverride ov = lib.overrideOf(sd.id, rel);
+					lib.setOverride(sd.id, rel, ov.core, ov.shader, frameKindWord(want));
+				}
+			}
 			else return;
 			quickArmed = -1;
 			drawQuickView();
@@ -1947,7 +2015,7 @@ int main(int argc, char** argv)
 			std::string rel = lib.gameAt(g).rel;
 			auto ov = lib.overrideOf(sd.id, rel);
 			settingsView.setVariant(menuTheme());
-			settingsView.openGame(sd.id, rel, lib.gameAt(g).path, lib.gameAt(g).title, ov.first, ov.second);
+			settingsView.openGame(sd.id, rel, lib.gameAt(g).path, lib.gameAt(g).title, ov.core, ov.shader, ov.frame, lib.framable(g));
 			rep.key = Key::NONE;
 			sound.play("select");
 			dirty = true;
@@ -2025,6 +2093,8 @@ int main(int argc, char** argv)
 		gamePid = -1;
 		gameIndex = -1;
 		gameRA = false;
+		gameFramable = false;
+		frameKind = applyFrame("", FrameKind::None);
 	};
 
 	// The game alone owns the panel while it runs: banana-ui draws nothing, and the game sizes and rotates its own
@@ -2047,6 +2117,12 @@ int main(int argc, char** argv)
 		forgetDecoded();
 		drawn = false;	// the menu is drawn afresh when the panel comes back
 		rep.key = Key::NONE;
+		// before the fork: the game's first configure has to be the hole's size
+		gameFramable = lib.framable(game);
+		frameKind = gameFramable ? resolveFrame(frameMaster(), lib.overrideOf(sd.id, lib.gameAt(game).rel).frame,
+		                                        getConfValue(o.data + "/settings.conf", "frame." + sd.id, ""), frameHasArt(sd.id))
+		                         : FrameKind::None;
+		frameKind = applyFrame(sd.id, frameKind);
 		if (system(("banana-perf " + shellQuote(sd.perf.empty() ? "balanced" : sd.perf)).c_str()) != 0) {}
 		const char* PROGRESS = "/run/banana/ra-progress";	// "<unlocked> <total>", from the emulator (docs/EMULATORS.md)
 		const char* CHEEVOS  = "/run/banana/cheevos";		// one line per unlock, from the same patch
@@ -2058,6 +2134,7 @@ int main(int argc, char** argv)
 		{
 			// the panel, input and sound were handed over above: take them back rather than pretend a game ran
 			logf("fork failed: %s", strerror(errno));
+			frameKind = applyFrame(sd.id, FrameKind::None);
 			be.invalidate();
 			sound.setBgm(settings["bgm"] != "off");
 			sound.warm();
@@ -2078,8 +2155,9 @@ int main(int argc, char** argv)
 			setenv("BANANA_RA_CHEEVOS", CHEEVOS, 1);	// RetroArch's patch writes both (buildroot/patches/retroarch/0013)
 			// a game's own Game options (Settings' X): the core and shader this one game runs with, when it has any
 			auto ov = lib.overrideOf(sd.id, lib.gameAt(game).rel);
-			if (!ov.first.empty()) setenv("BANANA_CORE", ov.first.c_str(), 1);
-			if (!ov.second.empty()) setenv("BANANA_SHADER", ov.second.c_str(), 1);
+			if (!ov.core.empty()) setenv("BANANA_CORE", ov.core.c_str(), 1);
+			if (!ov.shader.empty()) setenv("BANANA_SHADER", ov.shader.c_str(), 1);
+			setenv("BANANA_FRAME", frameKindWord(frameKind), 1);	// run-retroarch: the Banana frame's hole wants no integer scale
 			execl("/bin/sh", "sh", "-c", cmd.c_str(), (char*)nullptr);
 			_exit(127);
 		}

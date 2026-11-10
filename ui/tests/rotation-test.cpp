@@ -79,6 +79,25 @@ int main()
 		}
 		if (x + vw > 1080 || y + vh > 1240) { fprintf(stderr, "FAIL fit %ux%u: outside the panel\n", c.w, c.h); fails++; }
 	}
+	// 4. fitRotatedHole: a frame's hole, on the panel where the turn puts it
+	struct HoleFit { uint32_t w, h, hx, hy, hw, hh, x, y, vw, vh; };
+	const HoleFit holes[] = {
+		{1120, 1008, 60, 36, 1120, 1008, 36, 60, 1008, 1120},	// GB: a client at the hole's size fills it exactly
+		{1200, 800, 20, 140, 1200, 800, 140, 20, 800, 1200},	// GBA
+		{1240, 1080, 60, 36, 1120, 1008, 52, 60, 975, 1120},	// a client that ignored the configure, letterboxed
+		{100, 100, 0, 0, 200, 100, 980, 50, 100, 100},		// off centre: logical top is the panel's right
+	};
+	for (const HoleFit& c : holes)
+	{
+		uint32_t x, y, vw, vh;
+		banana::fitRotatedHole(c.w, c.h, 1240, 1080, c.hx, c.hy, c.hw, c.hh, x, y, vw, vh);
+		if (x != c.x || y != c.y || vw != c.vw || vh != c.vh)
+		{
+			fprintf(stderr, "FAIL hole %ux%u in %u,%u %ux%u: got (%u,%u %ux%u) expected (%u,%u %ux%u)\n", c.w, c.h, c.hx, c.hy, c.hw, c.hh,
+			        x, y, vw, vh, c.x, c.y, c.vw, c.vh);
+			fails++;
+		}
+	}
 	printf("rotation-test: %s\n", fails ? "failed" : "ok");
 	return fails ? 1 : 0;
 }

@@ -514,7 +514,8 @@ namespace banana
 			}
 		}
 		{
-			// a game's own overrides: <system>/<rel> TAB core TAB shader (empty follows the system / the global shader)
+			// a game's own overrides: <system>/<rel> TAB core TAB shader TAB frame (empty follows the system / the global
+			// shader; a line from before frames has three columns, and trailing empty columns do not split at all)
 			std::ifstream f(dataDir + "/pergame.conf");
 			std::string ln;
 			while (std::getline(f, ln))
@@ -523,8 +524,9 @@ namespace banana
 				std::stringstream ls(ln);
 				std::string part;
 				while (std::getline(ls, part, '\t')) c.push_back(part);
-				if (c.size() < 3 || c[0].empty()) continue;
-				if (!c[1].empty() || !c[2].empty()) overrides[c[0]] = { c[1], c[2] };
+				if (c.size() < 2 || c[0].empty()) continue;
+				c.resize(4);
+				if (!c[1].empty() || !c[2].empty() || !c[3].empty()) overrides[c[0]] = { c[1], c[2], c[3] };
 			}
 		}
 	}
@@ -563,26 +565,43 @@ namespace banana
 		writeAtomic(dataDir + "/playstats.tsv", out);
 	}
 
-	// a game's own overrides (its Game options): the core and shader this one game runs with. A game with neither
-	// keeps no line; one with a core but the system's shader keeps a line with an empty shader field.
-	std::pair<std::string, std::string> Library::overrideOf(const std::string& system, const std::string& rel) const
+	// a game's own overrides (its Game options): the core, shader and screen frame this one game runs with. A game
+	// with none keeps no line; one with a core but the system's shader keeps a line with an empty shader field.
+	GameOverride Library::overrideOf(const std::string& system, const std::string& rel) const
 	{
 		auto it = overrides.find(system + "/" + rel);
-		return it == overrides.end() ? std::make_pair(std::string(), std::string()) : it->second;
+		return it == overrides.end() ? GameOverride() : it->second;
 	}
 
-	void Library::setOverride(const std::string& system, const std::string& rel, const std::string& core, const std::string& shader)
+	void Library::setOverride(const std::string& system, const std::string& rel, const std::string& core, const std::string& shader, const std::string& frame)
 	{
 		std::string k = system + "/" + rel;
-		if (core.empty() && shader.empty()) overrides.erase(k);
-		else overrides[k] = { core, shader };
+		if (core.empty() && shader.empty() && frame.empty()) overrides.erase(k);
+		else overrides[k] = { core, shader, frame };
 		saveOverrides();
+	}
+
+	bool Library::framable(int game) const
+	{
+		const SystemDef& sd = systemOf(game);
+		if (sd.app) return false;
+		if (sd.run.find("run-retroarch") != std::string::npos) return true;
+		return sd.run.find("run-port") != std::string::npos && gameAt(game).path.find("PortMaster.sh") == std::string::npos;
+	}
+
+	std::vector<std::pair<std::string, std::string>> Library::frameSystems() const
+	{
+		std::vector<std::pair<std::string, std::string>> r;
+		for (const SystemDef& sd : defs)
+			if (!sd.app && (sd.run.find("run-retroarch") != std::string::npos || sd.run.find("run-port") != std::string::npos))
+				r.push_back({ sd.id, sd.name });
+		return r;
 	}
 
 	void Library::saveOverrides()
 	{
 		std::string out;
-		for (auto& kv : overrides) out += kv.first + "\t" + kv.second.first + "\t" + kv.second.second + "\n";
+		for (auto& kv : overrides) out += kv.first + "\t" + kv.second.core + "\t" + kv.second.shader + (kv.second.frame.empty() ? "" : "\t" + kv.second.frame) + "\n";
 		writeAtomic(dataDir + "/pergame.conf", out);
 	}
 

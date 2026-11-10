@@ -436,6 +436,8 @@ namespace banana
 		for (auto& pn : p)
 		{
 			freeBuf(pn.buf[0]); freeBuf(pn.buf[1]); freeBuf(pn.black); freeBuf(pn.card[0]); freeBuf(pn.card[1]);
+			freeBuf(pn.frame[0]); freeBuf(pn.frame[1]);
+			pn.frameOn = false;
 			if (pn.mode_blob) { drmModeDestroyPropertyBlob(fd, pn.mode_blob); pn.mode_blob = 0; }
 		}
 		::close(fd);
@@ -554,7 +556,9 @@ namespace banana
 		if (count <= 0 || !p[0].atomic) return false;
 		Buf& b = p[0].card[p[0].cardFront ^ 1];	// the hidden buffer, never one the plane may scan
 		if (!b.map) return false;
-		memset(b.map, 0, b.size);	// transparent: the client on the primary shows through
+		// a game's frame under the card, or transparent: the client on the primary shows through
+		if (p[0].frameOn && frameCopy.size() == b.size) memcpy(b.map, frameCopy.data(), b.size);
+		else memset(b.map, 0, b.size);
 		return true;
 	}
 
@@ -572,6 +576,34 @@ namespace banana
 	uint32_t Display::overlayCardFb() const
 	{
 		return count > 0 && p[0].atomic ? p[0].card[p[0].cardFront].fb : 0;
+	}
+
+	bool Display::frameSet(const uint32_t* canvas)
+	{
+		if (count <= 0 || !p[0].atomic) return false;
+		Panel& pn = p[0];
+		if (!canvas)
+		{
+			pn.frameOn = false;
+			std::vector<uint8_t>().swap(frameCopy);
+			return true;
+		}
+		int back = pn.frameFront ^ 1;	// never the buffer the plane may scan
+		Buf& b = pn.frame[back];
+		if (!b.map && !makeBuf(b, DRM_FORMAT_ARGB8888)) return false;
+		frameCopy.resize(b.size);
+		Buf cached = b;
+		cached.map = frameCopy.data();
+		turn(canvas, cached, Damage{ 0, 0, W, H });
+		memcpy(b.map, frameCopy.data(), b.size);
+		pn.frameFront = back;
+		pn.frameOn = true;
+		return true;
+	}
+
+	uint32_t Display::frameFb() const
+	{
+		return count > 0 && p[0].atomic && p[0].frameOn ? p[0].frame[p[0].frameFront].fb : 0;
 	}
 
 	bool Display::showMenu()

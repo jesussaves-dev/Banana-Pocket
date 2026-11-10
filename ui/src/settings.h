@@ -10,6 +10,7 @@
 #include "../rnds/RndsUI.h"
 #include "input.h"
 #include "wifi.h"
+#include "frame.h"
 #include <map>
 #include <memory>
 #include <mutex>
@@ -37,11 +38,14 @@ namespace banana
 		}
 		void setup() { mOpen = true; openSetup(); }	// the first-time setup, from the host
 		// a game's own options (the library's X): the core and shader this one game runs with instead of the
-		// system's and the global ones, and its save states. `core` and `shader` are the game's present overrides
-		// ("" for neither); `rom` is its path, for the states page.
+		// system's and the global ones, and its save states. `core`, `shader` and `frame` are the game's present overrides
+		// ("" for none); `rom` is its path, for the states page; `framable` shows the Frame row.
 		void openGame(const std::string& system, const std::string& rel, const std::string& rom, const std::string& title,
-				const std::string& core, const std::string& shader);
-		std::function<void(const std::string& system, const std::string& rel, const std::string& core, const std::string& shader)> setOverride;
+				const std::string& core, const std::string& shader, const std::string& frame, bool framable);
+		std::function<void(const std::string& system, const std::string& rel, const std::string& core, const std::string& shader, const std::string& frame)> setOverride;
+		// the systems the Frames page lists, (id, name): known only once the library has read them
+		void setFrameSystems(const std::vector<std::pair<std::string, std::string>>& systems);
+		FrameColors frameColors() const;	// the Banana frame in the active theme
 		bool isOpen() const { return mOpen; }
 		bool animating() const;	// the highlight or the list still easing into place: frames wanted
 
@@ -101,6 +105,8 @@ namespace banana
 		double toastLeftMs() const { return toastUntil - now; }
 
 	private:
+		std::vector<std::pair<std::string, std::string>> frameSystemList;
+		std::string frameKept;	// a game's frame, when its page has no row to hold it
 		struct Item
 		{
 			std::string section, icon, label, help;

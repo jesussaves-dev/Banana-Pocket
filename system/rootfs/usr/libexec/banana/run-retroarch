@@ -335,38 +335,28 @@ else
 fi
 # A system on glcore (Dreamcast, above) cannot run the Slang preset: leave the shader off for it, the file untouched.
 [ -n "$glc" ] && set_cfg video_shader_enable false
-# Screen bezels: SkyWalker541's CC0 frames (usr/share/banana/overlays, licence beside them). Each is cut for the
-# integer scale its console lands at on this panel -- GB/GBC 160x144 at 7x (window 1120x1008), GBA 240x160 at 5x
-# (1200x800) -- and carries the 1px LCD grid. So while a frame is on, the game has to be at the core's own aspect and
-# an integer scale, and a pixel shader waits (on top of the grid it would double up). All of it goes in a config
-# appended for this launch, not into retroarch.cfg: the switch (settings.conf's "bezels", on unless off) applies on the
-# next launch and leaves the card's own scaling and shader choices alone. Settings > RetroArch > Screen bezels.
+# Screen frames are banana-ui's own now: the compositor draws them on the overlay plane and sizes this window to the
+# frame's hole, so nothing here turns an overlay on. Two things are left. The Game Boys used to run with RetroArch's
+# overlay, and a config an older image or a crash left behind must not draw it over the new frame. And the Banana
+# frame's hole is not cut for any integer multiple (SNES at 4x is taller than a 4:3 hole, so integer scale would drop
+# to 3x and leave a gap inside the frame): that launch fills the hole instead, in a config appended for it alone.
 BZC=/run/banana/retroarch-bezel.cfg
 BZA=
 rm -f $BZC
 case $BANANA_SYSTEM in
-gb|gbc|gba) B=/usr/share/banana/overlays/$BANANA_SYSTEM.png ;;
-*)          B= ;;
+gb|gbc|gba) printf 'input_overlay_enable = "false"\n' > $BZC ;;
 esac
-if [ -n "$B" ] && [ -f "$B" ] && [ "$(setting bezels)" != off ]; then
-    OV=/run/banana/banana-overlay.cfg
-    printf 'overlays = 1\noverlay0_overlay = "%s"\noverlay0_full_screen = true\noverlay0_descs = 0\n' "$B" > $OV
-    printf 'video_scale_integer = "true"\naspect_ratio_index = "22"\n' >> $BZC
-    printf 'input_overlay = "%s"\ninput_overlay_enable = "true"\ninput_overlay_opacity = "1.000000"\ninput_overlay_auto_scale = "false"\nvideo_shader_enable = "false"\n' "$OV" >> $BZC
+if [ "$BANANA_FRAME" = banana ]; then
+    printf 'video_scale_integer = "false"\n' >> $BZC
     BZON=1
-else
-    # off (or a frame the image has not got): say so here too, because RetroArch saved the last launch's effective
-    # config back into retroarch.cfg -- whose overlay enable would otherwise turn the old frame on again
-    [ -n "$B" ] && printf 'input_overlay_enable = "false"\n' > $BZC
 fi
 [ -s $BZC ] && BZA="|$BZC"
 # RetroArch writes that effective config back when it quits (config_save_on_exit, kept so its own menu changes stick),
-# so the keys a frame overrides would land on the card and stay forced for every launch after the switch is turned
-# off. The five are read before the game and put back after it: only that launch was different.
+# so the integer scale a Banana frame turned off would land on the card and stay. It is read before the game and put
+# back after it: only that launch was different.
 bk() { sed -n "s/^ *$1 *= *//p" $CFG 2>/dev/null | sed 's/^"//; s/"$//' | tail -n 1; }
 if [ -n "$BZON" ]; then
-    R_INT=$(bk video_scale_integer); R_ASP=$(bk aspect_ratio_index); R_OVL=$(bk input_overlay)
-    R_OVE=$(bk input_overlay_enable); R_SHA=$(bk video_shader_enable)
+    R_INT=$(bk video_scale_integer)
 fi
 # VSync, integer scaling and the audio buffer are RetroArch's own (its menu, or /data/retroarch/retroarch.cfg): Banana
 # no longer has rows for them and does not overwrite them here. One clock still paces the emulation, and with VSync on
@@ -488,14 +478,10 @@ while :; do
     echo "run-retroarch: RetroArch could not take the audio device, starting it again ($tries)" >&2
     sleep 0.5
 done
-# the card's own values for what a frame overrode (read before the game, above); RetroArch saved its effective ones
+# the card's own value for what a frame overrode (read before the game, above); RetroArch saved its effective one
 # on the way out, so put them back
 if [ -n "$BZON" ]; then
     [ -n "$R_INT" ] && set_cfg video_scale_integer "$R_INT"
-    [ -n "$R_ASP" ] && set_cfg aspect_ratio_index "$R_ASP"
-    [ -n "$R_OVE" ] && set_cfg input_overlay_enable "$R_OVE"
-    [ -n "$R_OVL" ] && set_cfg input_overlay "$R_OVL"
-    [ -n "$R_SHA" ] && set_cfg video_shader_enable "$R_SHA"
 fi
 # the menu toggle the pause menu moved for this launch (above): the card's own value, or none (the autoconfig's)
 if [ -n "$R_MTB" ]; then set_cfg input_menu_toggle_btn "$R_MTB"; else sed -i '/^ *input_menu_toggle_btn *=/d' $CFG; fi

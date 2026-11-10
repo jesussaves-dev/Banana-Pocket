@@ -9,6 +9,7 @@
 // rotated by the same 90 degrees. Without an overlay/atomic KMS the old single-plane path is kept.
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace banana
 {
@@ -70,6 +71,11 @@ namespace banana
 		bool overlayCardBegin();
 		void overlayCardTurn(const uint32_t* canvas, int x0, int y0, int x1, int y1);
 		uint32_t overlayCardFb() const;
+		// a game's screen frame: canvas (rows of width() words, premultiplied ARGB) is turned into a hidden buffer and
+		// becomes what frameFb() names, and the base every card is drawn on. nullptr takes it away. Not for a hot path:
+		// it writes the whole panel. False when the atomic overlay path is not in use or no buffer could be made.
+		bool frameSet(const uint32_t* canvas);
+		uint32_t frameFb() const;
 		bool showMenu();
 		// black primary, overlay off: used before the compositor is torn down so the plane stops scanning a
 		// presenter-owned framebuffer before the DRM fd is closed
@@ -94,6 +100,9 @@ namespace banana
 			Buf buf[2];		// the menu, ARGB8888 (atomic overlay) or XRGB8888 (legacy primary)
 			Buf card[2];	// the 3D card layer, ARGB8888 over a client on the primary (atomic only)
 			int cardFront = 0;
+			Buf frame[2];	// a game's screen frame, made the first time one is shown
+			int frameFront = 0;
+			bool frameOn = false;
 			Buf black;		// XRGB8888, the primary when the menu is on the overlay
 			int front = 0;
 			Damage missed[2];
@@ -104,6 +113,7 @@ namespace banana
 		int fd = -1, W = 0, H = 0, pending = 0, count = 1;
 		int rot = 0, SW = 0, SH = 0;	// the panel's rotation, and its size in its own rows (the scanout buffers')
 		Panel p[2];
+		std::vector<uint8_t> frameCopy;	// the turned frame in cached memory: reading the uncached dumb buffer per card is slow
 		void turn(const uint32_t* src, Buf& bf, const Damage& d);
 		void applyGamma();
 		int warmth = 0;

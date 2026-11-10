@@ -3,4 +3,5 @@ The screen frames here (gb.png, gbc.png, gba.png) are SkyWalker541's Retroid Poc
     https://github.com/SkyWalker541/Retroid-Pocket-Classic-Overlays
 
 Released under CC0 1.0 Universal (public domain dedication); the full licence text is that repository's LICENSE file.
-Files taken unchanged, as *_bezel_grid_integer_1px_black.png, and renamed to the system they frame.
+Files taken from *_bezel_grid_integer_1px_black.png and renamed to the system they frame, with the 1px LCD grid inside
+the screen window cleared to transparent (tools/strip-frame-grid.py).

@@ -13,6 +13,9 @@
 
 namespace banana
 {
+	// a game's own Game options; an empty field follows the system
+	struct GameOverride { std::string core, shader, frame; };
+
 	struct SystemDef
 	{
 		std::string id, name, maker, folder, run, perf;
@@ -82,8 +85,11 @@ namespace banana
 		// A game's own RetroArch overrides (its Game options): the core and shader this one game runs with, empty
 		// when it follows the system's core.<system> (and RetroArch's own shader). Kept in banana/pergame.conf,
 		// applied by the launcher (run-retroarch reads BANANA_CORE / BANANA_SHADER, docs/EMULATORS.md).
-		std::pair<std::string, std::string> overrideOf(const std::string& system, const std::string& rel) const;
-		void setOverride(const std::string& system, const std::string& rel, const std::string& core, const std::string& shader);
+		GameOverride overrideOf(const std::string& system, const std::string& rel) const;
+		void setOverride(const std::string& system, const std::string& rel, const std::string& core, const std::string& shader, const std::string& frame);
+		// a screen frame can go around RetroArch games and ports; not around an app or PortMaster's own entry
+		bool framable(int game) const;
+		std::vector<std::pair<std::string, std::string>> frameSystems() const;	// (id, name) of the systems that can be framed
 		std::function<void(const std::string&)> onCue;
 		bool twelveHour = false;
 
@@ -128,7 +134,7 @@ namespace banana
 		std::set<std::string> favGames, favSystems;	// "<system>/<rel>", system ids
 		struct Stat { int plays = 0; long seconds = 0; time_t last = 0; int achA = -1, achB = 0; };
 		std::map<std::string, Stat> stats;			// "<system>/<rel>"
-		std::map<std::string, std::pair<std::string, std::string>> overrides;	// "<system>/<rel>" -> (core, shader)
+		std::map<std::string, GameOverride> overrides;	// "<system>/<rel>"
 		void saveOverrides();
 		int lib = 0, home = 0, launchGame = -1;
 		bool changed = false;

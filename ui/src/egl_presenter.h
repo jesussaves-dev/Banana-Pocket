@@ -23,6 +23,7 @@ namespace banana
 		void stop() override;
 		bool render(ClientBuffer& b, uint32_t& fb, std::string& err) override;
 		int takeFenceFd() override;
+		void setHole(int x, int y, int w, int h) override;
 		void presented() override;
 		void abandon() override;
 		void flipDone() override;

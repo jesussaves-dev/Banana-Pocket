@@ -139,6 +139,7 @@ namespace banana
 		unsigned frames = 0;
 		int sw = 0, sh = 0;	// the panel: 1080x1240
 		uint32_t lastW = 0, lastH = 0;	// the last source size, to log a size change once
+		int holeX = 0, holeY = 0, holeW = 0, holeH = 0;	// a screen frame's hole; holeW == 0 is the whole output
 
 		void destroySource(Source& s)
 		{
@@ -791,9 +792,12 @@ namespace banana
 		glDisable(GL_DEPTH_TEST);
 		glClearColor(0, 0, 0, 1);
 		glClear(GL_COLOR_BUFFER_BIT);
-		// any source size: letterboxed into the 1240x1080 logical output, then turned (ui/src/rotate.h)
+		// any source size: letterboxed into the frame's hole, or the 1240x1080 logical output, then turned (ui/src/rotate.h)
 		uint32_t vx, vy, vw, vh;
-		fitRotated(b.w, b.h, (uint32_t)im->sh, (uint32_t)im->sw, vx, vy, vw, vh);
+		if (im->holeW)
+			fitRotatedHole(b.w, b.h, (uint32_t)im->sh, (uint32_t)im->sw, (uint32_t)im->holeX, (uint32_t)im->holeY,
+			               (uint32_t)im->holeW, (uint32_t)im->holeH, vx, vy, vw, vh);
+		else fitRotated(b.w, b.h, (uint32_t)im->sh, (uint32_t)im->sw, vx, vy, vw, vh);
 		if (b.w != im->lastW || b.h != im->lastH)
 		{
 			logf("source %ux%u -> viewport %u,%u %ux%u", b.w, b.h, vx, vy, vw, vh);
@@ -848,6 +852,12 @@ namespace banana
 		if (!im->freshSource) im->dumpPair(*s, src->tex, (int)b.w, (int)b.h);	// a fresh source is already gone
 		fb = s->fb;
 		return true;
+	}
+
+	void EglPresenter::setHole(int x, int y, int w, int h)
+	{
+		if (!impl) return;
+		impl->holeX = x; impl->holeY = y; impl->holeW = w; impl->holeH = h;
 	}
 
 	int EglPresenter::takeFenceFd()

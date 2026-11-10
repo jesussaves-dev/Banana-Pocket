@@ -26,6 +26,10 @@ ${CXX:-c++} -O2 -std=c++17 $(pkg-config --cflags libdrm 2>/dev/null) -o "$OUT/dm
 ${CXX:-c++} -O2 -std=c++17 -o "$OUT/rotation-test" "$HERE/tests/rotation-test.cpp" 2> "$OUT/rotation-build.log" ||
     { echo "FAIL: can't build rotation-test (see $OUT/rotation-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/rotation-test" > "$OUT/rotation.log" 2>&1 || { echo "FAIL: rotation-test"; cat "$OUT/rotation.log"; fail=1; }
+# the screen frames: which one a game gets, where its hole is, and the art the image ships
+${CXX:-c++} -O2 -std=c++17 -Wno-unused-function -o "$OUT/frame-test" "$HERE/tests/frame-test.cpp" "$HERE/src/frame.cpp" 2> "$OUT/frame-build.log" ||
+    { echo "FAIL: can't build frame-test (see $OUT/frame-build.log)"; fail=1; }
+[ "$fail" = 1 ] || "$OUT/frame-test" "$HERE/../system/rootfs/usr/share/banana/overlays" "$OUT/frame-banana.png" > "$OUT/frame.log" 2>&1 || { echo "FAIL: frame-test"; cat "$OUT/frame.log"; fail=1; }
 # A golden theme test: the key screens compared to committed baselines, so a change that moves or drops an element
 # fails here instead of only being seen on the handheld. The comparison is at 32x24 grey -- a layout change is a big
 # difference (an added block scores ~0.06), while a freetype version's rasterization stays under 0.02 -- and

@@ -79,19 +79,19 @@ run gba gpsp
 has "$W/retroarch.args" gpsp_libretro.so && ok "the gpsp core was launched" || bad "the core was not launched"
 [ -d "$W/data/retroarch/config/SwanStation" ] && bad "a GBA run wrote SwanStation's files" || ok "no per-core files for a plain system"
 
-echo "1b. screen bezels: GB/GBC/GBA only, and only while the switch is on"
+echo "1b. screen frames: the compositor draws them; a Banana frame runs without integer scale, for that launch only"
 fresh
-run gba gpsp
 B=$W/run/banana/retroarch-bezel.cfg
-has "$B" 'video_scale_integer = "true"' && ok "integer scaling is forced with a frame" || bad "integer scaling not forced"
-has "$B" 'aspect_ratio_index = "22"' && ok "the console's own aspect (core provided)" || bad "aspect not forced"
-has "$B" 'input_overlay_enable = "true"' && ok "the overlay is on" || bad "overlay not on"
-has "$W/run/banana/banana-overlay.cfg" 'overlays/gba.png' && ok "the GBA frame" || bad "wrong frame"
-has "$B" 'video_shader_enable = "false"' && ok "the shader waits behind the grid" || bad "the shader would double the grid"
-run gba gpsp 'bezels = off'
-has "$B" 'input_overlay_enable = "false"' && ok "off: the overlay is off, even after RetroArch saved it on" || bad "off did not turn the overlay off"
+run gba gpsp
+has "$B" 'input_overlay_enable = "false"' && ok "an old RetroArch overlay stays off" || bad "the old overlay could come back"
+has "$B" 'video_scale_integer' && bad "an art frame forced the scale" || ok "an art frame leaves the scale alone"
+has "$B" 'video_shader_enable' && bad "a frame touched the shader" || ok "a frame leaves the shader alone"
+[ -e "$W/run/banana/banana-overlay.cfg" ] && bad "RetroArch was given an overlay" || ok "no RetroArch overlay"
 run nes fceumm
-[ -f "$B" ] && bad "NES got a frame" || ok "no frame outside the three"
+[ -f "$B" ] && bad "NES got a config with no frame" || ok "nothing appended without a frame"
+BANANA_FRAME=banana run nes fceumm
+has "$B" 'video_scale_integer = "false"' && ok "a Banana frame fills its hole" || bad "integer scale left on under a Banana frame"
+[ "$(cfg video_scale_integer)" = true ] && ok "the card's integer scale is back afterwards" || bad "video_scale_integer=$(cfg video_scale_integer)"
 
 echo "2. the PlayStation on SwanStation writes its own defaults"
 fresh

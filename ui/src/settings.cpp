@@ -321,8 +321,6 @@ namespace banana
 		add(O, "gamepad", "RetroAchievements", "Softcore: achievements unlock with save states, rewind and cheats still there. Hardcore: those are locked for the game, and the unlocks count as hardcore on retroachievements.org. RetroArch's own menu changes the same setting.",
 			"/data/retroarch/retroarch.cfg", "cheevos_hardcore_mode_enable", { "Softcore", "Hardcore" }, { "false", "true" });
 		add(O, "gamepad", "Quick resume", "On: quitting keeps where you are, and the game goes on from there next time (RetroArch's automatic save state; not in Hardcore). Off: a game starts from its title.", "/data/retroarch/retroarch.cfg", "savestate_auto_save", { "Off", "On" }, { "false", "true" });
-		add(O, "picture", "Screen bezels", "The console around Game Boy, Game Boy Color and Game Boy Advance games, with its 1px pixel grid. Every frame is cut for one integer scale, so this runs those games at an integer scale with the console's own aspect while it is on (turn it off for a stretched picture and a shader). The grid and a pixel shader would double up, so a game's own shader waits until the frame is off. Other systems have no frame and keep their shader.",
-			menu, "bezels", { "On", "Off" }, { "on", "off" });
 		if (access("/usr/lib/libretro/mgba_libretro.so", F_OK) == 0)
 			add(O, "gamepad", "Game Boy Advance", "The emulator for GBA games. gpSP: the fastest. mGBA: the most accurate, and the one RetroAchievements accepts for hardcore.", menu, "core.gba", { "gpSP", "mGBA" }, { "gpsp", "mgba" });
 		if (access("/usr/lib/libretro/swanstation_libretro.so", F_OK) == 0)
@@ -377,6 +375,36 @@ namespace banana
 		add(S, "gear", "About", "", "", "", {}, {}, Item::INFO);
 		add(S, "gear", "Restart", "Restarts the handheld. Press A twice.", "", "reboot", { "" }, { "" }, Item::ACTION);
 		add(S, "gear", "Shut down", "Turns the handheld off. Press A twice. (Or hold the power button.)", "", "poweroff", { "" }, { "" }, Item::ACTION);
+		const char* F = "Frames";
+		add(F, "picture", "Screen bezels", "A frame around the game, on RetroArch systems and ports. Game Boy, Game Boy Color and Game Boy Advance have their console's own by default; the rest have none until you pick one here, in a game's options, or from the pause menu. Off turns them all off.",
+			menu, "bezels", { "On", "Off" }, { "on", "off" });
+		add(F, "picture", "Frame brightness", "How bright a frame is next to the game. The panel is OLED and a frame stays still for hours, so lower is kinder to it.",
+			menu, "frame_brightness", { "100%", "85%", "70%", "50%" }, { "100", "85", "70", "50" });
+		for (const auto& s : frameSystemList)
+		{
+			std::vector<std::string> names = { "Default" }, values = { "auto" };
+			names.push_back("None"); values.push_back("none");
+			if (access(("/usr/share/banana/overlays/" + s.first + ".png").c_str(), F_OK) == 0) { names.push_back("Console"); values.push_back("art"); }
+			names.push_back("Banana"); values.push_back("banana");
+			add(F, "picture", s.second.c_str(), "The frame for this system. A game's own options can choose differently.", menu, ("frame." + s.first).c_str(), names, values);
+		}
+	}
+
+	void Settings::setFrameSystems(const std::vector<std::pair<std::string, std::string>>& systems)
+	{
+		frameSystemList = systems;
+		items.clear();
+		build();
+	}
+
+	FrameColors Settings::frameColors() const
+	{
+		SPal p = pal(light);
+		auto rgb = [](const Color& c) {
+			auto b = [](float v) { return (uint32_t)(std::min(std::max(v, 0.0f), 1.0f) * 255 + 0.5f); };
+			return b(c.r) << 16 | b(c.g) << 8 | b(c.b);
+		};
+		return { rgb(p.screenFrame), rgb(p.screenBand), rgb(p.panelBody), rgb(p.panelBand), rgb(p.panelLow), rgb(p.blackish), rgb(p.pick) };
 	}
 
 	void Settings::load(Item& it)
@@ -561,12 +589,12 @@ namespace banana
 	}
 
 	void Settings::openGame(const std::string& system, const std::string& rel, const std::string& rom, const std::string& title,
-			const std::string& core, const std::string& shader)
+			const std::string& core, const std::string& shader, const std::string& frame, bool framable)
 	{
 		// the main list is held aside and put back on close(); the game's page is the LIST machinery with a flat
 		// list (there is no group grid behind it, so B and Start both close back to the menu)
 		savedItems = items; savedGroups = groups;
-		gamePage = true; gameSys = system; gameRel = rel; gameRom = rom; gameTitle = title;
+		gamePage = true; gameSys = system; gameRel = rel; gameRom = rom; gameTitle = title; frameKept = frame;
 		items.clear();
 		auto opt = [&](const std::string& label, const std::string& help, const std::string& cur,
 				const std::vector<std::pair<std::string, std::string>>& opts)
@@ -607,6 +635,14 @@ namespace banana
 		opt("Emulator", "The core this one game runs with. Default follows the system's own emulator (Settings > RetroArch).", core, cores);
 		opt("Shader", "The look for this one game, over RetroArch's own. Default leaves RetroArch's shader choice alone.", shader,
 			{ { "Off", "off" }, { "LCD", "lcd" }, { "CRT", "crt" }, { "Sharp pixels", "sharp" } });
+		if (framable)
+		{
+			std::vector<std::pair<std::string, std::string>> frames = { { "None", "none" } };
+			if (access(("/usr/share/banana/overlays/" + system + ".png").c_str(), F_OK) == 0) frames.push_back({ "Console", "art" });
+			frames.push_back({ "Banana", "banana" });
+			opt("Frame", "The frame around this one game. Default follows the system (Settings > Frames).", frame, frames);
+			items.back().key = "frame";
+		}
 		scanStates();	// (a game has at most a handful; the row's value is their count)
 		{
 			Item it;
@@ -628,8 +664,10 @@ namespace banana
 	{
 		if (gamePage)
 		{
-			// a game's own options: the two rows are its core and its shader ("" follows the system)
-			if (setOverride) setOverride(gameSys, gameRel, items[0].values[items[0].at], items[1].values[items[1].at]);
+			// a game's own options: the rows are its core, its shader and its frame ("" follows the system)
+			const bool hasFrame = items.size() > 2 && items[2].key == "frame";
+			if (setOverride) setOverride(gameSys, gameRel, items[0].values[items[0].at], items[1].values[items[1].at],
+			                             hasFrame ? items[2].values[items[2].at] : frameKept);
 			return;
 		}
 		const std::string& v = it.values[it.at];

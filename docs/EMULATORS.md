@@ -104,13 +104,14 @@ to one of the image's **Slang** presets in `/usr/share/libretro/shaders/slang` (
 of MB of small files in exFAT's large clusters and a long first start). Slang, not GLSL: the game's video driver is
 Vulkan, whose shader backend is Slang, and a GLSL preset under it crashes RetroArch (a backend mismatch).
 
-**Screen bezels** (Settings > RetroArch, `bezels` in `banana/settings.conf`, on by default) draws SkyWalker541's CC0
-console frame — with its 1px LCD grid — around Game Boy, Game Boy Color and Game Boy Advance games
-(`/usr/share/banana/overlays`, licence beside them). Every frame's window is cut for one integer multiple (GB/GBC
-160×144 at 7×, GBA 240×160 at 5×), so the switch runs those three systems at the core's own aspect and an integer scale, in a config appended for that
-launch (the card's own settings are read before the game and put back after it); the picture then sits in the hole. The grid and a pixel shader would
-double up, so a game's own shader is skipped while its frame is on. With the switch off, the card's aspect, scaling and
-shaders apply exactly as before. No other system has a frame.
+**Screen frames** (Settings > Frames) are drawn by `banana-ui`'s compositor on the overlay plane, around RetroArch games
+and ports, and the game's window is sized to the frame's hole, so RetroArch's aspect, integer and shader settings all
+still apply inside it. `bezels` in `banana/settings.conf` (on by default) is the master switch. A game's own choice
+(its Game options, or the pause menu's *Frame* row) comes first, then the system's (`frame.<system>`). Left at their
+defaults, Game Boy, Game Boy Color and Game Boy Advance show SkyWalker541's CC0 console art
+(`/usr/share/banana/overlays`, licence beside them) and every other system shows nothing. The *Banana* frame is drawn
+from the active theme for any system; a launch with one turns RetroArch's integer scale off so the picture fills the
+hole, and puts the card's value back afterwards. `frame_brightness` dims a frame; the panel is OLED.
 
 RetroAchievements: the account from the first-time setup (`banana/accounts.conf`) is written into `retroarch.cfg`
 as its name, but its password and the token RetroArch gets with it go in a config appended from `/run`, never in

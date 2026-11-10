@@ -25,6 +25,8 @@ namespace banana
 		// 3F: the sync file for the scanout buffer's GPU writes (owned by the caller, close it after the commit),
 		// -1 when render() completed synchronously (glFinish) or the path has no GPU writes. Take once per render.
 		virtual int takeFenceFd() { return -1; }
+		// Where render() places the frame, in logical pixels (w == 0: the whole output). Only a rotating presenter can.
+		virtual void setHole(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; }
 		virtual void presented() = 0;	// the commit succeeded: the rendered FB is on the plane
 		virtual void abandon() = 0;	// the commit failed: return the rendered slot, drop the frame
 		virtual void flipDone() = 0;	// the page-flip event for the current FB completed

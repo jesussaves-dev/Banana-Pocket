@@ -12,6 +12,7 @@
 #include "egl_presenter.h"
 #include "presenter.h"
 #include "trace.h"
+#include <algorithm>
 #include <cerrno>
 #include <cstdarg>
 #include <cstdlib>
@@ -97,6 +98,14 @@ namespace banana
 		uint32_t overlayFb = 0;			// the 3D card buffer (ARGB), shown above the client when non-zero
 		uint32_t lastFb = 0, lastW = 0, lastH = 0;	// the primary currently on screen, for an overlay-only commit
 		uint32_t shownOverlay = 0;	// the overlay fb the last game commit carried (overlayFb can be ahead of it)
+		uint32_t frameFb = 0;		// a game's screen frame (ARGB): on the overlay whenever no card is up
+		int holeX = 0, holeY = 0, holeW = 0, holeH = 0;	// where the client goes; holeW == 0 is the whole output
+		int cfgW = 0, cfgH = 0;		// the size the client was last configured at
+		bool cfgRepeated = false;	// that size was sent again after a frame came back the wrong size
+		Buffer* lastShown = nullptr;	// the newest frame presented, to re-place a frozen game in a new hole
+		bool reframeDue = false;	// a new hole arrived during a flip
+		bool touchOutside = false;	// this touch began on the frame: the client never hears of it
+		uint32_t shownLayer() const { return overlayFb ? overlayFb : frameFb; }
 		bool restoreMenu = false;		// show the menu as soon as the current flip completes
 		bool stopping = false;
 		bool saidShm = false;
@@ -153,6 +162,53 @@ namespace banana
 			if (b->res) wl_buffer_send_release(b->res);
 			bufferDrop(b);
 		}
+		void dropLastShown()
+		{
+			if (lastShown) bufferDrop(lastShown);
+			lastShown = nullptr;
+		}
+		void sendConfigure(Surface* s)
+		{
+			struct wl_array states;
+			wl_array_init(&states);
+			if (uint32_t* st = (uint32_t*)wl_array_add(&states, sizeof *st)) *st = XDG_TOPLEVEL_STATE_ACTIVATED;
+			// fullscreen, as a kiosk compositor says: SDL2 ignores the size of a non-resizable window's configure unless the
+			// state is fullscreen (BananaTube stayed 1024x768 without it)
+			if (uint32_t* st = (uint32_t*)wl_array_add(&states, sizeof *st)) *st = XDG_TOPLEVEL_STATE_FULLSCREEN;
+			int w = holeW ? holeW : kClientFormatW, h = holeW ? holeH : kClientFormatH;
+			if (w != cfgW || h != cfgH) cfgRepeated = false;
+			cfgW = w;
+			cfgH = h;
+			xdg_toplevel_send_configure(s->top, cfgW, cfgH, &states);
+			xdg_surface_send_configure(s->xdg, wl_display_next_serial(wl));
+			logf("configure %dx%d", cfgW, cfgH);
+			wl_array_release(&states);
+		}
+		// a frozen game sends no frames: draw the last one again, in the hole it should be in now
+		void reframe()
+		{
+			reframeDue = false;
+			if (!lastShown || !lastFb || !presenter || !presenter->rotated() || presenter->diagnostic() || pending || inflight) return;
+			uint32_t fb = 0;
+			std::string err;
+			presenter->setHole(holeX, holeY, holeW, holeH);
+			if (!presenter->render(*lastShown, fb, err))
+			{
+				logf("reframe: %s", err.c_str());
+				presenter->abandon();
+				return;
+			}
+			int fenceFd = presenter->takeFenceFd();
+			uint32_t pw = (uint32_t)d->panelWidth(), ph = (uint32_t)d->panelHeight();
+			bool ok = d->presentGame(fb, pw, ph, shownLayer(), fenceFd);
+			if (fenceFd >= 0) close(fenceFd);
+			if (!ok) { presenter->abandon(); return; }
+			presenter->presented();
+			lastFb = fb;
+			lastW = pw;
+			lastH = ph;
+			shownOverlay = shownLayer();
+		}
 		void dropPending()
 		{
 			if (!pending) return;
@@ -187,7 +243,15 @@ namespace banana
 				       b->res ? wl_resource_get_id(b->res) : 0, b->w, b->h);
 			// The EGL presenter letterboxes any source size into the logical 1240x1080 output and rotates it
 			// (ui/src/rotate.h fitRotated), so a port or video window that is not 1240x1080 stays upright.
+			// RetroArch picks its first size itself, after the first configure, and only a later one moves it: say it
+			// once more, and a client that still will not change is letterboxed into the hole
+			if (holeW && !cfgRepeated && surf && surf->top && ((int)b->w != cfgW || (int)b->h != cfgH))
+			{
+				cfgRepeated = true;
+				sendConfigure(surf);
+			}
 			double ft0 = f3On ? msNow() : 0;
+			if (presenter) presenter->setHole(holeX, holeY, holeW, holeH);
 			if (!presenter || !presenter->render(*b, fb, err))
 			{
 				logf("render: %s", err.empty() ? "no presenter" : err.c_str());
@@ -209,7 +273,7 @@ namespace banana
 			if (frames < 3) logf("commit: fb=%u src=%ux%u", fb, pw, ph);
 			if (frames < kTraceFrames)
 				tracef("frame: commit serial=%llu fb=%u %ux%u", (unsigned long long)b->serial, fb, pw, ph);
-			if (!d->presentGame(fb, pw, ph, overlayFb, fenceFd))
+			if (!d->presentGame(fb, pw, ph, shownLayer(), fenceFd))
 			{
 				if (fenceFd >= 0) close(fenceFd);
 				presenter->abandon();
@@ -254,7 +318,13 @@ namespace banana
 			lastFb = fb;
 			lastW = pw;
 			lastH = ph;
-			shownOverlay = overlayFb;
+			shownOverlay = shownLayer();
+			if (lastShown != b)
+			{
+				dropLastShown();
+				b->refs++;
+				lastShown = b;
+			}
 			if (frames < kTraceFrames)
 				tracef("frame: presented serial=%llu fb=%u", (unsigned long long)b->serial, fb);
 			pending = nullptr;
@@ -310,11 +380,12 @@ namespace banana
 				showMenu();
 			}
 			if (!restoreMenu) frame();
+			if (reframeDue && !restoreMenu && d->isOpen() && !d->flipPending()) reframe();
 			// a card changed while a flip was in flight and no client frame follows (a paused or SIGSTOPped game,
 			// under the pause menu): re-commit the frame on screen with the overlay it should carry now
-			if (!restoreMenu && lastFb && overlayFb != shownOverlay && d->isOpen() && !d->flipPending() &&
-			    d->presentGame(lastFb, lastW, lastH, overlayFb))
-				shownOverlay = overlayFb;
+			if (!restoreMenu && lastFb && shownLayer() != shownOverlay && d->isOpen() && !d->flipPending() &&
+			    d->presentGame(lastFb, lastW, lastH, shownLayer()))
+				shownOverlay = shownLayer();
 		}
 		void surfaceGone(Surface* s)
 		{
@@ -334,6 +405,7 @@ namespace banana
 			{
 				hidMenu = false;
 				lastFb = 0;	// the menu owns the primary again: no overlay-only commits over it
+				dropLastShown();
 				if (presenter) presenter->detached();
 				if (onScreen) { bufferDrop(onScreen); onScreen = nullptr; }
 			}
@@ -342,6 +414,8 @@ namespace banana
 		{
 			tracef("client disconnected");
 			client = nullptr;
+			cfgW = cfgH = 0;
+			dropLastShown();
 			if (pendCb) { pendCb = nullptr; }		// their resource destroy handlers unlink the listeners
 			if (pendingCb) { pendingCb = nullptr; }
 			// the Surface objects are freed by their wl_surface resource destroy callback (surfaceGone), which runs
@@ -443,6 +517,21 @@ namespace banana
 		void forwardTouch(int action, int x, int y, bool pointer)	// 0 down, 1 motion, 2 up
 		{
 			if (!inputForward || !focusOn || !focusRes) return;
+			if (holeW)
+			{
+				// the screen is the panel, the client is only the hole: a touch on the frame is nobody's, and one that
+				// began in the hole and slid off stays at its edge
+				bool inside = x >= holeX && y >= holeY && x < holeX + holeW && y < holeY + holeH;
+				if (action == 0) touchOutside = !inside;
+				if (touchOutside) { if (action == 2) touchOutside = false; return; }
+				x = std::min(std::max(x - holeX, 0), holeW - 1);
+				y = std::min(std::max(y - holeY, 0), holeH - 1);
+				if (lastShown && lastShown->w && lastShown->h)
+				{
+					x = (int)((int64_t)x * lastShown->w / holeW);
+					y = (int)((int64_t)y * lastShown->h / holeH);
+				}
+			}
 			struct timespec ts;
 			clock_gettime(CLOCK_MONOTONIC, &ts);
 			uint32_t ms = (uint32_t)((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000);
@@ -496,6 +585,8 @@ namespace banana
 			fireCb(pendCb, pendCbGone);
 			if (presenter) { presenter->abandon(); presenter->detached(); }
 			if (onScreen) { bufferDrop(onScreen); onScreen = nullptr; }
+			dropLastShown();
+			reframeDue = false;
 			lastFb = lastW = lastH = 0;
 			hidMenu = false;
 			restoreMenu = false;
@@ -673,16 +764,7 @@ namespace banana
 				// before the role exists only sets up the surface; keep waiting for the one that asks)
 				if (s->top && s->xdg)
 				{
-					struct wl_array states;
-					wl_array_init(&states);
-					if (uint32_t* st = (uint32_t*)wl_array_add(&states, sizeof *st)) *st = XDG_TOPLEVEL_STATE_ACTIVATED;
-					// fullscreen, as a kiosk compositor says: SDL2 ignores the size of a non-resizable window's configure unless the
-					// state is fullscreen (BananaTube stayed 1024x768 without it)
-					if (uint32_t* st = (uint32_t*)wl_array_add(&states, sizeof *st)) *st = XDG_TOPLEVEL_STATE_FULLSCREEN;
-					xdg_toplevel_send_configure(s->top, kClientFormatW, kClientFormatH, &states);
-					xdg_surface_send_configure(s->xdg, wl_display_next_serial(im->wl));
-					logf("configure %dx%d", kClientFormatW, kClientFormatH);
-					wl_array_release(&states);
+					im->sendConfigure(s);
 					s->configured = true;
 				}
 				return;
@@ -1197,6 +1279,7 @@ namespace banana
 		if (im->pending) { im->bufferDrop(im->pending); im->pending = nullptr; }
 		if (im->inflight) { im->bufferDrop(im->inflight); im->inflight = nullptr; }
 		if (im->onScreen) { im->bufferDrop(im->onScreen); im->onScreen = nullptr; }
+		im->dropLastShown();
 		im->pendingCb = im->inflightCb = im->pendCb = nullptr;
 		wl_display_destroy_clients(im->wl);
 		im->focusClear();
@@ -1250,8 +1333,31 @@ namespace banana
 		// A client that is not committing (paused) must still show/hide the card: re-commit the frame that is on
 		// screen with the new overlay. A commit already in flight picks the new overlay up on the next frame.
 		if (impl->lastFb && impl->d->isOpen() && !impl->d->flipPending() && !impl->restoreMenu &&
-		    impl->d->presentGame(impl->lastFb, impl->lastW, impl->lastH, fb))
-			impl->shownOverlay = fb;
+		    impl->d->presentGame(impl->lastFb, impl->lastW, impl->lastH, impl->shownLayer()))
+			impl->shownOverlay = impl->shownLayer();
+	}
+
+	void Compositor::setFrame(uint32_t fb, int x, int y, int w, int h)
+	{
+		if (!impl) return;
+		Impl* im = impl;
+		bool moved = x != im->holeX || y != im->holeY || w != im->holeW || h != im->holeH;
+		im->frameFb = fb;
+		im->holeX = x; im->holeY = y; im->holeW = w; im->holeH = h;
+		im->touchOutside = false;
+		if (!im->lastFb || im->restoreMenu || !im->d->isOpen()) return;	// nothing of a client's on screen yet
+		if (im->d->flipPending()) { im->reframeDue = moved; return; }	// vblank() commits what changed
+		if (moved) im->reframe();
+		else if (im->d->presentGame(im->lastFb, im->lastW, im->lastH, im->shownLayer()))
+			im->shownOverlay = im->shownLayer();
+	}
+
+	void Compositor::reconfigure()
+	{
+		if (!impl || !impl->surf || !impl->surf->top || !impl->surf->configured) return;
+		Impl* im = impl;
+		if (im->cfgW != (im->holeW ? im->holeW : kClientFormatW) || im->cfgH != (im->holeW ? im->holeH : kClientFormatH))
+			im->sendConfigure(im->surf);
 	}
 
 	bool Compositor::gameActive() const
