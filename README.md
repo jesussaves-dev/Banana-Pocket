@@ -10,7 +10,8 @@ their own. 🪄
 
 The menu is **Banana's own Pixel UI**: a raised bezel, a carousel of chunky square tiles, a fat gold highlight on
 whatever you're about to pick, and a cartridge that drops into a console while your game boots. It comes in five
-flavours — `pocket` (gold), `pocket-ocean`, `pocket-sakura`, `pocket-sunset` and `pocket-terminal` — and you can
+flavours — `pocket` (gold), `pocket-ocean`, `pocket-sakura`, `pocket-sunset` and `pocket-terminal` — plus `fantasy` and six
+four-shade handheld LCD themes (`lcd-banana`, `lcd-ocean`, `lcd-sakura`, `lcd-sunset`, `lcd-mint`, `lcd-fantasy`), and you can
 build your own. 🎨
 
 This repository is **early access**, built from source. Every image CI makes is booted in QEMU and poked at. The

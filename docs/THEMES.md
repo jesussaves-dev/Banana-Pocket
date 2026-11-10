@@ -12,6 +12,10 @@ look (see `/usr/share/banana/themes/README.txt`).
 and a complete example. Its colour variations `pocket-ocean.json`, `pocket-sakura.json`, `pocket-sunset.json` and
 `pocket-terminal.json` are the same layout with a different palette. Copy one and change it.
 
+The `lcd-*.json` themes are a second layout: a pale four-shade handheld LCD. `tools/gen-lcd-icons.py` recolours the
+system icons into each one's `vars` (`bg`, `shade`, `soft`, `ink`) and writes them to `lcd/<name>/`, so run it again
+after changing one of those palettes.
+
 ## Trying a theme on a computer
 
 `make ui` builds banana-ui for the computer. This renders a theme headless to PNGs:

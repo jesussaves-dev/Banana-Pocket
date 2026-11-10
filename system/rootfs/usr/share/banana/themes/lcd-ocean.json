@@ -1,0 +1,377 @@
+{
+  // LCD Ocean: the handheld LCD layout, four shades of sea blue.
+  "name": "LCD Ocean",
+  "author": "BananaOS",
+  "base": "light",
+  "accent": "#122a3a",
+  "colors": { "screenBg": "#d6ecf0", "ink": "#122a3a", "muted": "#3f6f86", "edge": "#122a3a", "line": "#3f6f86", "panelBody": "#d6ecf0", "bubbleBody": "#8fbccb", "kbdBg": "#122a3a", "kbdInk": "#d6ecf0", "slotOn": "#122a3a", "pickEdge": "#122a3a", "onPick": "#d6ecf0", "onPickAccent": "#8fbccb", "screenFrame": "#8fbccb", "screenBand": "#d6ecf0", "panelBand": "#d6ecf0", "panelLow": "#8fbccb", "bubbleBand": "#8fbccb", "bubbleLow": "#3f6f86" },
+  "font": "pixel",
+  "crisp": true,
+
+  "icons": {
+    "nds": "lcd/ocean/nds.png",
+    "ndsiware": "lcd/ocean/nds.png",
+    "gba": "lcd/ocean/gba.png",
+    "gbah": "lcd/ocean/gba.png",
+    "gbc": "lcd/ocean/gbc.png",
+    "gbch": "lcd/ocean/gbc.png",
+    "gb": "lcd/ocean/gb.png",
+    "gbh": "lcd/ocean/gb.png",
+    "megaduck": "lcd/ocean/gb.png",
+    "snes": "lcd/ocean/snes.png",
+    "sfc": "lcd/ocean/snes.png",
+    "snesh": "lcd/ocean/snes.png",
+    "satellaview": "lcd/ocean/snes.png",
+    "sufami": "lcd/ocean/snes.png",
+    "snesmsu1": "lcd/ocean/snes.png",
+    "nes": "lcd/ocean/nes.png",
+    "famicom": "lcd/ocean/nes.png",
+    "fds": "lcd/ocean/nes.png",
+    "nesh": "lcd/ocean/nes.png",
+    "n64": "lcd/ocean/n64.png",
+    "64dd": "lcd/ocean/n64.png",
+    "n64dd": "lcd/ocean/n64.png",
+    "psx": "lcd/ocean/psx.png",
+    "megadrive": "lcd/ocean/md.png",
+    "genesis": "lcd/ocean/md.png",
+    "megadrive-japan": "lcd/ocean/md.png",
+    "megadriveh": "lcd/ocean/md.png",
+    "genh": "lcd/ocean/md.png",
+    "megacd": "lcd/ocean/md.png",
+    "segacd": "lcd/ocean/segacd.png",
+    "sega32x": "lcd/ocean/sega32x.png",
+    "arcade": "lcd/ocean/arcade.png",
+    "mame": "lcd/ocean/arcade.png",
+    "fbneo": "lcd/ocean/arcade.png",
+    "fbn": "lcd/ocean/arcade.png",
+    "cps1": "lcd/ocean/arcade.png",
+    "cps2": "lcd/ocean/arcade.png",
+    "cps3": "lcd/ocean/arcade.png",
+    "neogeo": "lcd/ocean/arcade.png",
+    "atomiswave": "lcd/ocean/arcade.png",
+    "naomi": "lcd/ocean/arcade.png",
+    "daphne": "lcd/ocean/arcade.png",
+    "st-v": "lcd/ocean/arcade.png",
+    "model2": "lcd/ocean/arcade.png",
+    "model3": "lcd/ocean/arcade.png",
+    "ports": "lcd/ocean/ports.png",
+    "steam": "lcd/ocean/ports.png",
+    "heroic": "lcd/ocean/ports.png",
+    "doom": "lcd/ocean/ports.png",
+    "idtech": "lcd/ocean/ports.png",
+    "pc": "lcd/ocean/ports.png",
+    "windows": "lcd/ocean/ports.png",
+    "favorites": "lcd/ocean/fav.png",
+    "auto-favorites": "lcd/ocean/fav.png",
+    "search": "lcd/ocean/search.png",
+    "recently-played": "lcd/ocean/recent.png",
+    "dodakvarter": "lcd/ocean/dodakvarter.png",
+    "rocknixdsbank": "lcd/ocean/bank.png",
+    "bananatube": "lcd/ocean/bananatube.png",
+    "3do": "lcd/ocean/disc.png",
+    "cdi": "lcd/ocean/disc.png",
+    "cdimono1": "lcd/ocean/disc.png",
+    "dreamcast": "lcd/ocean/dreamcast.png",
+    "gc": "lcd/ocean/gc.png",
+    "gamecube": "lcd/ocean/gc.png",
+    "pcenginecd": "lcd/ocean/disc.png",
+    "tg16cd": "lcd/ocean/disc.png",
+    "pcfx": "lcd/ocean/disc.png",
+    "ps2": "lcd/ocean/ps2.png",
+    "ps3": "lcd/ocean/disc.png",
+    "saturn": "lcd/ocean/saturn.png",
+    "wiiu": "lcd/ocean/disc.png",
+    "wiiware": "lcd/ocean/disc.png",
+    "triforce": "lcd/ocean/disc.png",
+    "xbox": "lcd/ocean/disc.png",
+    "amigacd32": "lcd/ocean/disc.png",
+    "neocd": "lcd/ocean/disc.png",
+    "segamodel3": "lcd/ocean/disc.png",
+    "mastersystem": "lcd/ocean/mastersystem.png",
+    "sg-1000": "lcd/ocean/console.png",
+    "pcengine": "lcd/ocean/pcengine.png",
+    "supergrafx": "lcd/ocean/console.png",
+    "tg16": "lcd/ocean/console.png",
+    "colecovision": "lcd/ocean/console.png",
+    "intellivision": "lcd/ocean/console.png",
+    "odyssey2": "lcd/ocean/console.png",
+    "videopac": "lcd/ocean/console.png",
+    "channelf": "lcd/ocean/console.png",
+    "scv": "lcd/ocean/console.png",
+    "atari5200": "lcd/ocean/console.png",
+    "atari7800": "lcd/ocean/console.png",
+    "atarijaguar": "lcd/ocean/console.png",
+    "vectrex": "lcd/ocean/console.png",
+    "psp": "lcd/ocean/psp.png",
+    "pspminis": "lcd/ocean/handheld.png",
+    "psvita": "lcd/ocean/psvita.png",
+    "3ds": "lcd/ocean/handheld.png",
+    "atarilynx": "lcd/ocean/atarilynx.png",
+    "gameandwatch": "lcd/ocean/handheld.png",
+    "gamegear": "lcd/ocean/gamegear.png",
+    "ggh": "lcd/ocean/handheld.png",
+    "ngp": "lcd/ocean/ngp.png",
+    "ngpc": "lcd/ocean/handheld.png",
+    "pokemini": "lcd/ocean/handheld.png",
+    "supervision": "lcd/ocean/handheld.png",
+    "virtualboy": "lcd/ocean/handheld.png",
+    "wonderswan": "lcd/ocean/wonderswan.png",
+    "wonderswancolor": "lcd/ocean/handheld.png",
+    "arduboy": "lcd/ocean/handheld.png",
+    "gp32": "lcd/ocean/handheld.png",
+    "amiga": "lcd/ocean/computer.png",
+    "amstradcpc": "lcd/ocean/computer.png",
+    "atari800": "lcd/ocean/computer.png",
+    "atarist": "lcd/ocean/computer.png",
+    "atarixe": "lcd/ocean/computer.png",
+    "bbcmicro": "lcd/ocean/computer.png",
+    "bk": "lcd/ocean/computer.png",
+    "c128": "lcd/ocean/computer.png",
+    "c16": "lcd/ocean/computer.png",
+    "c64": "lcd/ocean/c64.png",
+    "pet": "lcd/ocean/computer.png",
+    "mac": "lcd/ocean/computer.png",
+    "macintosh": "lcd/ocean/computer.png",
+    "moto": "lcd/ocean/computer.png",
+    "msx": "lcd/ocean/computer.png",
+    "msx2": "lcd/ocean/computer.png",
+    "pc88": "lcd/ocean/computer.png",
+    "pc98": "lcd/ocean/computer.png",
+    "pc-8800": "lcd/ocean/computer.png",
+    "pc-9800": "lcd/ocean/computer.png",
+    "vic20": "lcd/ocean/computer.png",
+    "x1": "lcd/ocean/computer.png",
+    "x68000": "lcd/ocean/computer.png",
+    "zx81": "lcd/ocean/computer.png",
+    "zxspectrum": "lcd/ocean/zxspectrum.png",
+    "dos": "lcd/ocean/computer.png",
+    "atari": "lcd/ocean/joystick.png",
+    "atari2600": "lcd/ocean/atari2600.png",
+    "pico-8": "lcd/ocean/fantasy.png",
+    "tic-80": "lcd/ocean/fantasy.png",
+    "wasm4": "lcd/ocean/fantasy.png",
+    "vircon32": "lcd/ocean/fantasy.png",
+    "uzebox": "lcd/ocean/fantasy.png",
+    "chip-8": "lcd/ocean/fantasy.png",
+    "lowresnx": "lcd/ocean/fantasy.png",
+    "lutro": "lcd/ocean/fantasy.png",
+    "love": "lcd/ocean/fantasy.png",
+    "pygame": "lcd/ocean/fantasy.png",
+    "j2me": "lcd/ocean/phone.png",
+    "palm": "lcd/ocean/phone.png",
+    "ios": "lcd/ocean/phone.png",
+    "android": "lcd/ocean/phone.png",
+    "zmachine": "lcd/ocean/book.png",
+    "scummvm": "lcd/ocean/book.png",
+    "easyrpg": "lcd/ocean/sword.png",
+    "openbor": "lcd/ocean/sword.png",
+    "solarus": "lcd/ocean/sword.png",
+    "mugen": "lcd/ocean/sword.png",
+    "ikemen": "lcd/ocean/sword.png",
+    "music": "lcd/ocean/music.png",
+    "audio": "lcd/ocean/music.png",
+    "radio": "lcd/ocean/music.png",
+    "mplayer": "lcd/ocean/video.png",
+    "videos": "lcd/ocean/video.png",
+    "video": "lcd/ocean/video.png",
+    "movies": "lcd/ocean/video.png",
+    "media": "lcd/ocean/video.png",
+    "kodi": "lcd/ocean/video.png",
+    "imageviewer": "lcd/ocean/picture.png",
+    "pictures": "lcd/ocean/picture.png",
+    "photos": "lcd/ocean/picture.png",
+    "screenshots": "lcd/ocean/picture.png",
+    "moonlight": "lcd/ocean/moon.png",
+    "steamlink": "lcd/ocean/moon.png",
+    "greenlight": "lcd/ocean/moon.png",
+    "chiaki": "lcd/ocean/moon.png",
+    "streaming": "lcd/ocean/moon.png",
+    "retroarch": "lcd/ocean/gamepad.png",
+    "libretro": "lcd/ocean/gamepad.png",
+    "settings": "lcd/ocean/gear.png",
+    "setup": "lcd/ocean/gear.png",
+    "config": "lcd/ocean/gear.png",
+    "tools": "lcd/ocean/tools.png",
+    "system": "lcd/ocean/tools.png",
+    "all": "lcd/ocean/collection.png",
+    "recent": "lcd/ocean/collection.png",
+    "auto-allgames": "lcd/ocean/collection.png",
+    "auto-lastplayed": "lcd/ocean/collection.png",
+    "*collection": "lcd/ocean/collection.png",
+    "*console": "lcd/ocean/cart.png",
+    "*portable": "lcd/ocean/handheld.png",
+    "*computer": "lcd/ocean/computer.png",
+    "*arcade": "lcd/ocean/arcade.png",
+    "*engine": "lcd/ocean/sword.png",
+    "*virtual": "lcd/ocean/fantasy.png",
+    "*system": "lcd/ocean/apps.png"
+  },
+
+  "vars": {
+    "bg": "#d6ecf0",
+    "dot": "#b6d6df",
+    "shade": "#8fbccb",
+    "soft": "#3f6f86",
+    "ink": "#122a3a",
+    "hi": "=ink"
+  },
+
+  // one list on screen: up and down by one, left and right by a page of the shelf
+  "input": { "library": { "up": "prev", "down": "next", "left": "prev:5", "right": "next:5" } },
+
+  "behavior": { "launchMs": 700, "scrollMs": 90, "cues": { "insert": 450 } },
+
+  "components": {
+    // the status bar: a dark strip across the top of the LCD, in inverse video
+    "status": {
+      "type": "group", "x": 0, "y": 0, "w": "100%", "h": 36,
+      "children": [
+        { "type": "rect", "x": 0, "y": 0, "w": "100%", "h": 34, "fill": "=ink" },
+        { "type": "text", "x": 18, "y": 9, "text": "{clock}", "font": "pixel-medium", "size": 15, "color": "=bg" },
+        { "type": "text", "right": 18, "y": 10, "w": 120, "align": "right", "text": "=battery < 0 ? '' : battery + '%'",
+          "font": "pixel", "size": 13, "color": "=bg" },
+        { "type": "rect", "right": 134, "y": 11, "w": 26, "h": 12, "border": 2, "borderColor": "=bg",
+          "visible": "=battery >= 0" },
+        { "type": "rect", "right": 137, "y": 14, "w": "=20 * battery / 100", "h": 6,
+          "fill": "=bg", "visible": "=battery >= 0" },
+        // the charger is in: a bolt over the battery (the same as the menu's own top bar)
+        { "type": "image", "src": "bolt.png", "fit": "pixelContain", "right": 143, "y": 10, "w": 10, "h": 14,
+          "visible": "=charging" }
+      ]
+    },
+    // the bare LCD: the lightest shade and its pixel grid, one baked texture (a per-dot list cost 11 ms a frame)
+    "lcd": {
+      "type": "group",
+      "children": [
+        { "type": "rect", "fill": "=bg" },
+        { "type": "image", "src": "panel.png", "fit": "pixel", "tint": "=dot", "x": 18, "y": 54, "w": 604, "h": 485 }
+      ]
+    },
+    // a box drawn on the LCD: one dark line, its corners cut by a pixel. Give it x, y, w and h
+    "box": {
+      "type": "group",
+      "children": [
+        { "type": "rect", "x": 2, "y": 0, "right": 2, "bottom": 0, "fill": "=ink" },
+        { "type": "rect", "x": 0, "y": 2, "right": 0, "bottom": 2, "fill": "=ink" },
+        { "type": "rect", "x": 2, "y": 2, "right": 2, "bottom": 2, "fill": "=bg" }
+      ]
+    },
+    // a button pill: the key in inverse video and what it does
+    "pill": {
+      // a row group so the list can measure it (natural width) and spread the row with "justify between"
+      "type": "group", "layout": "row", "gap": 9, "align": "center", "h": 30,
+      "children": [
+        { "type": "group", "layout": "row", "padding": 6, "h": 26, "align": "center", "fill": "=ink",
+          "children": [ { "type": "text", "text": "{item.key}", "font": "pixel-medium", "size": 13, "color": "=bg" } ] },
+        { "type": "text", "text": "{item.label}", "font": "pixel", "size": 15, "color": "=ink" }
+      ]
+    },
+    // a game in the library: a line of the list, the selection in inverse video
+    "row": {
+      "type": "group", "w": 592, "h": 54,
+      "children": [
+        { "type": "rect", "x": 0, "y": 0, "w": 592, "h": 54, "fill": "=ink", "visible": "=sel" },
+        { "type": "rect", "x": 8, "y": 58, "w": 576, "h": 2, "fill": "=shade", "visible": "=sel ? 0 : 1" },
+        { "type": "rect", "x": 6, "y": 5, "w": 44, "h": 44, "fill": "=bg", "visible": "=sel" },
+        { "type": "image", "src": "{item.art}", "fallback": "{item.icon}", "fit": "cover", "x": 8, "y": 7, "w": 40, "h": 40, "placeholder": "#00000033" },
+        { "type": "text", "x": 60, "y": 9, "w": 490, "text": "{item.title}", "font": "pixel-medium", "size": 17, "color": "=sel ? bg : ink" },
+        { "type": "text", "x": 60, "y": 33, "w": 490, "text": "{item.sub}", "font": "pixel", "size": 12, "color": "=sel ? shade : soft" },
+        { "type": "image", "src": "fav.png", "right": 16, "y": 19, "w": 16, "h": 16, "visible": "=item.fav" }
+      ]
+    }
+  },
+
+  "screens": {
+    // over every view: the status bar
+    "all": { "top": { "use": "status" } },
+
+    "home": {
+      "top": [
+        { "use": "lcd" },
+
+        // the selected system, straight on the LCD
+        { "type": "text", "x": 30, "y": 54, "text": "Systems", "font": "pixel", "size": 16, "color": "=soft" },
+        { "type": "text", "right": 30, "y": 54, "text": "{cursor + 1} / {systemCount}", "font": "pixel", "size": 14, "color": "=soft" },
+        { "type": "text", "x": 0, "w": "100%", "y": 96, "align": "center", "text": "{sys.name}", "font": "pixel-medium", "size": 30, "color": "=ink",
+          "opacity": "=easeOut(progress(moved, 200))", "scale": "=0.94 + 0.06 * easeOutBack(progress(moved, 300))" },
+        { "type": "text", "x": 0, "w": "100%", "y": 140, "align": "center", "text": "{upper(sys.maker)}", "font": "pixel", "size": 13, "spacing": 1, "color": "=soft" },
+        { "type": "text", "x": 0, "w": "100%", "y": 164, "align": "center", "visible": "=sys.achB > 0",
+          "text": "{sys.achLabel}", "font": "pixel", "size": 12, "spacing": 1, "color": "=soft" },
+
+        // the carousel: square tiles, the selection boxed with its name in inverse video
+        { "type": "list", "source": "systems", "direction": "row", "x": 18, "y": 208, "w": 604, "h": 132, "clip": true,
+          "itemW": 96, "itemH": 132, "gap": 16, "scrollMode": "center",
+          "item": {
+            "type": "group", "w": 96, "h": 132, "children": [
+              { "type": "rect", "x": 48, "y": 62, "w": 120, "h": 120, "anchor": "center", "visible": "=sel",
+                "fill": "=bg", "border": 4, "borderColor": "=ink" },
+              { "type": "rect", "x": -12, "y": 96, "w": 120, "h": 26, "visible": "=sel", "fill": "=ink" },
+              { "type": "rect", "x": 48, "y": 62, "w": 84, "h": 84, "anchor": "center", "visible": "=sel ? 0 : 1",
+                "fill": "=bg", "border": 2, "borderColor": "=soft" },
+              { "type": "image", "src": "{item.icon}", "fit": "pixelContain", "x": 48, "y": "=sel ? 50 : 62", "w": 52, "h": 52, "anchor": "center" },
+              { "type": "text", "x": -9, "w": 114, "y": 102, "align": "center", "text": "{item.name}", "font": "pixel-medium", "size": 11,
+                "color": "=bg", "visible": "=sel" },
+              { "type": "image", "src": "fav.png", "x": 74, "y": 24, "w": 16, "h": 16, "visible": "=item.fav" }
+            ]
+          } },
+
+        // where the shelf is: a block gauge
+        { "type": "text", "x": 40, "y": 364, "text": "=sys.games == 1 ? '1 game' : sys.games + ' games'", "font": "pixel", "size": 13, "color": "=soft" },
+        { "use": "box", "x": 40, "y": 388, "w": 560, "h": 16 },
+        { "type": "rect", "x": "=44 + (552 - 88) * cursor / max(1, systemCount - 1)", "y": 392, "w": 88, "h": 8,
+          "fill": "=ink", "smooth": { "x": 150 } },
+        { "type": "text", "x": 0, "w": "100%", "y": 436, "align": "center", "visible": "=sys.hasResume",
+          "text": "Last played: {sys.resumeTitle}", "font": "pixel", "size": 14, "color": "=ink" },
+
+        { "type": "rect", "x": 30, "y": 488, "w": 580, "h": 2, "fill": "=shade" },
+        { "type": "list", "source": "hints", "direction": "row", "x": 40, "y": 502, "w": 560, "h": 30, "gap": 12, "flow": true, "scrollMode": "none",
+          "justify": "between", "item": { "use": "pill" } }
+      ]
+    },
+
+    "library": {
+      "top": [
+        { "use": "lcd" },
+
+        { "type": "image", "src": "{sys.icon}", "fit": "pixelContain", "x": 30, "y": 50, "w": 32, "h": 32 },
+        { "type": "text", "x": 72, "y": 53, "text": "{sys.name}", "font": "pixel-medium", "size": 22, "color": "=ink" },
+        { "type": "text", "right": 30, "y": 58, "w": 180, "align": "right", "text": "{cursor + 1} / {count}", "font": "pixel", "size": 14, "color": "=soft" },
+        { "type": "rect", "x": 24, "y": 90, "w": 592, "h": 2, "fill": "=ink" },
+
+        { "type": "text", "x": 0, "w": "100%", "y": 240, "align": "center", "text": "{empty.title}", "font": "pixel-medium", "size": 20, "color": "=ink", "visible": "=empty" },
+        { "type": "text", "x": 40, "w": 560, "y": 276, "align": "center", "text": "{empty.hint}", "font": "pixel", "size": 14, "color": "=soft", "visible": "=empty", "wrap": true },
+        { "type": "list", "source": "games", "direction": "column", "x": 24, "y": 100, "w": 592, "h": 380,
+          "itemH": 54, "gap": 8, "scrollMode": "edge", "clip": true,
+          "item": { "use": "row" } },
+
+        { "type": "rect", "x": 30, "y": 488, "w": 580, "h": 2, "fill": "=shade" },
+        { "type": "list", "source": "hints", "direction": "row", "x": 40, "y": 502, "w": 560, "h": 30, "gap": 12, "flow": true, "scrollMode": "none",
+          "justify": "between", "item": { "use": "pill" } }
+      ]
+    },
+
+    "launch": {
+      "top": [
+        { "use": "lcd" },
+        // the slot the cartridge goes into
+        { "use": "box", "x": 150, "y": 250, "w": 340, "h": 176 },
+        { "type": "rect", "x": 210, "y": 380, "w": 220, "h": 22, "fill": "=ink" },
+        // the cartridge drops into the slot: clipped at the slot line (y 250), so below it is hidden
+        { "type": "group", "x": 250, "y": 100, "w": 140, "h": 150, "clip": true, "children": [
+          { "type": "group", "x": 15, "y": "=-140 + 243 * easeOut(launch.progress)", "children": [
+            { "type": "rect", "x": 0, "y": 0, "w": 110, "h": 140, "fill": "=shade", "border": 3, "borderColor": "=ink" },
+            { "type": "image", "src": "{game.art}", "fallback": "{sys.icon}", "fit": "cover", "x": 9, "y": 9, "w": 92, "h": 98, "placeholder": "#00000055" },
+            { "type": "rect", "x": 9, "y": 112, "w": 92, "h": 18, "fill": "=ink" }
+          ]}
+        ]},
+        // the slot's front lip, drawn over the cartridge as it goes in
+        { "type": "rect", "x": 250, "y": 250, "w": 140, "h": 15, "fill": "=bg", "border": 3, "borderColor": "=ink" },
+        // the light comes on once it is in
+        { "type": "rect", "x": 452, "y": 268, "w": 14, "h": 9, "fill": "=ink", "visible": "=launch.progress > 0.9" },
+        { "type": "text", "x": 0, "w": "100%", "y": 452, "align": "center", "text": "Starting {game.title}", "font": "pixel-medium", "size": 22, "color": "=ink" },
+        { "use": "box", "x": 170, "y": 492, "w": 300, "h": 16 },
+        { "type": "rect", "x": 174, "y": 496, "w": "=292 * easeInOut(launch.progress)", "h": 8, "fill": "=ink" }
+      ]
+    }
+  }
+}
