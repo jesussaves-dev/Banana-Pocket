@@ -1713,9 +1713,9 @@ int main(int argc, char** argv)
 		const SystemDef& sd = lib.systemOf(game);
 		std::string rom = lib.gameAt(game).path;
 		std::string cmd = replaceAll(replaceAll(sd.run, "%ROM%", shellQuote(rom)), "%SYSTEM%", shellQuote(sd.id));
-		// 4.1: only RetroArch draws the panel's 1240x1080. Ports and BananaTube keep cage (PLAN 3.5) until the
-		// EGL presenter can scale and rotate their own window sizes.
-		bool resident = residentGames && sd.run.find("run-retroarch") != std::string::npos;
+		// 4.1: every launcher runs as a client of this process (the EGL presenter letterboxes and rotates any window
+		// size); compositor = "cage" in bananad.conf hands the panel over instead.
+		bool resident = residentGames;
 		logf("starting %s%s: %s", sd.id.c_str(), resident ? " (resident)" : "", cmd.c_str());
 		{
 			std::ofstream f(o.data + "/last-system");

@@ -1,6 +1,7 @@
 #include "egl_presenter.h"
 #include "client_buffer.h"
 #include "kms.h"
+#include "rotate.h"
 #include "trace.h"
 #include <cerrno>
 #include <cstdarg>
@@ -137,6 +138,7 @@ namespace banana
 		unsigned diagOps = 0;		// only the first three diagnostic operations are traced
 		unsigned frames = 0;
 		int sw = 0, sh = 0;	// the panel: 1080x1240
+		uint32_t lastW = 0, lastH = 0;	// the last source size, to log a size change once
 
 		void destroySource(Source& s)
 		{
@@ -504,6 +506,38 @@ namespace banana
 			return true;
 		}
 
+		// diagnostic: /run/banana/3c-dump-now (re-armable) writes the client's source and the rotated slot as raw
+		// GL-order PPMs, /data/3c-src.ppm and /data/3c-dst.ppm, so a host diff can prove the pass is lossless
+		static bool readRaw(GLuint fbo, int w, int h, const char* path)
+		{
+			std::vector<uint8_t> px((size_t)w * h * 4);
+			glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+			glPixelStorei(GL_PACK_ALIGNMENT, 1);
+			glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+			if (glGetError() != GL_NO_ERROR) { logf("raw readback failed: %s", path); return false; }
+			FILE* f = fopen(path, "wb");
+			if (!f) return false;
+			fprintf(f, "P6\n%d %d\n255\n", w, h);
+			for (size_t i = 0; i < (size_t)w * h; i++) fwrite(&px[i * 4], 1, 3, f);
+			fclose(f);
+			return true;
+		}
+		void dumpPair(Slot& s, GLuint srcTex, int w, int h)
+		{
+			if (access("/run/banana/3c-dump-now", F_OK) != 0) return;
+			unlink("/run/banana/3c-dump-now");
+			GLuint fbo = 0;
+			glGenFramebuffers(1, &fbo);
+			glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, srcTex, 0);
+			bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE && readRaw(fbo, w, h, "/data/3c-src.ppm");
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			glDeleteFramebuffers(1, &fbo);
+			ok = readRaw(s.fbo, sw, sh, "/data/3c-dst.ppm") && ok;
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			logf("dump pair: %s (src %dx%d)", ok ? "written" : "FAILED", w, h);
+		}
+
 		void dump(Slot& s)
 		{
 			if (dumpDone || dumpPath.empty()) return;
@@ -630,10 +664,12 @@ namespace banana
 
 		std::string serr;
 		GLuint vs = compile(GL_VERTEX_SHADER,
-			"attribute vec2 aPos; attribute vec2 aUv; varying vec2 vUv;\n"
+			"attribute vec2 aPos; attribute vec2 aUv; varying highp vec2 vUv;\n"
 			"void main() { vUv = aUv; gl_Position = vec4(aPos, 0.0, 1.0); }\n", serr);
 		GLuint fs = vs ? compile(GL_FRAGMENT_SHADER,
-			"precision mediump float; varying vec2 vUv; uniform sampler2D uTex;\n"
+			// highp: a mediump (fp16 on Adreno) UV lands on the neighbour texel for ~1 column in 12 under
+			// GL_NEAREST, which broke 1-px LCD grids and overlay lines (measured with /run/banana/3c-dump-now)
+			"precision highp float; varying highp vec2 vUv; uniform sampler2D uTex;\n"
 			"void main() { gl_FragColor = texture2D(uTex, vUv); }\n", serr) : 0;
 		if (!vs || !fs) { err = serr.empty() ? "shader compile failed" : serr; return false; }
 		im->program = glCreateProgram();
@@ -722,9 +758,11 @@ namespace banana
 	{
 		Impl* im = impl;
 		if (!im) { err = "EGL presenter is stopped"; return false; }
-		if (b.w != (uint32_t)im->sh || b.h != (uint32_t)im->sw)
-		{ err = "the source is not 1240x1080"; return false; }
-		if (im->diag != DiagVariant::None) return im->renderDiag(b, err);
+		if (im->diag != DiagVariant::None)
+		{
+			if (b.w != (uint32_t)im->sh || b.h != (uint32_t)im->sw) { err = "the source is not 1240x1080"; return false; }
+			return im->renderDiag(b, err);
+		}
 		Impl::Source fresh = {};
 		Impl::Source* src = nullptr;
 		if (im->freshSource)
@@ -751,6 +789,16 @@ namespace banana
 		glDisable(GL_DEPTH_TEST);
 		glClearColor(0, 0, 0, 1);
 		glClear(GL_COLOR_BUFFER_BIT);
+		// any source size: letterboxed into the 1240x1080 logical output, then turned (ui/src/rotate.h)
+		uint32_t vx, vy, vw, vh;
+		fitRotated(b.w, b.h, (uint32_t)im->sh, (uint32_t)im->sw, vx, vy, vw, vh);
+		if (b.w != im->lastW || b.h != im->lastH)
+		{
+			logf("source %ux%u -> viewport %u,%u %ux%u", b.w, b.h, vx, vy, vw, vh);
+			im->lastW = b.w;
+			im->lastH = b.h;
+		}
+		glViewport((GLint)vx, (GLint)vy, (GLsizei)vw, (GLsizei)vh);
 		glUseProgram(im->program);
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, src->tex);
@@ -795,6 +843,7 @@ namespace banana
 		im->rendered = s;
 		if (++im->frames <= 3 || im->frames % 60 == 0) logf("frame %u: slot fb=%u", im->frames, s->fb);
 		im->dump(*s);
+		if (!im->freshSource) im->dumpPair(*s, src->tex, (int)b.w, (int)b.h);	// a fresh source is already gone
 		fb = s->fb;
 		return true;
 	}

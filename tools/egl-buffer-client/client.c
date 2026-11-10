@@ -20,8 +20,8 @@
 #include "xdg-shell-client-protocol.h"
 #include "linux-dmabuf-unstable-v1-client-protocol.h"
 
-#define W 1240
-#define H 1080
+// buffer size: 1240x1080 (the logical output) unless CLIENT_W/CLIENT_H say otherwise (the letterbox test)
+static int W = 1240, H = 1080;
 #define N 6
 
 struct Buf { struct gbm_bo* bo; struct wl_buffer* wl; EGLImage img; GLuint tex, fbo; int free; };
@@ -248,6 +248,9 @@ static void renderFrame(struct State* s, struct Buf* b, int frame)
 int main(int argc, char** argv)
 {
 	int secs = argc > 1 ? atoi(argv[1]) : 20;
+	if (getenv("CLIENT_W")) W = atoi(getenv("CLIENT_W"));
+	if (getenv("CLIENT_H")) H = atoi(getenv("CLIENT_H"));
+	if (W < 80 || H < 80) { fprintf(stderr, "CLIENT_W/CLIENT_H must be >= 80\n"); return 1; }
 	struct State s;
 	memset(&s, 0, sizeof s);
 	s.dpy = wl_display_connect(NULL);

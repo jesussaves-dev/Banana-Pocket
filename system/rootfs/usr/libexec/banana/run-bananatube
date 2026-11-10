@@ -31,11 +31,17 @@ export SDL_GAMECONTROLLERCONFIG="$(cat /etc/banana/sdl-pad.map 2>/dev/null)"
 L=/data/banana/logs/bananatube.log
 [ -s "$L" ] && mv -f "$L" "$L.1"
 # the app in its own session (its process group = $C): a stop from the menu, and mpv (started by banana-tube), reach
-# everything it started. BananaTube keeps cage (PLAN 3.5): its window is not the panel's 1240x1080, and the
-# compositor's EGL rotate only handles that size -- the direct fallback would show it sideways.
-setsid cage -- "$BIN" >"$L" 2>&1 &
-C=$!
-echo $C > /run/banana/cage.pid
+# everything it started. "ui" runs it directly as a client of banana-ui's compositor; "cage" is the escape hatch.
+MODE=$(/usr/libexec/banana/compositor-mode)
+if [ "$MODE" = ui ]; then
+    export WAYLAND_DISPLAY=banana-0	# the in-process compositor's socket
+    setsid "$BIN" >"$L" 2>&1 &
+    C=$!
+else
+    setsid cage -- "$BIN" >"$L" 2>&1 &
+    C=$!
+    echo $C > /run/banana/cage.pid
+fi
 trap 'kill -TERM -$C 2>/dev/null' TERM INT HUP
 wait $C; S=$?
 while kill -0 $C 2>/dev/null; do wait $C; S=$?; done

@@ -184,33 +184,8 @@ namespace banana
 			if ((!presenter || !presenter->diagnostic()) && frames < kTraceFrames)
 				tracef("frame: render begin serial=%llu res=%u %ux%u", (unsigned long long)b->serial,
 				       b->res ? wl_resource_get_id(b->res) : 0, b->w, b->h);
-			// The EGL presenter is panel-sized: a source that is not the 1240x1080 logical output cannot be
-			// rotated by it. Fall back to the direct presenter (3B: plane-scaled and sideways) only while no
-			// presenter-owned frame is on screen; a mid-session size change with a frame up is dropped.
-			if (presenter && presenter->rotated() && ((int)b->w != d->width() || (int)b->h != d->height()))
-			{
-				if (!d->flipPending() && !inflight && !presenter->scanning())
-				{
-					logf("source %ux%u is not %dx%d: switching to the direct presenter", b->w, b->h, d->width(), d->height());
-					presenter->stop();
-					auto direct = std::make_unique<DirectPresenter>(*d);
-					std::string derr;
-					if (!direct->start(derr))
-					{
-						logf("direct presenter unavailable: %s", derr.c_str());
-						presenter.reset();
-						dropPending();
-						return;
-					}
-					presenter = std::move(direct);
-				}
-				else
-				{
-					logf("source %ux%u cannot be rotated while a frame is on screen; dropping it", b->w, b->h);
-					dropPending();
-					return;
-				}
-			}
+			// The EGL presenter letterboxes any source size into the logical 1240x1080 output and rotates it
+			// (ui/src/rotate.h fitRotated), so a port or video window that is not 1240x1080 stays upright.
 			double ft0 = f3On ? msNow() : 0;
 			if (!presenter || !presenter->render(*b, fb, err))
 			{
@@ -694,6 +669,9 @@ namespace banana
 					struct wl_array states;
 					wl_array_init(&states);
 					if (uint32_t* st = (uint32_t*)wl_array_add(&states, sizeof *st)) *st = XDG_TOPLEVEL_STATE_ACTIVATED;
+					// fullscreen, as cage says: SDL2 ignores the size of a non-resizable window's configure unless the
+					// state is fullscreen (BananaTube stayed 1024x768 without it)
+					if (uint32_t* st = (uint32_t*)wl_array_add(&states, sizeof *st)) *st = XDG_TOPLEVEL_STATE_FULLSCREEN;
 					xdg_toplevel_send_configure(s->top, kClientFormatW, kClientFormatH, &states);
 					xdg_surface_send_configure(s->xdg, wl_display_next_serial(im->wl));
 					logf("configure %dx%d", kClientFormatW, kClientFormatH);
@@ -942,8 +920,7 @@ namespace banana
 		}
 		bool paramsValidate(wl_resource* res, Impl::Buffer* b, int32_t w, int32_t h, uint32_t format)
 		{
-			// Any positive size is accepted: a source the EGL presenter cannot rotate (anything but the
-			// panel's 1240x1080 logical output) makes Compositor::frame() switch to the direct presenter.
+			// Any positive size is accepted: the EGL presenter letterboxes it into the 1240x1080 logical output.
 			if (w <= 0 || h <= 0)
 			{
 				logf("rejecting %dx%d: invalid dimensions", w, h);

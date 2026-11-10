@@ -59,6 +59,26 @@ int main()
 			}
 		}
 	}
+	// 3. fitRotated: any source is letterboxed into the 1240x1080 logical output, turned onto the 1080x1240 panel
+	struct Fit { uint32_t w, h, x, y, vw, vh; };
+	const Fit cases[] = {
+		{1240, 1080, 0, 0, 1080, 1240},
+		{620, 540, 0, 0, 1080, 1240},		// same aspect, half size: scaled up to fill
+		{640, 480, 75, 0, 930, 1240},		// 4:3 is wider than 1240:1080: bars along the panel's short axis
+		{1280, 720, 191, 0, 698, 1240},		// 16:9, wider still
+		{1080, 1240, 0, 149, 1080, 941},	// a portrait window: bars along the panel's long axis
+	};
+	for (const Fit& c : cases)
+	{
+		uint32_t x, y, vw, vh;
+		banana::fitRotated(c.w, c.h, 1240, 1080, x, y, vw, vh);
+		if (x != c.x || y != c.y || vw != c.vw || vh != c.vh)
+		{
+			fprintf(stderr, "FAIL fit %ux%u: got (%u,%u %ux%u) expected (%u,%u %ux%u)\n", c.w, c.h, x, y, vw, vh, c.x, c.y, c.vw, c.vh);
+			fails++;
+		}
+		if (x + vw > 1080 || y + vh > 1240) { fprintf(stderr, "FAIL fit %ux%u: outside the panel\n", c.w, c.h); fails++; }
+	}
 	printf("rotation-test: %s\n", fails ? "failed" : "ok");
 	return fails ? 1 : 0;
 }

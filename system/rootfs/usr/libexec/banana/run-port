@@ -75,14 +75,20 @@ export SEATD_VTBOUND=0
 : "${SDL_AUDIODRIVER:=alsa}"; export SDL_AUDIODRIVER
 # the port in its own session (its process group = $C): a quit from the menu, and the port's end, reach everything it
 # started. PortMaster's script runs its menu (python3 pugwash) as a child: a TERM to the script alone left that
-# running, holding the display, and the menu's next game got no panel. A port keeps cage (PLAN 3.5): its window is
-# not the panel's 1240x1080, and the compositor's EGL rotate only handles that size -- the direct fallback would
-# show it sideways and would leave the compositor unrotated for the next game.
-setsid cage -- bash "$1" &
-C=$!
-# bananad's SIGUSR1 on the way out of a sleep goes here (bananad reads the file): cage re-modesets its output,
-# because a panel its driver turned off on the way down comes back dark and only a modeset clears it.
-echo $C > /run/banana/cage.pid
+# running, holding the display, and the menu's next game got no panel. "ui" runs it directly as a client of
+# banana-ui's compositor; "cage" is the escape hatch.
+MODE=$(/usr/libexec/banana/compositor-mode)
+if [ "$MODE" = ui ]; then
+    export WAYLAND_DISPLAY=banana-0	# the in-process compositor's socket
+    setsid bash "$1" &
+    C=$!
+else
+    setsid cage -- bash "$1" &
+    C=$!
+    # bananad's SIGUSR1 on the way out of a sleep goes here (bananad reads the file): cage re-modesets its output,
+    # because a panel its driver turned off on the way down comes back dark and only a modeset clears it.
+    echo $C > /run/banana/cage.pid
+fi
 trap 'kill -TERM -$C 2>/dev/null' TERM INT HUP
 wait $C; S=$?
 while kill -0 $C 2>/dev/null; do wait $C; S=$?; done
