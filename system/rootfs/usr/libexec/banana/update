@@ -10,11 +10,12 @@
 #   update apply <package>          write it to the other slot and make it the default (then restart)
 #   update switch [a|b]             make the other slot (or the one named) the default, when it holds a system
 #   update status                   which slot is running, which is the default, what each holds
+#   update prune                    keep the two newest packages (and the running version's), delete the rest
 DISK=$(cat /run/banana/disk 2>/dev/null || echo /dev/mmcblk0)
 SLOT=$(cat /run/banana/slot 2>/dev/null || echo a)
 BOARD=$(cat /etc/banana/board 2>/dev/null)
 STATUS=/run/banana/update-status
-UPDATES=/data/banana/updates
+UPDATES=${BANANA_UPDATES:-/data/banana/updates}	# (another directory, for testing)
 other() { [ "$1" = a ] && echo b || echo a; }
 partition() { [ "$1" = a ] && echo ${DISK}p2 || echo ${DISK}p3; }
 status() { echo "$*" > $STATUS.new && mv -f $STATUS.new $STATUS; }
@@ -125,6 +126,34 @@ apply)
     status "done $PV"
     echo "update $PV written to slot $TO; restart to run it"
     ;;
-*) echo "usage: update list | apply <package> | switch [a|b] | status" >&2; exit 2 ;;
+prune)
+    # Every release leaves a ~240 MB package in banana/updates and nothing removed them (31 packages, 6.9 GB once).
+    # Run after a good boot (rcS, a couple of minutes in): keep the two newest and the running version's own package
+    # (a reapply without Wi-Fi), delete the rest. Not while an update is being written or downloaded; a partial
+    # download (*.new) only once it is a day old.
+    [ -d "$UPDATES" ] || exit 0
+    case "$(cat $STATUS 2>/dev/null)" in writing*|verifying*|unpacking*|downloading*|checking*) exit 0 ;; esac
+    pgrep -f "update apply" >/dev/null 2>&1 && exit 0
+    pgrep -f "update-check" >/dev/null 2>&1 && exit 0
+    RUNNING=$(cat /etc/banana/version 2>/dev/null)
+    # versions as a sortable key (0.5.17 -> 00000.00005.00017), newest first
+    keep=$(for f in "$UPDATES"/banana-*.update.tar; do
+               [ -f "$f" ] || continue
+               v=$(basename "$f" .update.tar); v=${v##*-}
+               printf '%s %s\n' "$(echo "$v" | awk -F. '{ printf "%05d.%05d.%05d", $1, $2, $3 }')" "$f"
+           done | sort -r | head -n 2 | cut -d' ' -f2-)
+    n=0
+    for f in "$UPDATES"/banana-*.update.tar; do
+        [ -f "$f" ] || continue
+        v=$(basename "$f" .update.tar); v=${v##*-}
+        printf '%s\n' "$keep" | grep -qxF "$f" && continue
+        [ -n "$RUNNING" ] && [ "$v" = "$RUNNING" ] && continue
+        rm -f "$f" && n=$((n + 1))
+        echo "$(date '+%Y-%m-%d %H:%M:%S') pruned $(basename "$f")" >> /data/banana/logs/updates.log
+    done
+    find "$UPDATES" -maxdepth 1 -name '*.update.tar.new' -mtime +0 -exec rm -f {} \; 2>/dev/null
+    echo "update: pruned $n package(s)"
+    ;;
+*) echo "usage: update list | apply <package> | switch [a|b] | status | prune" >&2; exit 2 ;;
 esac
 exit 0

@@ -116,6 +116,9 @@ banana-perf ui
 
 # not needed for the menu's first frame
 (
+    # old update packages: once this boot has stayed up a couple of minutes (a good boot), keep the two newest and
+    # the running version's, delete the rest (update prune)
+    ( sleep 120; /usr/libexec/banana/update prune >/dev/null 2>&1 ) &
     hwclock -s 2>/dev/null
     # the GPU (RetroArch's GLES, Turnip/Freedreno on the Adreno) and the Wi-Fi: modules, and with no udev nothing
     # loads a module by itself (bananad loads USB devices' drivers as they come). The WLAN driver is ath10k_snoc on
