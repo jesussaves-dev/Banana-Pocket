@@ -528,7 +528,7 @@ namespace banana
 		};
 		addPlane(pn.primary, primaryFb, srcW, srcH, primaryFb != 0);
 		addPlane(pn.overlay, overlayFb, SW, SH, overlayFb != 0);
-		int ret = drmModeAtomicCommit(fd, r, DRM_MODE_PAGE_FLIP_EVENT, &pending);
+		int ret = drmModeAtomicCommit(fd, r, DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK, &pending);
 		drmModeAtomicFree(r);
 		if (ret) return false;
 		pending++;

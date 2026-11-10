@@ -53,6 +53,12 @@ namespace banana
 			fputc('\n', stderr);
 			va_end(ap);
 		}
+		double msNow()
+		{
+			struct timespec ts;
+			clock_gettime(CLOCK_MONOTONIC, &ts);
+			return ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
+		}
 	}
 
 	struct Compositor::Impl
@@ -101,6 +107,15 @@ namespace banana
 		std::unique_ptr<Presenter> presenter;	// EGL rotate (3C) or the direct 3B fallback
 		dev_t dev = 0;
 		char devName[128] = "";
+
+		// 3F timing, gated by /run/banana/3f-trace: the EGL pass, the KMS submit, the present interval and the
+		// commit-to-present latency, summarised every 60 presents.
+		bool f3On = false;
+		double f3CommitAt = 0, f3LastPresent = 0, f3PresentAt = 0;
+		double f3RenderSum = 0, f3RenderMax = 0, f3SubmitSum = 0, f3SubmitMax = 0;
+		double f3IntervalSum = 0, f3IntervalMax = 0, f3LatencySum = 0, f3LatencyMax = 0;
+		double f3FlipSum = 0, f3FlipMax = 0;
+		unsigned f3N = 0, f3Drops = 0;
 
 		// 3E.2 seat: the kiosk client's input resources and one xkb state for keymap/modifiers.
 		wl_resource* kb = nullptr;
@@ -195,6 +210,7 @@ namespace banana
 					return;
 				}
 			}
+			double ft0 = f3On ? msNow() : 0;
 			if (!presenter || !presenter->render(*b, fb, err))
 			{
 				logf("render: %s", err.empty() ? "no presenter" : err.c_str());
@@ -202,6 +218,7 @@ namespace banana
 				dropPending();
 				return;
 			}
+			double ft1 = f3On ? msNow() : 0;
 			if (presenter->diagnostic())
 			{
 				dropPending();	// the isolation operation and its glFinish are done; no KMS submission
@@ -223,7 +240,35 @@ namespace banana
 				}
 				return;
 			}
+			double ft2 = f3On ? msNow() : 0;
 			presenter->presented();
+			if (f3On)
+			{
+				double interval = f3LastPresent > 0 ? ft0 - f3LastPresent : 0;
+				double lat = f3CommitAt > 0 ? ft0 - f3CommitAt : 0;
+				double render = ft1 - ft0, submit = ft2 - ft1;
+				f3RenderSum += render;
+				if (render > f3RenderMax) f3RenderMax = render;
+				f3SubmitSum += submit;
+				if (submit > f3SubmitMax) f3SubmitMax = submit;
+				f3IntervalSum += interval;
+				if (interval > f3IntervalMax) f3IntervalMax = interval;
+				f3LatencySum += lat;
+				if (lat > f3LatencyMax) f3LatencyMax = lat;
+				f3LastPresent = ft0;
+				f3PresentAt = ft2;
+				if (++f3N % 60 == 0)
+				{
+					logf("3f: n=%u render %.2f/%.2f submit %.2f/%.2f interval %.2f/%.2f commit->present %.2f/%.2f flip %.2f/%.2f drops %u",
+					     f3N, f3RenderSum / 60, f3RenderMax, f3SubmitSum / 60, f3SubmitMax,
+					     f3IntervalSum / 60, f3IntervalMax, f3LatencySum / 60, f3LatencyMax,
+					     f3FlipSum / 60, f3FlipMax, f3Drops);
+					f3RenderSum = f3RenderMax = f3SubmitSum = f3SubmitMax = 0;
+					f3IntervalSum = f3IntervalMax = f3LatencySum = f3LatencyMax = 0;
+					f3FlipSum = f3FlipMax = 0;
+					f3Drops = 0;
+				}
+			}
 			lastFb = fb;
 			lastW = pw;
 			lastH = ph;
@@ -261,6 +306,12 @@ namespace banana
 		}
 		void vblank()
 		{
+			if (f3On && inflight && !d->flipPending())
+			{
+				double flip = msNow() - f3PresentAt;
+				f3FlipSum += flip;
+				if (flip > f3FlipMax) f3FlipMax = flip;
+			}
 			if (inflight && !d->flipPending())
 			{
 				Buffer* b = inflight;
@@ -633,9 +684,10 @@ namespace banana
 			if (s->pend)
 			{
 				if (!im->surf) im->surf = s;
-				if (im->pending) im->dropPending();
+				if (im->pending) { if (im->f3On) im->f3Drops++; im->dropPending(); }
 				im->pending = s->pend;
 				s->pend = nullptr;
+				if (im->f3On) im->f3CommitAt = msNow();
 				if (im->pendCb)
 				{
 					wl_resource* cb = im->pendCb;
@@ -962,6 +1014,8 @@ namespace banana
 
 		Impl* im = new Impl();
 		im->d = &d;
+		im->f3On = access("/run/banana/3f-trace", F_OK) == 0;
+		if (im->f3On) logf("3f: timing on");
 		if (mkdir(kWaylandDir, 0700) && errno != EEXIST) { err = std::string("mkdir ") + kWaylandDir + ": " + strerror(errno); delete im; return false; }
 		unlink((std::string(kWaylandDir) + "/" + kSocket).c_str());
 		setenv("XDG_RUNTIME_DIR", kWaylandDir, 1);
