@@ -2,12 +2,8 @@
 Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Ordered by what is recommended next.
 
 ## Recommended next (in order)
-0.6.0 shipped the in-process compositor, the pause menu and the polish around it (see *Done*). Next:
-1. **Close out the compositor** (`docs/PLAN_DRM_COMPOSITOR.md`). Done 2026-11-10: the PSX pacing question (60 fps
-   emulated on both paths, 0 presented drops -- see T6) and **Change disc** (T9). `cage` and `wlroots` are out of the tree for
-   the next release (T7/T8; waiting on an image build and the unit). Left: the menu-button combos by hand (menu,
-   menu + X, menu + Start on the real pad -- a uinput pad cannot reach RetroArch's hotkeys).
-2. **Bluetooth** -- designed and planned, not built (see *In progress*): a bespoke no-D-Bus agent for Classic pads,
+0.6.1 closed out the compositor (see *Done*). Next:
+1. **Bluetooth** -- designed and planned, not built (see *In progress*): a bespoke no-D-Bus agent for Classic pads,
    blocked on a Classic controller to test with.
 
 ## In progress
@@ -21,17 +17,6 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
   design covers Classic (BR/EDR) pads — the on-device checklist needs an 8BitDo Pro 2/SN30 in D-input or a PS4 pad.
   BLE (and Bluetooth audio) would be the BlueZ/D-Bus design, deliberately not taken.
 
-- **The in-game pill: superseded on the compositor path (0.6.0).** Under `banana-ui`'s compositor the volume and
-  brightness pill, the battery warning and the charging notice are the menu's own cards on the overlay plane (no
-  RetroArch message), and brightness is **menu + volume** in a game too. What follows still applies to a game under
-  `compositor = "cage"`, and RetroArch's restyled achievement popup is still the unlock card on both paths.
-  *(Paused 2026-11-08:)* The patch (`0014-banana-osd`), the
-  `/data/banana/osd-style` export, the Pixelify OSD font and the `BN V`/`BN B` tokens ship in the image now (0.5.12).
-  **Verified on the panel:** the volume pill and its live updates. **Not looked at yet:** the achievement card (badge,
-  title, points, no English header), an ordinary save-state message unchanged, `hud = 0` silencing pill and card with
-  the menu's own toasts still firing, and the pill's colours under a colour theme. Keys: brightness is F+volume in
-  the menu and Select+volume in a game (10% steps), Select is the search key (opens on the press, closes on the next
-  one, and only on the search page — B is still the back key in password/network keyboards).
 - **An Android-like sleep: find and cut the 37–42 mA standby drain.** Measured on the unit with the gauge's
   `charge_counter` (the awake line has recorded it since `a81a11f`): `battery 99% -> 96% (164 mAh in 3.9 h, 42 mA)` and
   `96% -> 94% (105 mAh in 2.8 h, 37 mA)` in `deep` — about **140 mW**, where an Android-class standby is 5–20 mW. The
@@ -142,7 +127,7 @@ that costs nothing idle). Sizes are rough: **S** a day or two, **M** about a wee
   instantly, with no reload. A second game asks to close the first. This is the Switch's best trick, and nobody
   else on these handhelds can do it because nobody else keeps the screen.
 - **Filters for every game (M).** The rotate pass already touches every pixel once, so a colour step there is nearly
-  free: night light that always works, colour-blind filters (protan/deutan/tritan), a GBA colour-correction curve, a
+  free: colour-blind filters (protan/deutan/tritan), a GBA colour-correction curve, a
   grayscale "battery saver" mode, a subtle scanline or LCD grid for ports and PICO-8. One Settings row and a pause-menu
   row, for RetroArch, ports and BananaTube alike, with no RetroArch shader and no conflict with the bezel rule.
 - **Bezels by the compositor (M).** Draw the bezel art on the overlay plane instead of through RetroArch's overlay:
@@ -217,7 +202,7 @@ that costs nothing idle). Sizes are rough: **S** a day or two, **M** about a wee
   card or a mirror is provably Banana's.
 
 ### Small things that make it feel finished
-- **Quick settings in the pause menu (S).** Brightness, volume, night light and Wi-Fi as sliders and toggles at the
+- **Quick settings in the pause menu (S).** Brightness, volume and Wi-Fi as sliders and toggles at the
   bottom of the pause menu, so nobody leaves a game to change them. *(A quick-settings overlay was dropped earlier;
   the pause menu now exists, so this would be a few rows in it rather than a new overlay.)*
 - **Per-game controls (M).** A Banana-styled remap page from the pause menu (swap A/B, turbo on a button, d-pad as
@@ -270,16 +255,16 @@ accessibility / in-menu log viewer / battery-time item (2026-11-04).)*
 ## Completed Baseline (0.4.9+)
 - **Core & CI:** End-to-end QEMU `virt` boot/update/test (`tools/qemu-boot.sh`), A/B OTA updates, first-time setup, `ksmbd`, `dropbear`, `ath10k_snoc`.
 - **Input & Library:** `rsinput` Nintendo layout (`A=east, B=south`). Single-screen RetroArch library only (no DS/3DS dual-screen launchers).
-- **Display & Graphics:** 90°-rotated 1240x1080 panel in `banana-ui`; games run upright via `cage` (`video_rotation = 0`, Wayland context; requires `SEATD_VTBOUND=0` so `bananad` `SIGSTOP` on suspend never deadlocks VT switch). Mesa **26.2.6** (freedreno GL + **Turnip Vulkan**) on the Adreno `a613` -- supported natively from Mesa 26.2.0, so the image carries no local a613 source patch (SwanStation 60 fps @ 4x).
+- **Display & Graphics:** 90°-rotated 1240x1080 panel in `banana-ui`; games run upright as Wayland clients of `banana-ui`'s compositor (one EGL rotate pass, `video_rotation = 0`). Mesa **26.2.6** (freedreno GL + **Turnip Vulkan**) on the Adreno `a613` -- supported natively from Mesa 26.2.0, so the image carries no local a613 source patch (SwanStation 60 fps @ 4x).
 - **Development access:** the USB-C port is an NCM Ethernet gadget with a DHCP server (`169.254.170.2`) plus SSH, and **adb** over an adb (FunctionFS) function on the same cable, with a TCP `5555` listener on its own **ADB debugging** switch (off by default, independent of SSH). The loopback interface is up, which the adbd control socket needs.
 - **Hardware Validation (`docs/RPC-TEST.md`):** In progress on physical units.
 
 ## Done
-- [x] **Night light covers games (2026-11-10).** `night_light = off|warm|warmer` is a gamma LUT from `kms.cpp`, applied
-  after the layer mixer, so it tints the menu and a game alike now that `banana-ui` owns the panel. On the unit the
-  DSPP gamma block stays enabled through a game and a resume re-modeset, its table reads back as Warmer (red linear,
-  green to 85%, blue to 65%), and the tint was confirmed by eye. A saved setting set before the menu's first flip did
-  not reach the DSPP (kernel cause not traced), so the menu sets it again once that flip completes.
+- [x] **0.6.1: the compositor closed out (2026-11-10).** `cage` and `wlroots` are out of the tree and the image, so
+  `banana-ui` is the only path for RetroArch, ports and BananaTube (T7/T8 in `docs/PLAN_DRM_COMPOSITOR.md`). A menu wake
+  keeps DRM master on the same fd, so a surviving child can no longer leave the panel dark (F15). PSX is settled at 60
+  fps emulated on both paths with 0 presented drops (T6), **Change disc** swapped discs on a test `.m3u` (T9), and the
+  menu-button combos (menu, menu + X, menu + Start) pass by hand on the real pad.
 - [x] **0.6.0: one screen, one owner (2026-11-10).** `banana-ui` is an in-process Wayland compositor on atomic KMS
   (primary + overlay planes) and RetroArch, ports and BananaTube run as its clients -- `cage` is only the
   `compositor = "cage"` escape hatch now. The game frame goes through one EGL rotate pass (the plane cannot rotate,

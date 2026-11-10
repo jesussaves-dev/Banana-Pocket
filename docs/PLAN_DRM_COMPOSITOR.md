@@ -1,6 +1,6 @@
 # PLAN: DRM/KMS plane compositor in `banana-ui` (replacing `cage`)
 
-Branch `feat/drm-plane-compositor` · shipped through **0.5.17** · updated 2026-11-10.
+**Done** · closed out in **0.6.1** · updated 2026-11-10.
 Executor-oriented: do ONE task (§5) per session. Background, measurements and the old phase text live in
 `docs/PLAN_DRM_COMPOSITOR_HISTORY.md` — read a section of it by `rg -n` + `sed -n` only when a task says so.
 
@@ -22,9 +22,8 @@ Executor-oriented: do ONE task (§5) per session. Background, measurements and t
 
 `banana-ui` owns DRM master permanently, runs an in-process Wayland server (`/run/banana/wayland/banana-0`),
 puts the game on the **primary** plane via one **EGL rotate pass** (1240×1080 → 1080×1240 panel), and draws
-menu cards on the **overlay** plane. **RetroArch, ports and BananaTube** all run resident through it when `compositor-mode` is `ui` (the default);
-any window size is letterboxed and rotated (T2, T4).
-`compositor = "cage"` in `/data/banana/bananad.conf` restores the old path for everything.
+menu cards on the **overlay** plane. **RetroArch, ports and BananaTube** all run resident through it;
+any window size is letterboxed and rotated (T2, T4). `cage` and `wlroots` are gone from the image (T7).
 
 ## 2. Settled facts (do not re-test)
 
@@ -153,14 +152,14 @@ Scoped to what the 4.2 changes (872ce06) can break. Record results in `docs/repo
   path change); burn-in guard (only the user's separate uncommitted edit touches it); A/B update / Previous
   version (untouched; exercised by the next release install); `make -s test` + `make bench` (passed 2026-11-10).
 
-### T7 — Remove cage (next release after T6) · `CODE DONE (2026-11-10, gate waived by the user; awaiting image + unit checks)` · needs: T6 **and** one released image with T4
+### T7 — Remove cage (next release after T6) · `DONE (ceb0ebd, 2026-11-10; gate waived by the user; no cage/libwlroots on the unit's image, menu combos pass by hand; QEMU boot and the pacing re-run not recorded)` · needs: T6 **and** one released image with T4
 - **files:** `buildroot/configs/banana_retroid_pocket_classic_defconfig` (`BR2_PACKAGE_CAGE` and its comments
   106-113), the `cage` branches in the three launchers, `compositor-mode`, `/run/banana/cage.pid` users in
   bananad, the QEMU boot expectation (**ask the user first**: `tools/qemu-boot.sh` has their local changes).
 - **verify:** `make -s`; image file list has no `cage`/`libwlroots`; QEMU boot test passes; T6 items 1, 3, 9 again.
 - **stop if:** anything else links `wlroots` → report the package, STOP.
 
-### T8 — Docs · `CODE DONE with T7; set the header to Done after T7's checks` · needs: T7
+### T8 — Docs · `DONE (2026-11-10)` · needs: T7
 `docs/ARCHITECTURE.md` §3 (`sed -n '16,23p'`) and §4 (`25,35p`): the handover is gone, banana-ui owns DRM;
 README "What runs the show": drop cage; `docs/ROADMAP.md`: mark done with T6's numbers;
 `system/rootfs/etc/banana/retroarch.cfg`: note the socket is banana-ui's (`banana-0`). Then set this plan's
