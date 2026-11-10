@@ -16,7 +16,7 @@ These names are the only phase numbers used from here on; older headings below k
 | **1A** | DRM probe: plane enumeration and the TEST_ONLY matrix on the target (this work) | a reviewed target report |
 | **1B** | `banana-ui` atomic KMS (prerequisite; independent of the compositor) | the 1A report, then its own hardware smoke test |
 | **2** | real-client DMA-BUF import and modifier compatibility (RetroArch/SDL2 buffers) | **measured**: compressed rejected; linear imports/scans; rotation EGL |
-| **3** | compositor implementation: 3A atomic primary/overlay in `banana-ui` (done), 3B Wayland + one client (done, unrotated), 3C EGL rotation (BLOCKED: see 3.3), 3D UI overlay, 3E input/lifecycle, 3F performance | 2 measured; GO (EGL rotate); each milestone's own hardware gate |
+| **3** | compositor implementation: 3A atomic primary/overlay in `banana-ui` (done), 3B Wayland + one client (done, unrotated), 3C EGL rotation (implemented, opt-in: see 3.3), 3D UI overlay, 3E input/lifecycle, 3F performance | 2 measured; GO (EGL rotate); each milestone's own hardware gate |
 | **4** | Buildroot cleanup, ports/BananaTube integration and the merge gate | the full acceptance list |
 
 A 1A GO authorises **1B and Phase 2 (client-buffer validation)**, not the compositor. TEST_ONLY results never prove real-client buffer
@@ -547,27 +547,24 @@ launch path; this server is reached only by a client that connects to `/run/bana
 - **Not in 3B:** correct orientation (3C), quick menu/toasts over a game (3D), real input/focus (3E), frame pacing
   (3F). No launcher, session or bananad change: production still uses cage.
 
-### 3.3 Phase 3C — EGL rotation: BLOCKED (2026-11-09)
+### 3.3 Phase 3C — EGL rotation: implemented, opt-in (2026-11-10)
 
-**Status: stopped, not completed and not accepted.** The full report and raw traces are in
-[`docs/reports/phase3c-blocked-2026-11-09.txt`](reports/phase3c-blocked-2026-11-09.txt). The implementation lives on
-`feat/3c-egl-rotate-blocked`; the accepted 3B state (`4050e99`) on `feat/drm-plane-compositor` is unchanged.
+**Status: implemented and hardware-validated; enabled by `/run/banana/3c-egl`, default 3B/DirectPresenter.**
+The historical blocked report remains at
+[`docs/reports/phase3c-blocked-2026-11-09.txt`](reports/phase3c-blocked-2026-11-09.txt).
 
-- Built: three 1080x1240 XR24 LINEAR GBM scanout slots, source-buffer EGLImage cache, a 90-degree clockwise quad
-  (`ui/src/rotate.h`, tested against `turn.h`), `glFinish`, an opt-in one-shot readback, a `Presenter` interface with
-  the 3B direct fallback, and a fsync'd diagnostic trace.
-- Verified on the unit: EGL/GBM allocation (XR24, LINEAR, stride 4352, one plane) and two complete paths through
-  import → rotated draw → `glFinish` → atomic commit → primary scanout.
-- Failure: the SoC hangs inside the rotated draw of a **reused client source buffer**, after "draw begin" and before
-  "glFinish done". With the SDL client the hang was on frame 3; with the six-buffer D1 client it moved to frame 8.
-  Frames 3-7 reused scanout slots 56/57 without a fault, so the three-slot pool is not the trigger.
-- Fault capture (D3): pstore has no persistent backend, MSM devcoredump is disabled and would not survive a hard
-  hang; no kernel change is proposed. The remaining uncertainty is producer→consumer synchronization on reused
-  DMA-BUFs versus EGLImage/import-reuse behavior (possibly a Mesa/msm fault); `glFinish` cannot distinguish them.
-- Explicit fences are a **future investigation only**, not implemented. No sleeps, delays or client-side flushes
-  were used as workarounds.
-- The EGL presenter is disabled by default: it starts only when `/run/banana/3c-egl` exists (tmpfs, absent after
-  boot); otherwise the accepted 3B direct presenter runs and logs that rotation is off. Production remains cage/3B.
+- Root cause of the hang: the production slot setup PRIME-imported and `AddFB2`-registered each linear XR24 BO
+  **before** the EGL image. That order reproduces the stall (production-slot clear 2/2, explicit PRIME-only before
+  EGL); importing the BO into EGL first and registering the framebuffer afterwards passes, including the D1
+  workload (~100k commits over ~30 minutes, menu handover, resume, crash recovery and a 20-minute session).
+- Slots are imported before registration; the post-EGL PRIME is Mesa's EGL-import handle and is not closed.
+  Source import, the 90-degree clockwise quad (`ui/src/rotate.h`, tested against `turn.h`) and `glFinish` are
+  unchanged.
+- A source that is not the panel's 1240x1080 logical output switches that compositor instance to the direct 3B
+  presenter (plane-scaled, sideways); a size change while an EGL frame is on screen is dropped and logged.
+- The Stage 8-16 isolation gates and the bounded durable trace remain for diagnostics; each needs its own
+  `/run/banana` file and none is active by default.
+- Cage, the launchers, bananad, the sleep policy and the KMS configuration are untouched.
 
 ### 3.4 Scope of the compositor (D1)
 
