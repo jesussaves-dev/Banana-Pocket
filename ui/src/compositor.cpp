@@ -115,6 +115,7 @@ namespace banana
 		double f3RenderSum = 0, f3RenderMax = 0, f3SubmitSum = 0, f3SubmitMax = 0;
 		double f3IntervalSum = 0, f3IntervalMax = 0, f3LatencySum = 0, f3LatencyMax = 0;
 		double f3FlipSum = 0, f3FlipMax = 0;
+		double f3ReleaseAt = 0, f3TurnSum = 0, f3TurnMax = 0;
 		unsigned f3N = 0, f3Drops = 0;
 
 		// 3E.2 seat: the kiosk client's input resources and one xkb state for keymap/modifiers.
@@ -263,13 +264,13 @@ namespace banana
 				f3PresentAt = ft2;
 				if (++f3N % 60 == 0)
 				{
-					logf("3f: n=%u render %.2f/%.2f submit %.2f/%.2f interval %.2f/%.2f commit->present %.2f/%.2f flip %.2f/%.2f drops %u",
+					logf("3f: n=%u render %.2f/%.2f submit %.2f/%.2f interval %.2f/%.2f turn %.2f/%.2f commit->present %.2f/%.2f flip %.2f/%.2f drops %u",
 					     f3N, f3RenderSum / 60, f3RenderMax, f3SubmitSum / 60, f3SubmitMax,
-					     f3IntervalSum / 60, f3IntervalMax, f3LatencySum / 60, f3LatencyMax,
-					     f3FlipSum / 60, f3FlipMax, f3Drops);
+					     f3IntervalSum / 60, f3IntervalMax, f3TurnSum / 60, f3TurnMax,
+					     f3LatencySum / 60, f3LatencyMax, f3FlipSum / 60, f3FlipMax, f3Drops);
 					f3RenderSum = f3RenderMax = f3SubmitSum = f3SubmitMax = 0;
 					f3IntervalSum = f3IntervalMax = f3LatencySum = f3LatencyMax = 0;
-					f3FlipSum = f3FlipMax = 0;
+					f3FlipSum = f3FlipMax = f3TurnSum = f3TurnMax = 0;
 					f3Drops = 0;
 				}
 			}
@@ -321,6 +322,7 @@ namespace banana
 				Buffer* b = inflight;
 				inflight = nullptr;
 				bufferRelease(b);
+				if (f3On) f3ReleaseAt = msNow();	// the client can render its next frame now
 				fireCb(inflightCb, inflightCbGone);
 			}
 			if (presenter && !d->flipPending()) presenter->flipDone();
@@ -691,7 +693,16 @@ namespace banana
 				if (im->pending) { if (im->f3On) im->f3Drops++; im->dropPending(); }
 				im->pending = s->pend;
 				s->pend = nullptr;
-				if (im->f3On) im->f3CommitAt = msNow();
+				if (im->f3On)
+				{
+					im->f3CommitAt = msNow();
+					if (im->f3ReleaseAt > 0)
+					{
+						double turn = im->f3CommitAt - im->f3ReleaseAt;
+						im->f3TurnSum += turn;
+						if (turn > im->f3TurnMax) im->f3TurnMax = turn;
+					}
+				}
 				if (im->pendCb)
 				{
 					wl_resource* cb = im->pendCb;
