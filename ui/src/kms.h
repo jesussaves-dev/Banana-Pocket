@@ -66,7 +66,7 @@ namespace banana
 		// the 3D card buffer: clear it, fill a panel-space rectangle (premultiplied ARGB), hand its FB to the
 		// compositor. False when the atomic overlay path is not in use.
 		bool overlayCardBegin();
-		void overlayCardFill(int x, int y, int w, int h, uint32_t argb);
+		void overlayCardTurn(const uint32_t* canvas, int x0, int y0, int x1, int y1);
 		uint32_t overlayCardFb() const;
 		bool showMenu();
 		// black primary, overlay off: used before the compositor is torn down so the plane stops scanning a
@@ -89,7 +89,8 @@ namespace banana
 			uint32_t conn = 0, crtc = 0;
 			uint8_t mode[68] = { 0 };
 			Buf buf[2];		// the menu, ARGB8888 (atomic overlay) or XRGB8888 (legacy primary)
-			Buf card;		// the 3D card layer, ARGB8888 over a client on the primary (atomic only)
+			Buf card[2];	// the 3D card layer, ARGB8888 over a client on the primary (atomic only)
+			int cardFront = 0;
 			Buf black;		// XRGB8888, the primary when the menu is on the overlay
 			int front = 0;
 			Damage missed[2];

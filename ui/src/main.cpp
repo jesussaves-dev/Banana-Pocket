@@ -1762,7 +1762,8 @@ int main(int argc, char** argv)
 			}
 		}
 		// 3D: a card over a client on the primary, from /run/banana/overlay (kind|title|body|badge|duration_ms).
-		// This slice draws a panel-space test rectangle; the real card renderer replaces it in 3D.2.
+		// The card is drawn by the menu's own renderer (level/toast/notice) on a cleared screen, and only its box is
+		// turned into the double-buffered overlay buffer, so the pixels are the menu's at 1x and the rest is clear.
 		if (overlaySeen || launchWatch < 0)
 		{
 			overlaySeen = false;
@@ -1774,20 +1775,33 @@ int main(int argc, char** argv)
 				{
 					for (char& c : line) if (c == '|') c = '\t';	// the overlay record is pipe-separated
 					std::vector<std::string> g = tsv(line, 5);
+					std::string kind = g.empty() ? std::string() : g[0];
+					std::string title = g.size() > 1 ? g[1] : std::string();
+					std::string body = g.size() > 2 ? g[2] : std::string();
+					std::string badge = g.size() > 3 ? g[3] : std::string();
 					int ms = g.size() > 4 ? atoi(g[4].c_str()) : 2000;
 					if (ms <= 0) ms = 2000;
-					if (disp.overlayCardBegin())
+					if (kind == "volume" || kind == "brightness")
 					{
-						uint32_t argb = 0xff3aa0ff;
-						if (!g.empty() && g[0] == "volume") argb = 0xff54c26b;
-						else if (!g.empty() && g[0] == "brightness") argb = 0xffe0b64a;
-						else if (!g.empty() && g[0] == "achievement") argb = 0xffc05cff;
-						else if (!g.empty() && g[0] == "error") argb = 0xffe05c5c;
-						disp.overlayCardFill(120, 120, 840, 240, argb);
-						comp.setOverlayFb(disp.overlayCardFb());
-						cardUp = true;
-						cardUntil = now + ms;
-						logf("overlay card %s for %d ms", g.empty() ? "?" : g[0].c_str(), ms);
+						osdLabel = kind == "brightness" ? "Brightness" : "Volume";
+						osdPercent = atoi(body.c_str());
+						osdUntil = now + ms;
+					}
+					else
+						settingsView.notify(title, body, 0, badge);
+					if (comp.clientOnScreen() && disp.overlayCardBegin())
+					{
+						be.beginScreen(0);
+						be.endScreen();	// be.overlay draws the level/toast onto the screen
+						int cx = 0, cy = 0, cw = 0, ch = 0;
+						if (settingsView.cardRect(cx, cy, cw, ch))
+						{
+							disp.overlayCardTurn(be.pixels(0), cx, cy, cx + cw, cy + ch);
+							comp.setOverlayFb(disp.overlayCardFb());
+							cardUp = true;
+							cardUntil = now + ms;
+							logf("overlay card %s for %d ms", kind.empty() ? "?" : kind.c_str(), ms);
+						}
 					}
 				}
 				unlink("/run/banana/overlay");
@@ -1796,7 +1810,6 @@ int main(int argc, char** argv)
 		if (cardUp && now >= cardUntil)
 		{
 			cardUp = false;
-			if (disp.overlayCardBegin()) {}
 			comp.setOverlayFb(0);
 			logf("overlay card hidden");
 		}
@@ -1863,7 +1876,7 @@ int main(int argc, char** argv)
 		// the next frame is drawn while the last one's flips are still pending (present copies it out, so the canvas is
 		// free again at once), and handed over when the panel has flipped: drawing and the wait
 		// for the panel's vblank overlap instead of adding up to two refreshes a frame
-		if (want && disp.isOpen() && !drawn && !comp.gameActive() && nowMs() >= quietUntil)
+		if (want && disp.isOpen() && !drawn && !comp.gameActive() && !comp.clientOnScreen() && nowMs() >= quietUntil)
 		{
 			double t0 = nowMs();
 			{
@@ -1875,7 +1888,7 @@ int main(int argc, char** argv)
 			drawn = true;
 			dirty = false;
 		}
-		if (drawn && disp.isOpen() && !disp.flipPending() && !comp.gameActive())
+		if (drawn && disp.isOpen() && !disp.flipPending() && !comp.gameActive() && !comp.clientOnScreen())
 		{
 			const uint32_t* scr[2] = { be.pixels(0), be.pixels(1) };
 			Damage dmg[2] = { be.takeDamage(0), be.takeDamage(1) };
@@ -2064,7 +2077,7 @@ int main(int argc, char** argv)
 			if (now - lastEglBeat >= 5000) { lastEglBeat = now; logf("compositor: EGL alive"); }
 		}
 		// the client went away (or its last frame completed): give the panel back to the menu with a full redraw
-		bool gameNow = comp.gameActive();
+		bool gameNow = comp.gameActive() || comp.clientOnScreen();
 		if (gameWas && !gameNow) { be.invalidate(); dirty = true; drawn = false; }
 		gameWas = gameNow;
 		// A screen dump, asked for by writing /run/banana/screen.req (the launch watch above fires for it): the frame

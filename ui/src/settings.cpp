@@ -1165,9 +1165,25 @@ namespace banana
 		text(label, true, 19, x + 15 + kw + 8, 431, p.ink);
 	}
 
+	void Settings::rememberCard(float x, float y, float w, float h)
+	{
+		cardX = (int)std::lround(X(x));
+		cardY = (int)std::lround(X(y));
+		cardW = (int)std::lround(X(w));
+		cardH = (int)std::lround(X(h));
+	}
+
+	bool Settings::cardRect(int& x, int& y, int& w, int& h) const
+	{
+		if (cardW <= 0 || cardH <= 0) return false;
+		x = cardX; y = cardY; w = cardW; h = cardH;
+		return true;
+	}
+
 	void Settings::notice(const std::string& title, const std::string& body, int percent)
 	{
 		SPal p = pal(light);
+		rememberCard(40, 344, 560, 104);
 		box("bubble", false, 40, 344, 560, 104);
 		// the status bar's battery, three times its size on the same pixel grid, its level red at 10% and under
 		auto it = cache.find("battery");
@@ -1203,6 +1219,7 @@ namespace banana
 		bool sun = label == "Brightness";
 		const Color light = Color::hex(0xf1ede2), bar = Color::hex(0xffe68a), off = Color::hex(0x3a3540), red = Color::hex(0xff8a96);
 		const float w = 310, h = 42, x0 = (640 - w) / 2, y0 = 4, x1 = x0 + w, cy = y0 + h / 2;
+		rememberCard(x0, y0, w, h);
 		box("osd", false, x0, y0, w, h);
 		int k = std::max(2, (int)std::lround(2 * s));	// device px per icon pixel
 		const char* const* ic = sun ? SUN : percent <= 0 ? MUTE : VOL;
@@ -2474,6 +2491,7 @@ namespace banana
 			{ ".........", "........#", ".......##", "......##.", "#....##..", "##..##...", ".####....", "..##.....", "........." },
 			{ "##.....##", ".##...##.", "..##.##..", "...###...", "...###...", "..##.##..", ".##...##.", "##.....##", "........." } };
 		const Color light = Color::hex(0xf1ede2), acc = Color::hex(toastNow.accent);
+		rememberCard(8, 4, 624, 64);
 		box("osd", false, 8, 4, 624, 64);
 		float bs = 48, tx = 16, ty = 12;
 		float bx = std::round(X(tx)), by = std::round(X(ty)), bsz = std::round(X(bs));

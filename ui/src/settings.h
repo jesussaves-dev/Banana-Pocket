@@ -80,6 +80,8 @@ namespace banana
 		// (0 "i", 1 a tick, 2 a cross) and the accent follows it.
 		void notify(const std::string& title, const std::string& body, int glyph = 0, const std::string& badge = std::string());
 		void drawToast(double nowMs);
+		// the card just drawn by level/notice/drawToast, in composed-screen pixels (for the 3D overlay)
+		bool cardRect(int& x, int& y, int& w, int& h) const;
 		// for the host's poll timeout: is anything showing or waiting, and how long the showing one has left
 		bool toasting() const { return toastUntil > now || !toasts.empty(); }
 		double toastLeftMs() const { return toastUntil - now; }
@@ -150,6 +152,8 @@ namespace banana
 		std::vector<Toast> toasts;
 		Toast toastNow;
 		double toastUntil = 0;
+		int cardX = 0, cardY = 0, cardW = 0, cardH = 0;	// the last card's core box on the composed screen
+		void rememberCard(float x, float y, float w, float h);
 		void toast(const std::string& l1, const std::string& l2, uint32_t accent, int icon, double ms = 3000,
 				const std::string& badge = std::string());
 		// the first-time setup: the steps (Wi-Fi, the time zone, RetroAchievements, box art), run once after

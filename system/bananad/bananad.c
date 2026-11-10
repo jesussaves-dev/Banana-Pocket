@@ -341,10 +341,30 @@ static pid_t ui_pid(void)
 	return r;
 }
 
+/* while banana-ui's compositor owns the panel it writes the 3D card file; the menu turns it into an overlay above a
+ * client. A cage game or a stopped compositor keeps the existing OSD/SHOW_MSG paths. */
+static int compositor_on(void) { return access("/run/banana/compositor", F_OK) == 0; }
+
+static void overlay_show(const char *kind, const char *title, const char *body, const char *badge, int ms)
+{
+	if (!compositor_on()) return;
+	char v[512];
+	snprintf(v, sizeof v, "%s|%s|%s|%s|%d\n", kind, title ? title : "", body ? body : "",
+	         badge ? badge : "", ms);
+	FILE *f = fopen("/run/banana/overlay.new", "w");
+	if (!f) return;
+	fputs(v, f);
+	fclose(f);
+	rename("/run/banana/overlay.new", "/run/banana/overlay");
+}
+
 /* the menu's level card for a volume or brightness key: what changed and its percent in /run/banana/osd, then
  * SIGUSR2 tells banana-ui to show it (it ignores a file older than a moment, e.g. one written during a game) */
 static void osd(const char *what, int percent)
 {
+	char pct[32];
+	snprintf(pct, sizeof pct, "%d%%", percent);
+	overlay_show(what, what, pct, "", 2000);	// a client under the in-process compositor
 	char v[64];
 	snprintf(v, sizeof v, "%s %d\n", what, percent);
 	FILE *f = fopen("/run/banana/osd.new", "w");
@@ -1444,6 +1464,7 @@ static int hud_on(void) { return cfg.hud && pid_of(game_pid_path) > 0; }
 
 static int hud_show(const char *text)
 {
+	if (compositor_on()) overlay_show("hud", text, "", "", 3000);	// battery/unplug/errors over a client
 	if (!hud_on()) return 0;
 	char line[256];
 	snprintf(line, sizeof line, "SHOW_MSG %s", text);

@@ -33,6 +33,7 @@ namespace banana
 		void frame();			// present the latest committed client frame when no flip is in flight
 		void setOverlayFb(uint32_t fb);	// the 3D card over a client frame on the primary (0 hides it)
 		bool gameActive() const;	// a client frame is pending or on screen (the menu must not present)
+		bool clientOnScreen() const;	// a client frame owns the primary (for the 3D card layer)
 		bool eglActive() const;		// the EGL rotate presenter is running (3C validation)
 
 		struct Impl;			// the server state, defined in compositor.cpp

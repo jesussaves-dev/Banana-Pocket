@@ -87,6 +87,7 @@ namespace banana
 
 		bool hidMenu = false;			// presentGame() is on screen and the overlay is off
 		uint32_t overlayFb = 0;			// the 3D card buffer (ARGB), shown above the client when non-zero
+		uint32_t lastFb = 0, lastW = 0, lastH = 0;	// the primary currently on screen, for an overlay-only commit
 		bool restoreMenu = false;		// show the menu as soon as the current flip completes
 		bool stopping = false;
 		bool saidShm = false;
@@ -209,6 +210,9 @@ namespace banana
 				return;
 			}
 			presenter->presented();
+			lastFb = fb;
+			lastW = pw;
+			lastH = ph;
 			if (frames < kTraceFrames)
 				tracef("frame: presented serial=%llu fb=%u", (unsigned long long)b->serial, fb);
 			pending = nullptr;
@@ -273,6 +277,7 @@ namespace banana
 			if (d->showMenu())
 			{
 				hidMenu = false;
+				lastFb = 0;	// the menu owns the primary again: no overlay-only commits over it
 				if (presenter) presenter->detached();
 				if (onScreen) { bufferDrop(onScreen); onScreen = nullptr; }
 			}
@@ -895,6 +900,9 @@ namespace banana
 			}
 		}
 		impl = im;
+		// bananad uses this to write the 3D card file instead of the launcher/OSD paths while the compositor owns
+		// the panel. Absent during a cage game or when the compositor is off.
+		if (FILE* f = fopen("/run/banana/compositor", "w")) { fputs("banana-ui\n", f); fclose(f); }
 		logf("wayland-0 at %s/%s (xdg-shell 1, linux-dmabuf 4 linear, wl_drm; primary %s; presenter %s)",
 		     kWaylandDir, kSocket, im->devName, im->presenter->name());
 		return true;
@@ -941,6 +949,7 @@ namespace banana
 		tracef("stop: presenter stopped");
 		wl_display_destroy(im->wl);
 		unlink((std::string(kWaylandDir) + "/" + kSocket).c_str());
+		unlink("/run/banana/compositor");
 		delete im;
 		impl = nullptr;
 	}
@@ -967,12 +976,22 @@ namespace banana
 
 	void Compositor::setOverlayFb(uint32_t fb)
 	{
-		if (impl) impl->overlayFb = fb;
+		if (!impl) return;
+		impl->overlayFb = fb;
+		// A client that is not committing (paused) must still show/hide the card: re-commit the frame that is on
+		// screen with the new overlay. A commit already in flight picks the new overlay up on the next frame.
+		if (impl->lastFb && impl->d->isOpen() && !impl->d->flipPending() && !impl->restoreMenu)
+			impl->d->presentGame(impl->lastFb, impl->lastW, impl->lastH, fb);
 	}
 
 	bool Compositor::gameActive() const
 	{
 		return impl && (impl->pending || impl->inflight);
+	}
+
+	bool Compositor::clientOnScreen() const
+	{
+		return impl && impl->lastFb != 0;
 	}
 
 	bool Compositor::eglActive() const
