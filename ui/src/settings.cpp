@@ -404,7 +404,10 @@ namespace banana
 			auto b = [](float v) { return (uint32_t)(std::min(std::max(v, 0.0f), 1.0f) * 255 + 0.5f); };
 			return b(c.r) << 16 | b(c.g) << 8 | b(c.b);
 		};
-		return { rgb(p.screenFrame), rgb(p.screenBand), rgb(p.panelBody), rgb(p.panelBand), rgb(p.panelLow), rgb(p.blackish), rgb(p.pick) };
+		// only colours every theme really sets: screenFrame, panelBand and the like are Settings' own bevels, which a
+		// theme can leave at the base palette's greys, and a frame built from them comes out grey under that theme
+		Color ring = light ? p.ink : Color(p.screenBg.r * 0.5f, p.screenBg.g * 0.5f, p.screenBg.b * 0.5f, 1);
+		return { rgb(p.screenBg), rgb(p.bubbleBody), rgb(p.bubbleBody), rgb(p.edge), rgb(p.line), rgb(ring), rgb(p.pick) };
 	}
 
 	void Settings::load(Item& it)
