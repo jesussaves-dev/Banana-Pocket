@@ -171,7 +171,7 @@ header to "Done".
 - Fixed with it: a card changed while a flip was in flight never reached a frozen client's screen (the
   compositor now re-commits the overlay on the next vblank); a game ending under the menu releases the grab; a
   wake re-freezes the game under an open menu.
-- **Two-column version (2026-11-10, uncommitted):** header with battery/clock/time played; rows Resume, Save
+- **Two-column version (661d0c1, 2026-11-10):** header with battery/clock/time played; rows Resume, Save
   state / Load state with `< Slot N >` (0-9) and the slot's thumbnail on the right, Change disc `< Disc k/n >`
   (`.m3u` games only), Fast-forward On/Off (stays open), Shader (toggle), Achievements `n/total` (when
   `/run/banana/ra-progress` exists; the panel lists this session's unlocks and the newest badge), Restart,
