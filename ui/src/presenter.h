@@ -22,6 +22,9 @@ namespace banana
 		// implementation calls glFinish or the direct path has no GPU read); the caller commits fb and then calls
 		// presented() or abandon(). The source buffer is still referenced by the caller.
 		virtual bool render(ClientBuffer& b, uint32_t& fb, std::string& err) = 0;
+		// 3F: the sync file for the scanout buffer's GPU writes (owned by the caller, close it after the commit),
+		// -1 when render() completed synchronously (glFinish) or the path has no GPU writes. Take once per render.
+		virtual int takeFenceFd() { return -1; }
 		virtual void presented() = 0;	// the commit succeeded: the rendered FB is on the plane
 		virtual void abandon() = 0;	// the commit failed: return the rendered slot, drop the frame
 		virtual void flipDone() = 0;	// the page-flip event for the current FB completed

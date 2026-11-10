@@ -62,7 +62,9 @@ namespace banana
 		int drmFd() const { return fd; }
 		bool atomic() const { return count > 0 && p[0].atomic; }
 		// overlayFb is the panel-sized ARGB card to show above the primary, 0 to hide the overlay
-		bool presentGame(uint32_t fb, uint32_t w, uint32_t h, uint32_t overlayFb = 0);
+		bool presentGame(uint32_t fb, uint32_t w, uint32_t h, uint32_t overlayFb = 0, int fenceFd = -1);
+		// 3F: the primary plane accepts IN_FENCE_FD (the EGL presenter may skip glFinish only when it does)
+		bool fenceSupported() const { return count > 0 && p[0].primary.in_fence_fd != 0; }
 		// the 3D card buffer: clear it, fill a panel-space rectangle (premultiplied ARGB), hand its FB to the
 		// compositor. False when the atomic overlay path is not in use.
 		bool overlayCardBegin();
@@ -80,6 +82,7 @@ namespace banana
 		{
 			uint32_t id = 0, type = 0;
 			uint32_t crtc_id = 0, fb_id = 0, src_x = 0, src_y = 0, src_w = 0, src_h = 0, crt_x = 0, crt_y = 0, crt_w = 0, crt_h = 0;
+			uint32_t in_fence_fd = 0;	// 3F: the primary's GPU sync file property (0: unsupported)
 			uint32_t zpos = 0, alpha = 0, blend = 0;
 			uint64_t zpos_max = 0;
 			bool zpos_mutable = false, has_alpha = false, has_blend = false;
@@ -109,6 +112,6 @@ namespace banana
 		uint32_t propId(uint32_t obj, uint32_t type, const char* name, uint64_t* value = nullptr);
 		bool findPlanes(Panel& pn, uint32_t crtc_index);
 		bool atomicModeset(Panel& pn);
-		bool commitFrame(Panel& pn, uint32_t primaryFb, uint32_t srcW, uint32_t srcH, uint32_t overlayFb);
+		bool commitFrame(Panel& pn, uint32_t primaryFb, uint32_t srcW, uint32_t srcH, uint32_t overlayFb, int fenceFd = -1);
 	};
 }

@@ -172,6 +172,7 @@ namespace banana
 			dst->crt_y = propId(dst->id, DRM_MODE_OBJECT_PLANE, "CRTC_Y");
 			dst->crt_w = propId(dst->id, DRM_MODE_OBJECT_PLANE, "CRTC_W");
 			dst->crt_h = propId(dst->id, DRM_MODE_OBJECT_PLANE, "CRTC_H");
+			dst->in_fence_fd = propId(dst->id, DRM_MODE_OBJECT_PLANE, "IN_FENCE_FD");
 			uint64_t v = 0;
 			if (drmModePropertyPtr zp = getProp(fd, dst->id, DRM_MODE_OBJECT_PLANE, "zpos", &v))
 			{
@@ -507,13 +508,13 @@ namespace banana
 	// hide it). srcW/srcH are the source size in pixels; the destination is always the panel mode, so a 1240x1080
 	// client buffer is scaled to the 1080x1240 panel here (Phase 3B; 3C rotates it in EGL instead). The 3A menu
 	// path passes the panel size for both and is pixel-identical to before.
-	bool Display::commitFrame(Panel& pn, uint32_t primaryFb, uint32_t srcW, uint32_t srcH, uint32_t overlayFb)
+	bool Display::commitFrame(Panel& pn, uint32_t primaryFb, uint32_t srcW, uint32_t srcH, uint32_t overlayFb, int fenceFd)
 	{
 		if (fd < 0 || pending || !pn.atomic) return false;
 		drmModeAtomicReq* r = drmModeAtomicAlloc();
 		if (!r) return false;
 		auto addp = [&](uint32_t obj, uint32_t prop, uint64_t v) { if (prop) drmModeAtomicAddProperty(r, obj, prop, v); };
-		auto addPlane = [&](const Plane& pl, uint32_t fb, uint32_t sw, uint32_t sh, bool on) {
+		auto addPlane = [&](const Plane& pl, uint32_t fb, uint32_t sw, uint32_t sh, bool on, int ff) {
 			addp(pl.id, pl.crtc_id, on ? pn.crtc : 0);
 			addp(pl.id, pl.fb_id, fb);
 			if (!on) return;
@@ -525,9 +526,12 @@ namespace banana
 			addp(pl.id, pl.crt_y, 0);
 			addp(pl.id, pl.crt_w, SW);
 			addp(pl.id, pl.crt_h, SH);
+			// 3F: the display waits on the GPU's own writes to this scanout buffer, so the compositor does not
+			// have to glFinish. The kernel takes its own reference; the caller closes the fd after the commit.
+			if (ff >= 0) addp(pl.id, pl.in_fence_fd, (uint64_t)(int64_t)ff);
 		};
-		addPlane(pn.primary, primaryFb, srcW, srcH, primaryFb != 0);
-		addPlane(pn.overlay, overlayFb, SW, SH, overlayFb != 0);
+		addPlane(pn.primary, primaryFb, srcW, srcH, primaryFb != 0, fenceFd);
+		addPlane(pn.overlay, overlayFb, SW, SH, overlayFb != 0, -1);
 		int ret = drmModeAtomicCommit(fd, r, DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK, &pending);
 		drmModeAtomicFree(r);
 		if (ret) return false;
@@ -535,9 +539,9 @@ namespace banana
 		return true;
 	}
 
-	bool Display::presentGame(uint32_t fb, uint32_t w, uint32_t h, uint32_t overlayFb)
+	bool Display::presentGame(uint32_t fb, uint32_t w, uint32_t h, uint32_t overlayFb, int fenceFd)
 	{
-		return commitFrame(p[0], fb, w, h, overlayFb);
+		return commitFrame(p[0], fb, w, h, overlayFb, fenceFd);
 	}
 
 	bool Display::overlayCardBegin()

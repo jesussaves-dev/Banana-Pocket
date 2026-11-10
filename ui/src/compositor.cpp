@@ -219,8 +219,10 @@ namespace banana
 				return;
 			}
 			double ft1 = f3On ? msNow() : 0;
+			int fenceFd = presenter->takeFenceFd();
 			if (presenter->diagnostic())
 			{
+				if (fenceFd >= 0) close(fenceFd);
 				dropPending();	// the isolation operation and its glFinish are done; no KMS submission
 				return;
 			}
@@ -230,8 +232,9 @@ namespace banana
 			if (frames < 3) logf("commit: fb=%u src=%ux%u", fb, pw, ph);
 			if (frames < kTraceFrames)
 				tracef("frame: commit serial=%llu fb=%u %ux%u", (unsigned long long)b->serial, fb, pw, ph);
-			if (!d->presentGame(fb, pw, ph, overlayFb))
+			if (!d->presentGame(fb, pw, ph, overlayFb, fenceFd))
 			{
+				if (fenceFd >= 0) close(fenceFd);
 				presenter->abandon();
 				if (!d->flipPending())
 				{
@@ -240,6 +243,7 @@ namespace banana
 				}
 				return;
 			}
+			if (fenceFd >= 0) close(fenceFd);	// the kernel holds its own reference
 			double ft2 = f3On ? msNow() : 0;
 			presenter->presented();
 			if (f3On)

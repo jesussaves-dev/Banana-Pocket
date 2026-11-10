@@ -113,6 +113,11 @@ namespace banana
 		PFNEGLCREATEIMAGEKHRPROC createImage = nullptr;
 		PFNEGLDESTROYIMAGEKHRPROC destroyImage = nullptr;
 		PFNGLEGLIMAGETARGETTEXTURE2DOESPROC targetTexture = nullptr;
+		PFNEGLCREATESYNCKHRPROC createSync = nullptr;
+		PFNEGLDESTROYSYNCKHRPROC destroySync = nullptr;
+		PFNEGLDUPNATIVEFENCEFDANDROIDPROC dupFence = nullptr;
+		bool fenceOk = false;	// 3F: EGL_ANDROID_native_fence_sync is available (else glFinish)
+		int fenceFd = -1;		// the rendered slot's GPU sync file, taken by the compositor
 		GLuint program = 0, vbo = 0;
 		GLint aPos = -1, aUv = -1, uTex = -1;
 		Slot slot[3];
@@ -607,6 +612,9 @@ namespace banana
 		im->createImage = (PFNEGLCREATEIMAGEKHRPROC)eglGetProcAddress("eglCreateImageKHR");
 		im->destroyImage = (PFNEGLDESTROYIMAGEKHRPROC)eglGetProcAddress("eglDestroyImageKHR");
 		im->targetTexture = (PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)eglGetProcAddress("glEGLImageTargetTexture2DOES");
+		im->createSync = (PFNEGLCREATESYNCKHRPROC)eglGetProcAddress("eglCreateSyncKHR");
+		im->destroySync = (PFNEGLDESTROYSYNCKHRPROC)eglGetProcAddress("eglDestroySyncKHR");
+		im->dupFence = (PFNEGLDUPNATIVEFENCEFDANDROIDPROC)eglGetProcAddress("eglDupNativeFenceFDANDROID");
 		if (!im->createImage || !im->destroyImage || !im->targetTexture) { err = "EGLImage entry points missing"; return false; }
 		const char* glExt = (const char*)glGetString(GL_EXTENSIONS);
 		logf("%s / %s", (const char*)glGetString(GL_VERSION), (const char*)glGetString(GL_RENDERER));
@@ -616,6 +624,9 @@ namespace banana
 		     surfaceless, hasExt(glExt, "GL_OES_EGL_image"));
 		if (!hasExt(eglExt, "EGL_EXT_image_dma_buf_import")) { err = "EGL_EXT_image_dma_buf_import missing"; return false; }
 		if (!hasExt(glExt, "GL_OES_EGL_image")) { err = "GL_OES_EGL_image missing"; return false; }
+		im->fenceOk = hasExt(eglExt, "EGL_KHR_fence_sync") && hasExt(eglExt, "EGL_ANDROID_native_fence_sync") &&
+		              im->createSync && im->destroySync && im->dupFence && im->d->fenceSupported();
+		logf("3F: native fence %s", im->fenceOk ? "on" : "unavailable (glFinish)");
 
 		std::string serr;
 		GLuint vs = compile(GL_VERTEX_SHADER,
@@ -668,6 +679,7 @@ namespace banana
 		if (!impl) return;
 		Impl* im = impl;
 		impl = nullptr;
+		if (im->fenceFd >= 0) { close(im->fenceFd); im->fenceFd = -1; }
 		if (im->edpy != EGL_NO_DISPLAY && im->ctx != EGL_NO_CONTEXT)
 			eglMakeCurrent(im->edpy, im->pbuffer == EGL_NO_SURFACE ? EGL_NO_SURFACE : im->pbuffer,
 			               im->pbuffer == EGL_NO_SURFACE ? EGL_NO_SURFACE : im->pbuffer, im->ctx);
@@ -752,15 +764,30 @@ namespace banana
 			tracef("frame %u: draw begin serial=%llu slot fb=%u", im->frames + 1,
 			       (unsigned long long)b.serial, s->fb);
 		glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-		glFinish();	// the conservative 3C rule: the source and the slot are complete before anything else
+		// 3F: hand the GPU completion to KMS as a sync file instead of waiting here; the source and slot stay
+		// referenced until the flip. glFinish remains the fallback and is required for the fresh-source diagnostic.
+		bool fenced = false;
+		if (im->fenceOk && !im->freshSource)
+		{
+			EGLSyncKHR sync = im->createSync(im->edpy, EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr);
+			if (sync != EGL_NO_SYNC_KHR)
+			{
+				glFlush();
+				im->fenceFd = im->dupFence(im->edpy, sync);
+				im->destroySync(im->edpy, sync);
+				fenced = im->fenceFd >= 0;
+			}
+		}
+		if (!fenced) glFinish();
 		if (im->frames < kTraceFrames)
-			tracef("frame %u: glFinish done serial=%llu", im->frames + 1, (unsigned long long)b.serial);
+			tracef("frame %u: sync done serial=%llu fence=%d", im->frames + 1, (unsigned long long)b.serial, im->fenceFd);
 		GLenum e = glGetError();
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		if (im->freshSource) im->dropFresh(fresh);	// only after glFinish: the GPU is done reading it
 		if (e != GL_NO_ERROR)
 		{
 			s->state = Impl::Free;	// no GPU work remains after glFinish
+			if (im->fenceFd >= 0) { close(im->fenceFd); im->fenceFd = -1; }
 			err = "GL error 0x" + std::to_string(e);
 			return false;
 		}
@@ -770,6 +797,14 @@ namespace banana
 		im->dump(*s);
 		fb = s->fb;
 		return true;
+	}
+
+	int EglPresenter::takeFenceFd()
+	{
+		if (!impl) return -1;
+		int fd = impl->fenceFd;
+		impl->fenceFd = -1;
+		return fd;
 	}
 
 	void EglPresenter::presented()
