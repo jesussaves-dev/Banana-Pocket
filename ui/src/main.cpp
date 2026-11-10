@@ -1543,6 +1543,9 @@ int main(int argc, char** argv)
 				if (ev.type == InputEvent::PRESS && ev.key == Key::B) closeQuick();
 				return;
 			}
+			if (forwardOn && (ev.type == InputEvent::TOUCH_DOWN || ev.type == InputEvent::TOUCH_MOVE || ev.type == InputEvent::TOUCH_UP))
+				comp.forwardTouch(ev.type == InputEvent::TOUCH_DOWN ? 0 : ev.type == InputEvent::TOUCH_MOVE ? 1 : 2,
+				                  (int)ev.x, (int)ev.y, ev.pointer);
 			if (ev.type == InputEvent::PRESS && ev.key == Key::MENU) { quickPending = true; return; }
 			if (quickPending && ev.type == InputEvent::RELEASE && ev.key == Key::MENU) { openQuick(); return; }
 			return;

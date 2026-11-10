@@ -39,6 +39,9 @@ namespace banana
 		// the menu is not over it; on/off also sends wl_keyboard/pointer enter/leave.
 		void setInputForward(bool on);
 		void forwardInput(int type, int code, int value);
+		// 3E.2b: a touchscreen becomes wl_touch; an absolute pointer becomes pointer motion + BTN_LEFT.
+		// action: 0 down, 1 motion, 2 up (surface-local px, the size the client committed at).
+		void forwardTouch(int action, int x, int y, bool pointer);
 
 		struct Impl;			// the server state, defined in compositor.cpp
 

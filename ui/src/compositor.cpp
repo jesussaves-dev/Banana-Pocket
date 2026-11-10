@@ -109,6 +109,7 @@ namespace banana
 		wl_resource* focusRes = nullptr;	// the surface the seat is focused on
 		bool focusOn = false;
 		bool inputForward = false;
+		bool touchDown = false;
 		xkb_context* xkbCtx = nullptr;
 		xkb_keymap* xkbMap = nullptr;
 		xkb_state* xkbState = nullptr;
@@ -355,6 +356,12 @@ namespace banana
 			if (focusOn && focusRes)
 			{
 				uint32_t serial = wl_display_next_serial(wl);
+				if (touchDown && touch)
+				{
+					wl_touch_send_cancel(touch);	// focus is going away mid-touch
+					if (wl_resource_get_version(touch) >= 5) wl_touch_send_frame(touch);
+					touchDown = false;
+				}
 				if (kb) wl_keyboard_send_leave(kb, serial, focusRes);
 				if (ptr)
 				{
@@ -393,10 +400,43 @@ namespace banana
 			                     value ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
 			sendMods(serial);
 		}
+		void forwardTouch(int action, int x, int y, bool pointer)	// 0 down, 1 motion, 2 up
+		{
+			if (!inputForward || !focusOn || !focusRes) return;
+			struct timespec ts;
+			clock_gettime(CLOCK_MONOTONIC, &ts);
+			uint32_t ms = (uint32_t)((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000);
+			if (pointer)
+			{
+				if (!ptr) return;
+				if (action != 2) wl_pointer_send_motion(ptr, ms, wl_fixed_from_int(x), wl_fixed_from_int(y));
+				if (action != 1)
+					wl_pointer_send_button(ptr, wl_display_next_serial(wl), ms, BTN_LEFT,
+					                       action == 0 ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED);
+				if (wl_resource_get_version(ptr) >= 5) wl_pointer_send_frame(ptr);
+				return;
+			}
+			if (!touch) return;
+			if (action == 0)
+			{
+				wl_touch_send_down(touch, wl_display_next_serial(wl), ms, focusRes, 0,
+				                   wl_fixed_from_int(x), wl_fixed_from_int(y));
+				touchDown = true;
+			}
+			else if (action == 1)
+				wl_touch_send_motion(touch, ms, 0, wl_fixed_from_int(x), wl_fixed_from_int(y));
+			else
+			{
+				wl_touch_send_up(touch, wl_display_next_serial(wl), ms, 0);
+				touchDown = false;
+			}
+			if (wl_resource_get_version(touch) >= 5) wl_touch_send_frame(touch);
+		}
 		void focusClear()
 		{
 			focusOn = false;
 			focusRes = nullptr;
+			touchDown = false;
 			kb = ptr = touch = nullptr;	// the client's resources are going away with it
 		}
 	};
@@ -677,7 +717,7 @@ namespace banana
 		void touchGone(wl_resource* r)
 		{
 			Impl* im = (Impl*)wl_resource_get_user_data(r);
-			if (im->touch == r) im->touch = nullptr;
+			if (im->touch == r) { im->touch = nullptr; im->touchDown = false; }
 		}
 		void seatGetPtr(wl_client* c, wl_resource* res, uint32_t id)
 		{
@@ -1152,5 +1192,10 @@ namespace banana
 	void Compositor::forwardInput(int type, int code, int value)
 	{
 		if (impl && type == EV_KEY) impl->forwardKey(code, value);
+	}
+
+	void Compositor::forwardTouch(int action, int x, int y, bool pointer)
+	{
+		if (impl) impl->forwardTouch(action, x, y, pointer);
 	}
 }

@@ -181,6 +181,7 @@ namespace banana
 					else if (e.type == EV_SYN && e.code == SYN_REPORT)
 					{
 						InputEvent o;	// o.screen is 0: the one panel
+						o.pointer = dv->pointer;
 						// the touchscreen reports the panel's own axes: map to those, then turn them the way the menu
 						// was turned for the panel
 						const int w = sw ? sw : pw, h = sh ? sh : ph;

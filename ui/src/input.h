@@ -19,6 +19,7 @@ namespace banana
 		Key key = Key::NONE;
 		int screen = 0;			// the RPC has one panel, so every event belongs to screen 0
 		float x = 0, y = 0;		// panel px
+		bool pointer = false;		// an absolute pointer (a tablet), not the touchscreen
 	};
 
 	class Input
