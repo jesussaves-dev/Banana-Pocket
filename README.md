@@ -4,7 +4,9 @@
 
 It boots from two A/B slots so an update never touches the system you're running, keeps its games and saves on an
 exFAT card, and draws its whole interface **by hand on the CPU**. No systemd, no PulseAudio (the sound server is
-PipeWire + WirePlumber). No compositor for the menu — just the panel, a dot grid, and a lot of gold.
+PipeWire + WirePlumber). And the menu never lets go of the screen any more: **`banana-ui` is the compositor your
+games run in**, so its cards and its own pause menu float above any game, port or video — on a hardware plane of
+their own. 🪄
 
 The menu is **Banana's own Pixel UI**: a raised bezel, a carousel of chunky square tiles, a fat gold highlight on
 whatever you're about to pick, and a cartridge that drops into a console while your game boots. It comes in five
@@ -18,8 +20,9 @@ such detective story (why the first bit of sound used to take ~20 seconds, and h
 
 ## 📸 A look at it
 
-All of these are the handheld's real 1240×1080 panel, grabbed by the QEMU boot test
-([`tools/qemu-boot.sh`](tools/qemu-boot.sh)).
+All of these are the handheld's real 1240×1080 panel — grabbed by the QEMU boot test
+([`tools/qemu-boot.sh`](tools/qemu-boot.sh)), and the pause menu straight off the device with
+[`tools/rpc-screen.sh`](tools/rpc-screen.sh).
 
 | | |
 |---|---|
@@ -28,12 +31,68 @@ All of these are the handheld's real 1240×1080 panel, grabbed by the QEMU boot 
 | ![settings](docs/screenshots/settings_thumb.png) | Settings (Start): display & sound, sleep & power, RetroArch, network, system |
 | ![update](docs/screenshots/update_thumb.png) | System > Update: a package waiting to be written to the other slot |
 | ![a game](docs/screenshots/game_thumb.png) | a Game Boy Advance game, running through RetroArch on the panel |
+| ![the pause menu](docs/screenshots/pause-menu_thumb.png) | **new:** the pause menu over a frozen game — slot 3 picked, its save-state screenshot on the right |
+
+## ⏸️ The pause menu
+
+Press the **button under the screen** in any game and it stops — properly frozen, not just muted — under a menu
+that speaks Banana instead of RetroArch. Everything you reach for mid-game is one row away; everything else is still
+in RetroArch's own menu, one more row down.
+
+| Row | What it does |
+|---|---|
+| **Resume** | back to the game, exactly where it stopped (**B** or the menu button do it too) |
+| **Save state** `< Slot 0–9 >` | pick a slot with ◀ ▶ — the right side shows that slot's screenshot and when it was saved |
+| **Load state** `< Slot 0–9 >` | the same picker; asks *Press A again* first, so a stray press can't eat your progress |
+| **Change disc** `< Disc 1/2 >` | for multi-disc games (`.m3u`): opens the tray, swaps, closes it |
+| **Fast-forward** `On / Off` | flips it without leaving the menu; it kicks in on Resume |
+| **Shader** | turns the current shader (LCD grids and friends) on or off |
+| **Achievements** `12/40` | your progress, this session's unlocks and the newest badge |
+| **Restart game** · **Quit game** | both ask *Press A again* |
+| **RetroArch menu** | the full RetroArch menu, for everything else |
+
+The header keeps an eye on the battery, the clock and how long you've been playing. Ports and BananaTube get the
+same menu with **Resume** and **Quit** — they freeze too.
+
+| Buttons in a game | |
+|---|---|
+| menu button | Banana's pause menu |
+| menu button **+ X** | RetroArch's own menu |
+| menu button **+ Start** | quit straight away |
+| menu button **+ L / R** | load / save the current state |
+| volume, power | always work — the menu never grabs them |
+
+## 🖼️ One screen, one owner
+
+The handheld's display has one output and two hardware planes. `banana-ui` keeps both for the whole session and
+games connect to it over Wayland, exactly as they would to any desktop:
+
+```mermaid
+flowchart LR
+    G["RetroArch · a port · BananaTube<br/>(Wayland clients)"] -- "frames (linear dma-buf)" --> C
+    subgraph C["banana-ui"]
+        R["EGL rotate pass<br/>landscape → portrait panel,<br/>letterboxed, bit-exact"]
+        M["menu · cards · pause menu<br/>(CPU-drawn)"]
+    end
+    R -- "primary plane" --> P[("DSI panel<br/>1080×1240")]
+    M -- "overlay plane" --> P
+```
+
+- **The game** goes through one GPU pass that turns it the right way up for the portrait-mounted panel (the plane
+  can't rotate in hardware — [measured](docs/PLAN_DRM_COMPOSITOR.md)). Any window size is letterboxed, and the pass
+  is **bit-exact**: a 1-pixel LCD grid comes out as a 1-pixel LCD grid.
+- **Banana's layer** — volume and brightness, the battery, achievements, the pause menu — sits on the overlay plane.
+  When nothing is showing, that plane is switched off entirely.
+- **Sleep** keeps the game and its graphics where they were; the panel is re-armed on wake.
+- **Escape hatch:** `compositor = "cage"` in `banana/bananad.conf` puts back the old path (games in the `cage` kiosk
+  compositor) for one more release.
 
 ## 🧩 What runs the show
 
 | Part | What it does |
 |---|---|
 | `banana-ui` | the menu: the ROCKNIXDS Pixel layout engine on a software backend, KMS dumb buffers, `inotify`-watched ROM folders |
+| `banana-ui` (compositor) | the screen's owner while you play: a single-client Wayland server on atomic KMS, the EGL rotate pass, the overlay cards and the pause menu |
 | `bananad` | the quiet one: input, sleep, battery, the mixer/volume and jack, the clock and Wi-Fi |
 | PipeWire + WirePlumber | the sound server: ACP brings the AudioReach card up from its UCM profile, and the menu and every game/app mix through it |
 | `banana-perf` | the clock profiles: `ui`, `powersave`, `balanced`, `performance` |
@@ -60,7 +119,8 @@ Twenty-one shelves, each with the emulator it needs already in the image — not
 
 **RetroAchievements** is baked in: the account from the first-time setup unlocks achievements in-game, and when you
 come back to the menu the ones you earned pop up as toasts (with the badge RetroArch fetched), with the system's
-running total on the home shelf. Press **X** on a game for its own options — the emulator and shader *that* game
+running total on the home shelf — and mid-game, the pause menu's **Achievements** row shows how far along you are.
+Press **X** on a game for its own options — the emulator and shader *that* game
 runs with, and its **save states** to browse, back up or bin.
 
 ## 🛠️ Building it
@@ -119,6 +179,7 @@ shim. About a minute instead of a full image. `--revert` (or a reboot) puts the 
 
 ```
 ui/                banana-ui: the menu (rnds engine, software Backend, KMS Display, settings, workers)
+                   and the compositor (compositor.cpp, egl_presenter.cpp: Wayland, planes, the rotate pass)
 system/bananad/    the daemon and its sleep test
 system/rootfs/     the root filesystem: init, rcS, the launchers, the sleep.d hooks
 buildroot/         the Buildroot external tree: the board, the kernel fragment, the defconfig
@@ -133,6 +194,18 @@ Idle in the menu, the menu redraws only when something changes and otherwise sle
 about once a minute. [`tools/qemu-boot.sh`](tools/qemu-boot.sh) reports memory use, each program's own CPU, and the
 CPUs' idle share from inside the VM. The menu's own cost, headless on a PC, is in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) (`make bench`).
+
+Through the compositor, on the handheld:
+
+| | |
+|---|---|
+| RetroArch on Vulkan, balanced clocks | **60.03 fps**, 0 of 932 frames dropped (under `cage`: 59.91 fps, 13 of 793) |
+| Dreamcast (Flycast, GL), 10 minutes | **59.999 fps**, no display errors |
+| the rotate pass | **0** pixels different from the game's own frame |
+| PlayStation (SwanStation), 10 minutes | 52.0 fps — still open: being compared against the same run under `cage` |
+
+The full trail — the plane probes, the rotation that the hardware refused, every measurement — is in
+[`docs/PLAN_DRM_COMPOSITOR.md`](docs/PLAN_DRM_COMPOSITOR.md).
 
 ## 📜 License
 
