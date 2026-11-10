@@ -32,7 +32,6 @@ xform() {
         -e "s#/etc/banana#$W/etc/banana#g" \
         -e "s#/data#$W/data#g" \
         -e "s#/run#$W/run#g" \
-        -e "s#/usr/bin/cage#$W/usrbin/cage#g" \
         -e "s#/proc#$W/proc#g" \
         -e "s#/sys/class/drm#$W/sys/class/drm#g" "$1"
 }
@@ -48,16 +47,6 @@ for a in "\$@"; do case "\$a" in *retroarch-account.cfg*) for f in \$(printf '%s
 exit 0
 EOF
 chmod +x "$W/retroarch"
-
-# cage's stub, found through the PATH run() sets (the launcher calls "cage", as the image does): drop its own arguments
-# and run what it would have
-cat > "$W/cage" <<EOF
-#!/bin/sh
-while [ \$# -gt 0 ] && [ "\$1" != -- ]; do shift; done
-[ \$# -gt 0 ] && shift
-exec "\$@"
-EOF
-chmod +x "$W/cage"
 
 # a clean card between scenarios
 fresh() {
@@ -82,7 +71,7 @@ echo "1. a plain system gets the shared frame, and no core's own files"
 fresh
 run gba gpsp
 [ "$(cfg video_driver)" = glcore ] && ok "video_driver is the no-SoC fallback (glcore, a Wayland client)" || bad "video_driver=$(cfg video_driver)"
-[ "$(cfg video_context_driver)" = wayland ] && ok "video_context_driver wayland (under cage)" || bad "video_context_driver=$(cfg video_context_driver)"
+[ "$(cfg video_context_driver)" = wayland ] && ok "video_context_driver wayland (a compositor client)" || bad "video_context_driver=$(cfg video_context_driver)"
 [ "$(cfg input_driver)" = udev ] && ok "input_driver udev" || bad "input_driver=$(cfg input_driver)"
 [ "$(cfg audio_driver)" = alsathread ] && ok "audio_driver alsathread" || bad "audio_driver=$(cfg audio_driver)"
 [ "$(cfg audio_latency)" = 48 ] && ok "audio_latency default" || bad "audio_latency=$(cfg audio_latency)"

@@ -19,7 +19,7 @@ mkdir -p /run/banana /var/log
 # the loopback interface: nothing else brings it up, and a program that binds 127.0.0.1 (adbd's own control socket,
 # for one) fails with EADDRNOTAVAIL without it
 ip link set lo up 2>/dev/null
-# The runtime dir the sound server (and cage) put their sockets in. Every process that plays -- the menu, the
+# The runtime dir the sound server and banana-ui's compositor put their sockets in. Every process that plays -- the menu, the
 # launchers -- has to see the same XDG_RUNTIME_DIR, or the ALSA plugin cannot find PipeWire and the open fails.
 export XDG_RUNTIME_DIR=/run/banana/wayland
 mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null; chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null

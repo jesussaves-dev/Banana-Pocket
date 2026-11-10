@@ -8,7 +8,7 @@ You are a bare-metal embedded Linux systems engineer for BananaOS on the Retroid
 - **Architecture Docs (`docs/ARCHITECTURE.md`):** NEVER read the full file or run `rg` on it. Read ONLY the exact target section via `sed -n '<range>' docs/ARCHITECTURE.md`:
   - `3,9p` = §1 Storage & A/B Update (`extlinux.conf`, `p1`-`p4`, `update apply`)
   - `11,14p` = §2 Boot & Init (built-in drivers, modules, `rcS` sequence)
-  - `16,23p` = §3 UI Engine (`banana-ui` KMS/soft renderer, workers, Apps shelf, `cage` handover)
+  - `16,23p` = §3 UI Engine (`banana-ui` KMS/soft renderer, workers, Apps shelf, game launch)
   - `25,35p` = §4 System Daemon & Power (`bananad` hotkeys, burn-in guard, `s2idle`/`deep` suspend)
   - `37,43p` = §5 Audio (`q6apm` DSP rules, PipeWire/WirePlumber, UCM, AW88166 HW volume)
   - `45,48p` = §6 Network & Services (`wpa_supplicant`, `ksmbd`, `dropbear`)
@@ -32,7 +32,7 @@ You are a bare-metal embedded Linux systems engineer for BananaOS on the Retroid
 ## 2. Hardware & Stack Invariants (RPC / SM4450)
 - **SoC & Clocks:** Qualcomm SM4450 (`policy0`: 6x Cortex-A55, `policy6`: 2x Cortex-A78). Clock profiles (`banana-perf`) MUST apply governors to BOTH policies simultaneously. GPU: Adreno `a613` (`msm` DRM + Freedreno/Turnip).
 
-- **Display & UI (`banana-ui`):** Single 1240x1080 AMOLED (`DSI-1`, `CH13726A`, DT `rotation = <90>`). `ui/src/soft.cpp` + `kms.cpp`: 640x557 logical canvas scaled 1.9375x, CPU rasterizer, dirty-rect diffing, 4x4 register transpose to 2 uncached KMS dumb buffers, vblank-synced page flips. Games run exclusively in `cage` Wayland kiosk after `banana-ui` drops DRM master and audio (`Sound::release()`).
+- **Display & UI (`banana-ui`):** Single 1240x1080 AMOLED (`DSI-1`, `CH13726A`, DT `rotation = <90>`). `ui/src/soft.cpp` + `kms.cpp`: 640x557 logical canvas scaled 1.9375x, CPU rasterizer, dirty-rect diffing, 4x4 register transpose to 2 uncached KMS dumb buffers, vblank-synced page flips. Games run as Wayland clients of `banana-ui`'s in-process compositor, which keeps DRM master; only audio is handed over (`Sound::release()`).
 
 - **Audio (`q6apm` + PipeWire + WirePlumber):** Qualcomm AudioReach (`sc8280xp`/q6apm DSP) + `WCD937x` codec + single **mono** `AW88166` I2S amp (`0-0035` on FL; `FL [on]` / `FR [off]` is normal hardware state).
   - **DSP Law:** `q6apm` ignores FE<->BE routing mixer writes (`MultiMedia1`, etc.) while that FE's PCM (`pcm0p`) is `RUNNING` and clears routes on teardown. Routes MUST be configured while PCM is `CLOSED` immediately prior to `snd_pcm_open` (handled by `buildroot/patches/pipewire/0002` re-applying the UCM verb on node open).

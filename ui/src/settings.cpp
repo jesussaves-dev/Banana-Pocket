@@ -301,7 +301,7 @@ namespace banana
 				menu, "theme", names, values);
 		}
 		add(D, "gear", "Language", "The language of the Settings screen: English, Spanish or German. The other screens follow in a later update.", menu, "lang", { "English", "Español", "Deutsch" }, { "en", "es", "de" });
-		add(D, "picture", "Brightness", "The panel's backlight: F + volume, in the menu and in a game. (A game in cage mode uses Select + volume, in 10% steps: F opens RetroArch's menu there.)", "", "",
+		add(D, "picture", "Brightness", "The panel's backlight: F + volume, in the menu and in a game.", "", "",
 			{ "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, { "100", "200", "300", "400", "500", "600", "700", "800", "900", "1000" }, Item::BRIGHTNESS);
 		add(D, "music", "Volume", "The speakers or the headphones, whichever is playing. The volume keys change it anywhere.", "", "",
 			{ "0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, { "0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100" }, Item::VOLUME);

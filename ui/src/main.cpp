@@ -1200,17 +1200,6 @@ static void irisToMenu(Display& disp, SoftBackend& be, Menu& ui)
 	iris.openOn(ui, Iris::HOLD);
 }
 
-// a game ended: the panels come back black (its pictures went with it), and the menu opens through the iris as it
-// does after the boot animation
-static void irisFromGame(Display& disp, SoftBackend& be, Menu& ui)
-{
-	Iris iris(disp, be);
-	for (int sc = 0; sc < 2; sc++) std::fill(be.canvas(sc), be.canvas(sc) + iris.n, 0xff000000u);
-	be.invalidate();
-	showFrame(disp, be, -1);
-	iris.openOn(ui, 120);
-}
-
 // The CPU's lowest clock raised to the menu's highest (banana-perf ui: schedutil up to 1416 MHz) from a press and while
 // frames change the panel, and back 300 ms after the last one. schedutil only ramps up after an animation has started, so its first
 // frames were drawn at the lowest clock, slower than the refresh allows (a
@@ -1478,7 +1467,7 @@ int main(int argc, char** argv)
 	Input input;
 	input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
 
-	// Phase 3B: the in-process Wayland server (one kiosk client; cage stays the game path). It needs the atomic
+	// Phase 3B: the in-process Wayland server (one kiosk client: the game). It needs the atomic
 	// display, so a legacy panel logs why it is off and the menu runs exactly as before.
 	if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
 	// 3E.2: keyboard-class devices reach a client on the primary; the pad and the power/volume keys stay direct.
@@ -1488,9 +1477,6 @@ int main(int argc, char** argv)
 		if (cls == InputClass::KEYBOARD) comp.forwardInput(type, code, value);
 	};
 
-	// 4.1: a game runs as a client of this process by default; compositor = "cage" in bananad.conf is the
-	// one-release escape hatch back to the kiosk launcher (the launchers read the same key).
-	const bool residentGames = getConfValue(o.data + "/bananad.conf", "compositor", "ui") != "cage";
 	Repeat rep;
 	bool dirty = true, quit = false, drawn = false;	// drawn: a frame on the canvas waiting for the flips
 	bool gameWas = false;	// a Wayland client owned the primary last pass: the menu is restored when it goes
@@ -1543,7 +1529,7 @@ int main(int argc, char** argv)
 	pid_t gamePid = -1;
 	double gameStart = 0;
 	int gameIndex = -1;
-	bool gameResident = false, gameRA = false;
+	bool gameRA = false;
 	be.overlay = [&](int screen)
 	{
 		if (screen != 0) return;
@@ -1988,8 +1974,7 @@ int main(int argc, char** argv)
 		}
 	};
 
-	// 4.1: a game under the in-process compositor stays a client of this process, so the menu loop reaps it and
-	// runs the same finish path a cage game does.
+	// a game is a client of this process: the menu loop reaps it and runs this
 	auto finishGame = [&](int status)
 	{
 		closeQuick();	// a game that ends (or crashes) under the pause menu must not leave the pad grabbed
@@ -1999,23 +1984,9 @@ int main(int argc, char** argv)
 		logf("game ended after %ld s (status %d)", secs, status);
 		unlink("/run/banana/game.pid");
 		unlink("/run/banana/game.path");
-		if (!gameResident)
-		{
-			// take the panel back: a game (or its compositor) may still be letting go of the DRM master, so retry and
-			// say why if it never comes back (a black screen with the menu running under it is exactly this failure)
-			int tries = 0;
-			while (!disp.openSingle(o.top, err) && tries < 400) { if (!tries) logf("panel reopen: %s (retrying)", err.c_str()); sleepUs(50000); tries++; }
-			logf("panel %s after the game (%d tries)", disp.isOpen() ? "back" : "STILL CLOSED", tries);
-			be.invalidate();
-			input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
-			if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
-		}
-		else
-		{
-			be.invalidate();	// the compositor kept the panel; the menu is drawn again when the client goes
-			drawn = false;
-			dirty = true;
-		}
+		be.invalidate();	// the compositor kept the panel; the menu is drawn again when the client goes
+		drawn = false;
+		dirty = true;
 		std::lock_guard<std::mutex> l(worker.uiLock);
 		{
 			const char* PROGRESS = "/run/banana/ra-progress";	// "<unlocked> <total>", from the emulator (docs/EMULATORS.md)
@@ -2043,7 +2014,6 @@ int main(int argc, char** argv)
 		}
 		ui->dataChanged();
 		ui->setLibrary(lib.currentShelf(), game);
-		if (!gameResident && disp.isOpen()) irisFromGame(disp, be, *ui);
 		sound.setBgm(settings["bgm"] != "off");	// the ambient loop comes back with the menu
 		sound.warm();				// the game handed the DSP frontend back: have it open before the next press
 		// a game that ended because it was quit goes back to a menu the next boot should show too; one a shutdown
@@ -2054,7 +2024,6 @@ int main(int argc, char** argv)
 		batteryDue = true;	// a step passed during the game shows now
 		gamePid = -1;
 		gameIndex = -1;
-		gameResident = false;
 		gameRA = false;
 	};
 
@@ -2065,10 +2034,8 @@ int main(int argc, char** argv)
 		const SystemDef& sd = lib.systemOf(game);
 		std::string rom = lib.gameAt(game).path;
 		std::string cmd = replaceAll(replaceAll(sd.run, "%ROM%", shellQuote(rom)), "%SYSTEM%", shellQuote(sd.id));
-		// 4.1: every launcher runs as a client of this process (the EGL presenter letterboxes and rotates any window
-		// size); compositor = "cage" in bananad.conf hands the panel over instead.
-		bool resident = residentGames;
-		logf("starting %s%s: %s", sd.id.c_str(), resident ? " (resident)" : "", cmd.c_str());
+		// every launcher runs as a client of this process (the EGL presenter letterboxes and rotates any window size)
+		logf("starting %s (resident): %s", sd.id.c_str(), cmd.c_str());
 		{
 			std::ofstream f(o.data + "/last-system");
 			f << ui->systemIndex() << "\n";
@@ -2078,12 +2045,6 @@ int main(int argc, char** argv)
 		sound.release();
 		boost.release();
 		forgetDecoded();
-		if (!resident)
-		{
-			input.close();
-			comp.stop();	// a Wayland client's buffers belong to the closing DRM fd
-			disp.close();
-		}
 		drawn = false;	// the menu is drawn afresh when the panel comes back
 		rep.key = Key::NONE;
 		if (system(("banana-perf " + shellQuote(sd.perf.empty() ? "balanced" : sd.perf)).c_str()) != 0) {}
@@ -2097,12 +2058,6 @@ int main(int argc, char** argv)
 		{
 			// the panel, input and sound were handed over above: take them back rather than pretend a game ran
 			logf("fork failed: %s", strerror(errno));
-			if (!resident)
-			{
-				for (int tries = 0; !disp.openSingle(o.top, err) && tries < 100; tries++) sleepUs(50000);
-				input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
-				if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
-			}
 			be.invalidate();
 			sound.setBgm(settings["bgm"] != "off");
 			sound.warm();
@@ -2128,14 +2083,12 @@ int main(int argc, char** argv)
 			execl("/bin/sh", "sh", "-c", cmd.c_str(), (char*)nullptr);
 			_exit(127);
 		}
-		int status = 0;
 		if (pid > 0)
 		{
 			std::ofstream("/run/banana/game.pid") << pid << "\n";	// bananad: the game to pause before a sleep
 			std::ofstream("/run/banana/game.path") << rom << "\n";	// ... and to resume if a shutdown interrupts it
 			gameIndex = game;
 			gameStart = start;
-			gameResident = resident;
 			gameRA = sd.run.find("run-retroarch") != std::string::npos;
 			gameRom = rom;
 			raQueue.clear();
@@ -2145,13 +2098,7 @@ int main(int argc, char** argv)
 			discs = discCount(rom);
 			discNow = 1;
 			ffOn = false;
-			if (resident)
-			{
-				gamePid = pid;	// the main loop reaps it; the compositor keeps drawing
-				return;
-			}
-			while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-			finishGame(status);
+			gamePid = pid;	// the main loop reaps it; the compositor keeps drawing
 		}
 	};
 

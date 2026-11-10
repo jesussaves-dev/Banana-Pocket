@@ -4,10 +4,9 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
 ## Recommended next (in order)
 0.6.0 shipped the in-process compositor, the pause menu and the polish around it (see *Done*). Next:
 1. **Close out the compositor** (`docs/PLAN_DRM_COMPOSITOR.md`). Done 2026-11-10: the PSX pacing question (60 fps
-   emulated on both paths, 0 presented drops -- see T6) and **Change disc** (T9). Left: the menu-button combos by hand
-   (menu, menu + X, menu + Start on the real pad -- a uinput pad cannot reach RetroArch's hotkeys), then, one release
-   after 0.6.0 with no field reports, remove `cage` and `wlroots` from the image (T7) and update `ARCHITECTURE.md`
-   §3/§4 (T8).
+   emulated on both paths, 0 presented drops -- see T6) and **Change disc** (T9). `cage` and `wlroots` are out of the tree for
+   the next release (T7/T8; waiting on an image build and the unit). Left: the menu-button combos by hand (menu,
+   menu + X, menu + Start on the real pad -- a uinput pad cannot reach RetroArch's hotkeys).
 2. **Bluetooth** -- designed and planned, not built (see *In progress*): a bespoke no-D-Bus agent for Classic pads,
    blocked on a Classic controller to test with.
 

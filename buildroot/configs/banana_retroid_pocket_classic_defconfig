@@ -103,15 +103,14 @@ BR2_PACKAGE_VULKAN_TOOLS=y
 BR2_PACKAGE_MESA3D_OPENGL_EGL=y
 BR2_PACKAGE_MESA3D_OPENGL_ES=y
 BR2_PACKAGE_SDL2=y
-# cage: a kiosk Wayland compositor for the games, so the panel's turn (its "panel orientation" property, which
-# wlroots reads) is applied once to everything -- RetroArch's menu, its OSD and any other app -- instead of a
-# per-driver rotation patch.
-BR2_PACKAGE_CAGE=y
+# Wayland: banana-ui is the compositor (libwayland-server) and every game, port and app is its client. Named here
+# because SDL2's Wayland driver only depends on it, and nothing else selects it.
+BR2_PACKAGE_WAYLAND=y
 BR2_PACKAGE_SDL2_KMSDRM=y
 BR2_PACKAGE_SDL2_OPENGLES=y
-# SDL2 on Wayland too: the ports (PortMaster's menu and the games) run under cage, like a game under RetroArch, so
-# cage turns the output with the panel's "panel orientation" -- the KMSDRM driver (kept for a card with no cage)
-# renders in the panel's own portrait shape and cannot be turned.
+# SDL2 on Wayland too: the ports (PortMaster's menu and the games) are banana-ui's clients, like a game under
+# RetroArch, so banana-ui turns the picture -- the KMSDRM driver renders in the panel's own portrait shape and cannot
+# be turned.
 BR2_PACKAGE_SDL2_WAYLAND=y
 # SDL2's Wayland driver builds an XKB context (xkbcommon) to translate keycodes; without the XKB data files it fails
 # with "Failed to create XKB context" and the app gets a black screen (PortMaster did). xkeyboard-config is that data

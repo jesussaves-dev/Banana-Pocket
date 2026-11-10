@@ -4,8 +4,8 @@
 // on the primary (the menu overlay is hidden while it runs). Phase 3C replaces the direct scanout with an EGL
 // rotation into a linear buffer; the seam for that is Display::presentGame().
 //
-// This is not a second executable, not a general-purpose compositor, and not the game launch path: cage stays the
-// default and this server is only reached by a client that connects to /run/banana/wayland/banana-0.
+// This is not a second executable and not a general-purpose compositor: the launchers' games, ports and apps are its
+// clients, on /run/banana/wayland/banana-0.
 #include <cstdint>
 #include <string>
 #include "kms.h"

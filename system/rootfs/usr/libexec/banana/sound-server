@@ -12,7 +12,7 @@
 #   sound-server down     stop both
 #   sound-server status   what is running and what the server sees
 #
-# The runtime dir is the one cage already uses, so a game under cage finds this socket too. It has to be 0700.
+# The runtime dir is the one banana-ui's compositor uses, so a game finds this socket too. It has to be 0700.
 RUNDIR=/run/banana/wayland
 LOG=/data/banana/logs/sound-server.log
 

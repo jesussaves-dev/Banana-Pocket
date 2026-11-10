@@ -63,7 +63,7 @@
   "Language": "Sprache",
   "The language of the Settings screen: English, Spanish or German. The other screens follow in a later update.": "Die Sprache der Einstellungen: Englisch, Spanisch oder Deutsch. Die übrigen Bildschirme folgen in einem späteren Update.",
   "Brightness": "Helligkeit",
-  "The panel's backlight: F + volume, in the menu and in a game. (A game in cage mode uses Select + volume, in 10% steps: F opens RetroArch's menu there.)": "Die Hintergrundbeleuchtung: F + Lautstärke, im Menü und im Spiel. (Ein Spiel im cage-Modus nutzt Select + Lautstärke, in 10-%-Schritten: dort öffnet F das RetroArch-Menü.)",
+  "The panel's backlight: F + volume, in the menu and in a game.": "Die Hintergrundbeleuchtung: F + Lautstärke, im Menü und im Spiel.",
   "Volume": "Lautstärke",
   "The speakers or the headphones, whichever is playing. The volume keys change it anywhere.": "Die Lautsprecher oder die Kopfhörer, je nachdem was spielt. Die Lautstärketasten ändern es überall.",
   "Menu sounds": "Menütöne",

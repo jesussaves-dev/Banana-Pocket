@@ -676,7 +676,7 @@ namespace banana
 					struct wl_array states;
 					wl_array_init(&states);
 					if (uint32_t* st = (uint32_t*)wl_array_add(&states, sizeof *st)) *st = XDG_TOPLEVEL_STATE_ACTIVATED;
-					// fullscreen, as cage says: SDL2 ignores the size of a non-resizable window's configure unless the
+					// fullscreen, as a kiosk compositor says: SDL2 ignores the size of a non-resizable window's configure unless the
 					// state is fullscreen (BananaTube stayed 1024x768 without it)
 					if (uint32_t* st = (uint32_t*)wl_array_add(&states, sizeof *st)) *st = XDG_TOPLEVEL_STATE_FULLSCREEN;
 					xdg_toplevel_send_configure(s->top, kClientFormatW, kClientFormatH, &states);
@@ -1156,7 +1156,7 @@ namespace banana
 		}
 		impl = im;
 		// bananad uses this to write the 3D card file instead of the launcher/OSD paths while the compositor owns
-		// the panel. Absent during a cage game or when the compositor is off.
+		// the panel. Absent when the compositor is off.
 		if (FILE* f = fopen("/run/banana/compositor", "w")) { fputs("banana-ui\n", f); fclose(f); }
 		logf("wayland-0 at %s/%s (xdg-shell 1, linux-dmabuf 4 linear, wl_drm; primary %s; presenter %s)",
 		     kWaylandDir, kSocket, im->devName, im->presenter->name());

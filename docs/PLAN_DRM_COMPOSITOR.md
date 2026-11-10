@@ -43,6 +43,7 @@ any window size is letterboxed and rotated (T2, T4).
 | F12 | Any source size is letterboxed + rotated by `fitRotated` (`rotate.h`); DirectPresenter is now only the `3c-direct` escape hatch. Readback: 640×480 → viewport 75,0 930×1240, same corner orientation as 1240×1080. | T2 |
 | F13 | The toplevel configure must carry `XDG_TOPLEVEL_STATE_FULLSCREEN`: without it SDL2 keeps a non-resizable window at its creation size (BananaTube 1024×768). With it BananaTube, Celeste Classic and RetroArch all render 1240×1080 with no cage. | T4 |
 | F14 | Cause of F11: the rotate shader was `precision mediump` (fp16 on Adreno); under `GL_NEAREST` ~1 source column in 12 sampled its neighbour (104,986 px of a GBA frame wrong). `highp` makes the pass bit-exact (0 px). Diagnostic: `touch /run/banana/3c-dump-now` writes `/data/3c-src.ppm` + `/data/3c-dst.ppm`; dst must equal `numpy.rot90(src, 3)`. | T1/T3 |
+| F15 | A menu wake must not close the DRM fd: a child holding an inherited dup of it keeps the old master alive, every reopen gets `EACCES` and the panel stays dark (T5's cycles all had a game running, the other branch). Reproduced with a surviving port. The wake now restores on the same fd, and the presenter's dup is close-on-exec. | 2026-11-10 |
 | F11 | Slang shaders and RetroArch overlays/bezels glitch on the compositor path (reported, not characterised). | `575cddb` |
 
 ## 3. Code map
@@ -152,14 +153,14 @@ Scoped to what the 4.2 changes (872ce06) can break. Record results in `docs/repo
   path change); burn-in guard (only the user's separate uncommitted edit touches it); A/B update / Previous
   version (untouched; exercised by the next release install); `make -s test` + `make bench` (passed 2026-11-10).
 
-### T7 — Remove cage (next release after T6) · `TODO` · needs: T6 **and** one released image with T4
+### T7 — Remove cage (next release after T6) · `CODE DONE (2026-11-10, gate waived by the user; awaiting image + unit checks)` · needs: T6 **and** one released image with T4
 - **files:** `buildroot/configs/banana_retroid_pocket_classic_defconfig` (`BR2_PACKAGE_CAGE` and its comments
   106-113), the `cage` branches in the three launchers, `compositor-mode`, `/run/banana/cage.pid` users in
   bananad, the QEMU boot expectation (**ask the user first**: `tools/qemu-boot.sh` has their local changes).
 - **verify:** `make -s`; image file list has no `cage`/`libwlroots`; QEMU boot test passes; T6 items 1, 3, 9 again.
 - **stop if:** anything else links `wlroots` → report the package, STOP.
 
-### T8 — Docs · `TODO` · needs: T7
+### T8 — Docs · `CODE DONE with T7; set the header to Done after T7's checks` · needs: T7
 `docs/ARCHITECTURE.md` §3 (`sed -n '16,23p'`) and §4 (`25,35p`): the handover is gone, banana-ui owns DRM;
 README "What runs the show": drop cage; `docs/ROADMAP.md`: mark done with T6's numbers;
 `system/rootfs/etc/banana/retroarch.cfg`: note the socket is banana-ui's (`banana-0`). Then set this plan's

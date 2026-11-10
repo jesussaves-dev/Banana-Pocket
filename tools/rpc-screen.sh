@@ -13,7 +13,7 @@
 #                                        tools/rpc-screen.sh -w | mpv -
 #   tools/rpc-screen.sh -w -n 20       the same, but stop after 20 frames (default: until stopped)
 #
-# The menu has to be showing: with a game running, cage owns the panel and banana-ui has no frame to give.
+# The menu has to be showing: with a game running, the primary plane is the game's and banana-ui has no menu frame to give.
 set -e
 H=${RPC_HOST:-root@169.254.170.2}
 # Multiplexed: a stream is one process per frame otherwise, and a fresh handshake each time is most of the frame's

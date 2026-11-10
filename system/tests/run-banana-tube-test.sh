@@ -5,7 +5,7 @@
 #      corners in the app surface's own 1240x1080 space (the client's `touch` selftest lines cover this);
 #   2. the search parsers: the InnerTube `videoRenderer` walk and the yt-dlp `--print` line split;
 #   3. the launcher: `run-bananatube` must play through the sound server's ALSA `default` (PipeWire mixes it with the
-#      menu), on the display the menu releases (cage) -- the contract run-retroarch has, checked the same way.
+#      menu), as a client of the menu's compositor -- the contract run-retroarch has, checked the same way.
 #
 # The client selftest runs under SDL's dummy driver (no panel here): the run stops before the event loop.
 #   system/tests/run-banana-tube-test.sh
@@ -63,8 +63,8 @@ L=$ROOT/system/rootfs/usr/libexec/banana
 [ -x "$L/run-bananatube" ] && ok "launcher present" || bad "no run-bananatube"
 grep -q 'SDL_AUDIODRIVER:=alsa' "$L/run-bananatube" && ok "ALSA through the sound server's default (mixes with the menu)" || bad "no ALSA audiodriver default"
 ! grep -qE 'hw:0,[12]|asoundrc' "$L/run-bananatube" && ok "no second frontend pinned (the server owns the card)" || bad "still pins a raw frontend"
-grep -q 'SEATD_VTBOUND=0' "$L/run-bananatube" && ok "cage's seat is not VT-bound" || bad "seatd VT bound not set"
-grep -q 'cage --' "$L/run-bananatube" && ok "runs under cage (the kiosk compositor turns the panel)" || bad "no cage"
+grep -q 'WAYLAND_DISPLAY=banana-0' "$L/run-bananatube" && ok "a client of banana-ui's compositor" || bad "not on the compositor's socket"
+! grep -qE '(^|[[:space:]])cage[[:space:]]+--' "$L/run-bananatube" && ok "no cage" || bad "still runs cage"
 
 echo "3. the app is on the shelf: a manifest that banana-ui scans, and the client it names"
 if [ -f "$APP/app.json" ]; then

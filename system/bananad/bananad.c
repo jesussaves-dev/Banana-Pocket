@@ -342,7 +342,7 @@ static pid_t ui_pid(void)
 }
 
 /* while banana-ui's compositor owns the panel it writes the 3D card file; the menu turns it into an overlay above a
- * client. A cage game or a stopped compositor keeps the existing OSD/SHOW_MSG paths. */
+ * client. A stopped compositor keeps the existing OSD/SHOW_MSG paths. */
 static int compositor_on(void) { return access("/run/banana/compositor", F_OK) == 0; }
 /* the menu's quick menu is up: the pad is grabbed, so its F-combos (F+B analog, F+volume backlight) are suspended
  * while power and a single volume key keep working */
@@ -804,14 +804,6 @@ static void suspend_now(const char *why)
 	backlights_power(1);
 	sleep_quiet_end();
 	if (pg > 0) kill(-pg, SIGCONT);
-	/* The compositor's output too: a panel its driver disabled on the way down can come back dark, with cage's
-	 * frames going nowhere, and only a modeset clears it. cage has no session manager to hear that the system
-	 * slept (Banana's seat is deliberately not VT-bound), so it re-modesets on SIGUSR1 -- the pid run-retroarch
-	 * wrote when it started it. */
-	{
-		pid_t cg = pid_of("/run/banana/cage.pid");
-		if (cg > 0) kill(cg, SIGUSR1);
-	}
 	pid_t ui = ui_pid();
 	if (ui && (!game || compositor_on())) kill(ui, SIGUSR1);	/* draws the panel again (the clock and the battery moved on); a resident game needs the re-modeset too */
 	double t_back = mono();
@@ -1468,7 +1460,7 @@ static int hud_on(void) { return cfg.hud && pid_of(game_pid_path) > 0; }
 static int hud_show(const char *text)
 {
 	/* under banana-ui's compositor the card on the overlay plane is the one place it shows (RetroArch's own message
-	 * box would say it a second time); under cage it is RetroArch's message box, as before */
+	 * box would say it a second time); with the compositor off it is RetroArch's message box */
 	if (compositor_on()) { if (cfg.hud) overlay_show("hud", text, "", "", 3000); return 0; }
 	if (!hud_on()) return 0;
 	char line[256];
@@ -1626,7 +1618,7 @@ static void volume(int dir)
 	/* The level is shown by whoever owns the panel: the menu gets its pill (banana-ui's OSD, which it is drawing),
 	 * a game gets the same number in RetroArch's message box, written to the FIFO the launcher already hears. The
 	 * volume itself is one amplifier level either way. */
-	/* over banana-ui's compositor (menu or game) the level pill on the overlay plane; a game under cage gets the line
+	/* over banana-ui's compositor (menu or game) the level pill on the overlay plane; with the compositor off a game gets the line
 	 * in RetroArch's message box. "On-screen info while playing" off keeps a game's screen clear either way. */
 	int game = pid_of("/run/banana/game.pid") > 0;
 	if (game && !compositor_on()) { char b[96]; hud_fmt(HUD_VOLUME, pct, b, sizeof b); hud_show(b); }
@@ -2136,7 +2128,7 @@ static void handle(const struct input_event *e)
 		break;
 	/* F (MODE) + volume is the backlight, in the menu and in a game under banana-ui's compositor, in steps down to a
 	 * 2% night-mode floor: there MODE is Banana's pause menu, which opens on MODE's release and not after a combo.
-	 * A game under cage keeps Select + volume (MODE is RetroArch's own menu there, which would cover the pill), and
+	 * With the compositor off a game keeps Select + volume (MODE is RetroArch's own menu there, covering the pill), and
 	 * F + volume is left alone in it rather than silently changing the level behind that menu. */
 	case KEY_VOLUMEUP:
 	case KEY_VOLUMEDOWN:

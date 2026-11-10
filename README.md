@@ -84,8 +84,6 @@ flowchart LR
 - **Banana's layer** — volume and brightness, the battery, achievements, the pause menu — sits on the overlay plane.
   When nothing is showing, that plane is switched off entirely.
 - **Sleep** keeps the game and its graphics where they were; the panel is re-armed on wake.
-- **Escape hatch:** `compositor = "cage"` in `banana/bananad.conf` puts back the old path (games in the `cage` kiosk
-  compositor) for one more release.
 
 ## 🧩 What runs the show
 
@@ -202,7 +200,7 @@ Through the compositor, on the handheld:
 | RetroArch on Vulkan, balanced clocks | **60.03 fps**, 0 of 932 frames dropped (under `cage`: 59.91 fps, 13 of 793) |
 | Dreamcast (Flycast, GL), 10 minutes | **59.999 fps**, no display errors |
 | the rotate pass | **0** pixels different from the game's own frame |
-| PlayStation (SwanStation), 10 minutes | 52.0 fps — still open: being compared against the same run under `cage` |
+| PlayStation (SwanStation) | **60.22 fps** emulated (60.01 under `cage`); 1800 of 1800 frames presented, 0 dropped |
 
 The full trail — the plane probes, the rotation that the hardware refused, every measurement — is in
 [`docs/PLAN_DRM_COMPOSITOR.md`](docs/PLAN_DRM_COMPOSITOR.md).

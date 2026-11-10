@@ -12,7 +12,7 @@ for a in $(cat /proc/cmdline); do
     esac
 done
 [ "$LOG" != /dev/console ] && [ -f $LOG ] && mv -f $LOG $LOG.1
-# The runtime dir the sound server (and cage) put their sockets in. The menu plays through PipeWire now (bananad
+# The runtime dir the sound server and banana-ui's compositor put their sockets in. The menu plays through PipeWire now (bananad
 # points ALSA's "default" at it), and the ALSA plugin finds it only through this variable -- inittab starts this
 # script, so rcS's own export is not inherited.
 export XDG_RUNTIME_DIR=/run/banana/wayland

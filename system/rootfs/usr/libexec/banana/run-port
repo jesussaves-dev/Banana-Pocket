@@ -3,11 +3,10 @@
 # is the "PortMaster" entry: its release (kept in the image) is put on the card the first time, and it updates itself
 # there.
 #
-# The port runs under **cage** (a kiosk Wayland compositor: one application, fullscreen), exactly as a game runs under
-# RetroArch: cage turns the output with the panel's own "panel orientation" property, so the port's SDL window comes
-# out upright on this handheld's portrait-native panel (1080x1240) instead of a quarter turn off. That is why SDL2 is
-# built with its Wayland driver; the KMSDRM driver renders in the panel's own shape and has no way to turn (kept only
-# for a card without cage). Ports' files and settings go under /data/home, not the read-only root.
+# The port is a Wayland client of banana-ui's compositor, exactly as a game under RetroArch is: banana-ui rotates its
+# frame, so the port's SDL window comes out upright on this handheld's portrait-native panel (1080x1240) instead of a
+# quarter turn off. That is why SDL2 is built with its Wayland driver; the KMSDRM driver renders in the panel's own
+# shape and has no way to turn. Ports' files and settings go under /data/home, not the read-only root.
 #   run-port <script>
 P=/data/roms/ports
 if [ ! -f $P/PortMaster/PortMaster.sh ] && [ -f /usr/share/banana/portmaster/PortMaster.zip ]; then
@@ -60,14 +59,10 @@ export PYSDL2_DLL_PATH=/usr/lib
 # 0 SOUTH, 1 EAST, 2 NORTH, 3 WEST, 4 TL, 5 TR, 6 TL2, 7 TR2, 8 SELECT, 9 START, 10 MODE, 11/12 THUMBL/R, 13..16 D-pad.
 export SDL_GAMECONTROLLERCONFIG="$SDL_MAP"
 cd "$(dirname "$1")"
-# cage puts its socket here: a private, 0700 runtime dir on tmpfs.
+# banana-ui's compositor has its socket here: a private, 0700 runtime dir on tmpfs.
 export XDG_RUNTIME_DIR=/run/banana/wayland
 mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null; chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null
-# cage's seat (libseat's builtin backend, seatd, in this process) must not be VT-bound: this kernel has no virtual
-# terminals, and the kernel's own VT switch on suspend would wait for cage to release a VT that does not exist
-# while bananad has the port's whole process group SIGSTOPped -- the suspend would never return.
-export SEATD_VTBOUND=0
-# SDL2 under cage draws through the Wayland video driver (KMSDRM would fight cage for DRM master). SDL picks
+# SDL2 draws through the Wayland video driver (KMSDRM would fight banana-ui for DRM master). SDL picks
 # Wayland when WAYLAND_DISPLAY is set, but a port's own script may set SDL_VIDEODRIVER: set here as the default,
 # so a port that insists on KMSDRM by hand keeps its own. Audio stays ALSA "default", which is PipeWire through
 # /run/banana/asound.conf (there is no PulseAudio).
@@ -75,20 +70,10 @@ export SEATD_VTBOUND=0
 : "${SDL_AUDIODRIVER:=alsa}"; export SDL_AUDIODRIVER
 # the port in its own session (its process group = $C): a quit from the menu, and the port's end, reach everything it
 # started. PortMaster's script runs its menu (python3 pugwash) as a child: a TERM to the script alone left that
-# running, holding the display, and the menu's next game got no panel. "ui" runs it directly as a client of
-# banana-ui's compositor; "cage" is the escape hatch.
-MODE=$(/usr/libexec/banana/compositor-mode)
-if [ "$MODE" = ui ]; then
-    export WAYLAND_DISPLAY=banana-0	# the in-process compositor's socket
-    setsid bash "$1" &
-    C=$!
-else
-    setsid cage -- bash "$1" &
-    C=$!
-    # bananad's SIGUSR1 on the way out of a sleep goes here (bananad reads the file): cage re-modesets its output,
-    # because a panel its driver turned off on the way down comes back dark and only a modeset clears it.
-    echo $C > /run/banana/cage.pid
-fi
+# running, holding the display, and the menu's next game got no panel.
+export WAYLAND_DISPLAY=banana-0	# the in-process compositor's socket
+setsid bash "$1" &
+C=$!
 trap 'kill -TERM -$C 2>/dev/null' TERM INT HUP
 wait $C; S=$?
 while kill -0 $C 2>/dev/null; do wait $C; S=$?; done
@@ -98,5 +83,4 @@ if kill -0 -$C 2>/dev/null; then
     for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 -$C 2>/dev/null || break; sleep 0.2; done
     kill -KILL -$C 2>/dev/null
 fi
-rm -f /run/banana/cage.pid
 exit $S
