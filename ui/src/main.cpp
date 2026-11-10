@@ -1830,10 +1830,11 @@ int main(int argc, char** argv)
 			logf("resume: launching %s", resumeRom.c_str());
 			resumeDue = 0;
 		}
-		// the burn-in guard: dim the panel to a night level after 90 s idle, turn it off after 180 s -- but never
-		// blank it while on the charger (a dark panel on the cable read as a sleep)
+		// the burn-in guard is the menu's: dim after bananad.conf's dim_minutes, blank 90 s later -- but never while a
+		// game is on screen (Settings > Sleep & power promises that; a client's picture is not menu idle, and a video
+		// would go dark) and never blank it while on the charger (a dark panel on the cable read as a sleep)
 		guard.setCharging(lib.charging());
-		if (guard.tick(now, &sound) && guard.stage() == 2) sound.setBgm(false);	// blanked: let the sound device go too
+		if (!comp.clientOnScreen() && guard.tick(now, &sound) && guard.stage() == 2) sound.setBgm(false);	// blanked: let the sound device go too
 		// 3E.2: keys reach the client only while it owns the primary, the quick menu is down and the guard is awake
 		bool fwd = comp.clientOnScreen() && !quickMenu && guard.stage() == 0;
 		if (fwd != forwardOn) { forwardOn = fwd; comp.setInputForward(fwd); }
@@ -2068,8 +2069,9 @@ int main(int argc, char** argv)
 			if (timeout < 0 || left < timeout) timeout = left;
 		}
 		{
-			// ms until the burn-in guard's next step (dim at 90 s, blank at 180 s)
-			int g = guard.nextMs(now);
+			// ms until the burn-in guard's next step (dim after dim_minutes, blank 90 s later). Not while a game is on
+			// screen: tick() is skipped then, so an overdue deadline would clamp to 1 ms and spin poll() all game long
+			int g = comp.clientOnScreen() ? -1 : guard.nextMs(now);
 			if (g >= 0 && (timeout < 0 || g < timeout)) timeout = g;
 		}
 		if (resumeDue > 0)
