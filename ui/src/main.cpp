@@ -2035,6 +2035,7 @@ int main(int argc, char** argv)
 		addFd(comp.wlFd());
 		nf = input.fillFds(fds, nf, (int)(sizeof fds / sizeof fds[0]));
 		if (timeout == 0) timeout = 1;	// a deadline that is due is handled above; never spin on poll(2)
+		comp.flush();	// releases/callbacks/input queued since the last dispatch must go out before we block
 		int n = poll(fds, nf, timeout);
 		if (n == 0 && !want) dirty = true;	// the engine's next step is due
 		if (n <= 0) continue;

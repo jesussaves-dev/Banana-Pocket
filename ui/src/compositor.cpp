@@ -1147,6 +1147,11 @@ namespace banana
 		frame();
 	}
 
+	void Compositor::flush()
+	{
+		if (impl) wl_display_flush_clients(impl->wl);
+	}
+
 	void Compositor::vblank()
 	{
 		if (impl) impl->vblank();

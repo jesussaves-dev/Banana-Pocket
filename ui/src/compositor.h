@@ -29,6 +29,7 @@ namespace banana
 
 		int wlFd() const;		// the Wayland event loop's fd for the main poll(), -1 when stopped
 		void dispatch();		// drain Wayland events and flush replies
+		void flush();			// send queued events (releases, callbacks, input) before blocking in poll
 		void vblank();			// a page flip completed: release the scanned buffer, fire its callback
 		void frame();			// present the latest committed client frame when no flip is in flight
 		void setOverlayFb(uint32_t fb);	// the 3D card over a client frame on the primary (0 hides it)
