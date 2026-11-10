@@ -2119,6 +2119,7 @@ int main(int argc, char** argv)
 	bool cheevosSeen = true;	// /run/banana/cheevos: the achievements a game just unlocked, read on this pass
 	bool shotWanted = false;	// /run/banana/screen.req: write the frame to screen.jpg on this pass (below)
 	bool overlaySeen = true;	// /run/banana/overlay: a 3D card over the client on the primary
+	int nightSettle = 0;	// a saved night light set before the menu's first flip does not reach the DSPP: 1 = flip queued, 2 = re-set
 	if (resume == Resume::Ready) resumeDue = nowMs() + 500;	// a short window: the game is the point
 	while (!quit)
 	{
@@ -2316,6 +2317,7 @@ int main(int argc, char** argv)
 			drawn = true;
 			dirty = false;
 		}
+		if (nightSettle == 1 && !disp.flipPending()) { nightSettle = 2; nightLight(); }
 		if (drawn && disp.isOpen() && !disp.flipPending() && !comp.gameActive() && !comp.clientOnScreen())
 		{
 			const uint32_t* scr[2] = { be.pixels(0), be.pixels(1) };
@@ -2324,6 +2326,7 @@ int main(int argc, char** argv)
 			bool flipped = disp.present(scr, dmg);
 			fstat.present(t0, nowMs() - t0);
 			drawn = false;
+			if (flipped && nightSettle == 0) nightSettle = 1;
 			// a frame that changed nothing on the panels flips nothing, so no flip event paces the next one: it waits a
 			// refresh instead (an animation that draws the same pixels, a picture still loading, ran this loop at
 			// 400-900 frames a second on one core)

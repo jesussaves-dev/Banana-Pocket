@@ -12,19 +12,6 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
 
 ## In progress
 
-- **Night light: games covered since 0.6.0 (mechanism verified 2026-11-10; one look left).** Read with a libdrm probe
-  on the unit, the CRTC's `GAMMA_LUT` blob `banana-ui` sets stays the same blob (61, 1024 entries) in the menu, during
-  a game under the compositor and after it -- nothing replaces it the way cage did, so the warm table applies to the
-  game. Left: turn Night light on and look at a game once, then move this to *Done*. *(The 2026-11-08 notes, for
-  cage:)* The menu half ships: `night_light = off|warm|warmer`
-  (Settings > Display & sound) writes a gamma LUT from `kms.cpp`, verified on the panel. **Games are not covered**:
-  cage's wlroots gamma control accepts the ramp (`gamma_size 1024`, no `failed`), but the CRTC's `GAMMA_LUT` property
-  stays 0 during play — the menu's own blob is what the DPU honours. Tried and set aside: a Wayland gamma client
-  (`banana-gamma`, piped/memfd table, one control per output) and `WLR_DRM_NO_ATOMIC=1` with the legacy table (array
-  reads warm, no visible tint); a colour shader conflicts with the bezel rule that disables shaders for GB/GBC/GBA and
-  with a game's own shader. Pick-up paths: a cage/wlroots patch that sets the property after its commits (needs
-  approval), or a colour-only shader with the bezel rule narrowed. No spec written; the experiment notes are in this
-  entry.
 - **Bluetooth: designed, not built (2026-11-08).** Stack chosen by request: a bespoke `banana-bt` over the kernel
   mgmt API, a small SDP client and `hidp` — no D-Bus, no BlueZ, no udev; Bluetooth Classic HID only. Design:
   `docs/superpowers/specs/2026-11-08-bluetooth-design.md`; plan (9 tasks): `docs/superpowers/plans/2026-11-08-bluetooth.md`.
@@ -288,6 +275,11 @@ accessibility / in-menu log viewer / battery-time item (2026-11-04).)*
 - **Hardware Validation (`docs/RPC-TEST.md`):** In progress on physical units.
 
 ## Done
+- [x] **Night light covers games (2026-11-10).** `night_light = off|warm|warmer` is a gamma LUT from `kms.cpp`, applied
+  after the layer mixer, so it tints the menu and a game alike now that `banana-ui` owns the panel. On the unit the
+  DSPP gamma block stays enabled through a game and a resume re-modeset, its table reads back as Warmer (red linear,
+  green to 85%, blue to 65%), and the tint was confirmed by eye. A saved setting set before the menu's first flip did
+  not reach the DSPP (kernel cause not traced), so the menu sets it again once that flip completes.
 - [x] **0.6.0: one screen, one owner (2026-11-10).** `banana-ui` is an in-process Wayland compositor on atomic KMS
   (primary + overlay planes) and RetroArch, ports and BananaTube run as its clients -- `cage` is only the
   `compositor = "cage"` escape hatch now. The game frame goes through one EGL rotate pass (the plane cannot rotate,

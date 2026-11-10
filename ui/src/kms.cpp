@@ -402,7 +402,7 @@ namespace banana
 	}
 
 	// the night light: a linear ramp with green and blue pulled down, on every CRTC. Level 0 is the plain ramp, so
-	// turning it off restores the panel's own look; the kernel keeps the LUT while a game's compositor has the panel.
+	// turning it off restores the panel's own look; the LUT is after the planes, so a game's frame is tinted too.
 	void Display::applyGamma()
 	{
 		if (fd < 0) return;
@@ -423,7 +423,8 @@ namespace banana
 					g[i] = (uint16_t)(v * kg);
 					b[i] = (uint16_t)(v * kb);
 				}
-				(void)drmModeCrtcSetGamma(fd, p[s].crtc, n, r.data(), g.data(), b.data());
+				if (drmModeCrtcSetGamma(fd, p[s].crtc, n, r.data(), g.data(), b.data()) != 0)
+					fprintf(stderr, "kms: night light: set gamma failed (%s)\n", strerror(errno));
 			}
 			drmModeFreeCrtc(c);
 		}
