@@ -820,10 +820,10 @@ namespace banana
 		wl_global_create(im->wl, &wl_drm_interface, 2, im, drmBind);
 		wl_display_init_shm(im->wl);
 
-		// Presentation strategy. 3C is only claimed when the EGL presenter starts; otherwise the 3B direct path
-		// keeps the client working and says loudly that the output is not rotated. The EGL path is opt-in while it
-		// is being validated on the unit (an unexplained hang was seen with the first 3C client): create
-		// /run/banana/3c-egl before the menu starts to enable it.
+		// Presentation strategy. 3C (the EGL rotate presenter) is the default; if it cannot start, the 3B direct
+		// presenter keeps the client working and logs that the output is not rotated. A persistent
+		// /data/banana/3c-direct forces the direct presenter (the escape hatch); /run/banana/3c-egl and
+		// /run/banana/3c-trace only turn on the diagnostic trace.
 		// Stage 8 isolation variants: one gate each, never combined. They imply the EGL presenter but the compositor
 		// releases the frame instead of submitting it, so the operation is the only thing exercised.
 		const bool diagImport = access("/run/banana/3c-diag-import", F_OK) == 0;
@@ -854,16 +854,24 @@ namespace banana
 		else if (diagBoPrime) diag = DiagVariant::BoPrime;
 		else if (diagBoFbAfter) diag = DiagVariant::BoFbAfter;
 
+		// 3C is the default presenter. /data/banana/3c-direct is the durable escape hatch back to 3B's direct
+		// path (create it and restart the menu). The EGL gate no longer selects the presenter; it and the trace
+		// gate only turn on the durable diagnostic trace, which stays inert by default.
+		const bool directWanted = access("/data/banana/3c-direct", F_OK) == 0;
 		const bool eglGate = access("/run/banana/3c-egl", F_OK) == 0;
-		bool eglWanted = !diagRefused && (diag != DiagVariant::None || eglGate);
-		traceInit(eglWanted ? "/data/banana/logs/3c-trace" : nullptr);
+		bool eglWanted = !diagRefused && (diag != DiagVariant::None || !directWanted);
+		bool traceWanted = eglWanted && (diag != DiagVariant::None || eglGate || access("/run/banana/3c-trace", F_OK) == 0);
+		traceInit(traceWanted ? "/data/banana/logs/3c-trace" : nullptr);
 		if (diag != DiagVariant::None)
 		{
 			if (eglGate) logf("3c-egl is ignored while a diagnostic variant is selected");
 			tracef("start: diagnostic gate on");
 		}
 		else if (eglGate) tracef("start: EGL gate on");
-		if (!eglWanted) logf("EGL rotation disabled (no /run/banana/3c-egl); direct presenter");
+		if (!eglWanted)
+			logf(directWanted && !diagRefused ? "EGL rotation disabled by /data/banana/3c-direct; direct presenter"
+			                                  : "EGL rotation disabled; direct presenter");
+		else if (diag == DiagVariant::None && !eglGate) logf("EGL rotation enabled by default");
 		{
 			auto egl = std::make_unique<EglPresenter>(d, diag);
 			std::string perr;

@@ -16,7 +16,7 @@ These names are the only phase numbers used from here on; older headings below k
 | **1A** | DRM probe: plane enumeration and the TEST_ONLY matrix on the target (this work) | a reviewed target report |
 | **1B** | `banana-ui` atomic KMS (prerequisite; independent of the compositor) | the 1A report, then its own hardware smoke test |
 | **2** | real-client DMA-BUF import and modifier compatibility (RetroArch/SDL2 buffers) | **measured**: compressed rejected; linear imports/scans; rotation EGL |
-| **3** | compositor implementation: 3A atomic primary/overlay in `banana-ui` (done), 3B Wayland + one client (done, unrotated), 3C EGL rotation (implemented, opt-in: see 3.3), 3D UI overlay, 3E input/lifecycle, 3F performance | 2 measured; GO (EGL rotate); each milestone's own hardware gate |
+| **3** | compositor implementation: 3A atomic primary/overlay in `banana-ui` (done), 3B Wayland + one client (done, unrotated), 3C EGL rotation (implemented, default: see 3.3), 3D UI overlay, 3E input/lifecycle, 3F performance | 2 measured; GO (EGL rotate); each milestone's own hardware gate |
 | **4** | Buildroot cleanup, ports/BananaTube integration and the merge gate | the full acceptance list |
 
 A 1A GO authorises **1B and Phase 2 (client-buffer validation)**, not the compositor. TEST_ONLY results never prove real-client buffer
@@ -549,7 +549,8 @@ launch path; this server is reached only by a client that connects to `/run/bana
 
 ### 3.3 Phase 3C — EGL rotation: implemented, opt-in (2026-11-10)
 
-**Status: implemented and hardware-validated; enabled by `/run/banana/3c-egl`, default 3B/DirectPresenter.**
+**Status: implemented, hardware-validated and enabled by default; `/data/banana/3c-direct` forces the 3B
+DirectPresenter (create it and restart the menu).**
 The historical blocked report remains at
 [`docs/reports/phase3c-blocked-2026-11-09.txt`](reports/phase3c-blocked-2026-11-09.txt).
 
@@ -563,7 +564,8 @@ The historical blocked report remains at
 - A source that is not the panel's 1240x1080 logical output switches that compositor instance to the direct 3B
   presenter (plane-scaled, sideways); a size change while an EGL frame is on screen is dropped and logged.
 - The Stage 8-16 isolation gates and the bounded durable trace remain for diagnostics; each needs its own
-  `/run/banana` file and none is active by default.
+  `/run/banana` file. The trace is off unless a diagnostic gate, `/run/banana/3c-egl` or `/run/banana/3c-trace`
+  is present, so enabling 3C by default does not enable tracing.
 - Cage, the launchers, bananad, the sleep policy and the KMS configuration are untouched.
 
 ### 3.4 Scope of the compositor (D1)
