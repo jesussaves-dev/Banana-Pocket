@@ -1327,6 +1327,9 @@ int main(int argc, char** argv)
 		if (cls == InputClass::KEYBOARD) comp.forwardInput(type, code, value);
 	};
 
+	// 4.1: compositor = "ui" runs a game as a client of this process (the launchers read the same key); "cage" is
+	// the one-release escape hatch.
+	const bool residentGames = getConfValue(o.data + "/bananad.conf", "compositor", "cage") != "cage";
 	Repeat rep;
 	bool dirty = true, quit = false, drawn = false;	// drawn: a frame on the canvas waiting for the flips
 	bool gameWas = false;	// a Wayland client owned the primary last pass: the menu is restored when it goes
@@ -1631,6 +1634,78 @@ int main(int argc, char** argv)
 		}
 	};
 
+	// 4.1: a game under the in-process compositor stays a client of this process, so the menu loop reaps it and
+	// runs the same finish path a cage game does.
+	pid_t gamePid = -1;
+	double gameStart = 0;
+	int gameIndex = -1;
+	bool gameResident = false;
+	auto finishGame = [&](int status)
+	{
+		int game = gameIndex;
+		long secs = (long)((nowMs() - gameStart) / 1000);
+		if (system("banana-perf ui") != 0) {}
+		logf("game ended after %ld s (status %d)", secs, status);
+		unlink("/run/banana/game.pid");
+		unlink("/run/banana/game.path");
+		if (!gameResident)
+		{
+			// take the panel back: a game (or its compositor) may still be letting go of the DRM master, so retry and
+			// say why if it never comes back (a black screen with the menu running under it is exactly this failure)
+			int tries = 0;
+			while (!disp.openSingle(o.top, err) && tries < 400) { if (!tries) logf("panel reopen: %s (retrying)", err.c_str()); sleepUs(50000); tries++; }
+			logf("panel %s after the game (%d tries)", disp.isOpen() ? "back" : "STILL CLOSED", tries);
+			be.invalidate();
+			input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
+			if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
+		}
+		else
+		{
+			be.invalidate();	// the compositor kept the panel; the menu is drawn again when the client goes
+			drawn = false;
+			dirty = true;
+		}
+		std::lock_guard<std::mutex> l(worker.uiLock);
+		{
+			const char* PROGRESS = "/run/banana/ra-progress";	// "<unlocked> <total>", from the emulator (docs/EMULATORS.md)
+			const char* CHEEVOS  = "/run/banana/cheevos";		// one line per unlock, from the same patch
+			int achA = -1, achB = 0;
+			std::ifstream(PROGRESS) >> achA >> achB;
+			lib.recordPlay(game, secs, achA, achB);	// (a start that failed straight away isn't a play)
+			// what the game unlocked, one line per achievement: the menu's toast is built from these, and the badge PNG
+			// is drawn in the tile. A game that unlocked nothing wrote nothing; a line that is short is a line that was
+			// not written at all (the patch always writes all seven fields), so the defaults stand.
+			// Bananad showed these as they unlocked (the marker), so the menu only clears it; without the marker
+			// (HUD off, or a daemon that predates it) the menu's own toasts are the only place they appear.
+			if (access("/run/banana/hud-live", F_OK) != 0)
+			{
+				std::ifstream ch(CHEEVOS);
+				std::string line;
+				while (std::getline(ch, line))
+				{
+					std::vector<std::string> f = tsv(line, 7);
+					if (f[0].empty() || f[1].empty()) continue;
+					settingsView.notify(f[2], f[3], 0, f[6]);
+				}
+			}
+			unlink("/run/banana/hud-live");
+		}
+		ui->dataChanged();
+		ui->setLibrary(lib.currentShelf(), game);
+		if (!gameResident && disp.isOpen()) irisFromGame(disp, be, *ui);
+		sound.setBgm(settings["bgm"] != "off");	// the ambient loop comes back with the menu
+		sound.warm();				// the game handed the DSP frontend back: have it open before the next press
+		// a game that ended because it was quit goes back to a menu the next boot should show too; one a shutdown
+		// stopped leaves the marker bananad wrote, for the next boot to resume
+		if (access("/run/banana/shutting-down", F_OK) != 0) resumeCancel(o.data);
+		guard.input(nowMs());			// the game's own time doesn't count as menu idle
+		dirty = true;
+		batteryDue = true;	// a step passed during the game shows now
+		gamePid = -1;
+		gameIndex = -1;
+		gameResident = false;
+	};
+
 	// The game alone owns the panel while it runs: banana-ui draws nothing, and the game sizes and rotates its own
 	// picture. The menu is drawn afresh when it comes back.
 	auto runGame = [&](int game)
@@ -1648,9 +1723,12 @@ int main(int argc, char** argv)
 		sound.release();
 		boost.release();
 		forgetDecoded();
-		input.close();
-		comp.stop();	// a Wayland client's buffers belong to the closing DRM fd
-		disp.close();
+		if (!residentGames)
+		{
+			input.close();
+			comp.stop();	// a Wayland client's buffers belong to the closing DRM fd
+			disp.close();
+		}
 		drawn = false;	// the menu is drawn afresh when the panel comes back
 		rep.key = Key::NONE;
 		if (system(("banana-perf " + shellQuote(sd.perf.empty() ? "balanced" : sd.perf)).c_str()) != 0) {}
@@ -1664,10 +1742,13 @@ int main(int argc, char** argv)
 		{
 			// the panel, input and sound were handed over above: take them back rather than pretend a game ran
 			logf("fork failed: %s", strerror(errno));
-			for (int tries = 0; !disp.openSingle(o.top, err) && tries < 100; tries++) sleepUs(50000);
+			if (!residentGames)
+			{
+				for (int tries = 0; !disp.openSingle(o.top, err) && tries < 100; tries++) sleepUs(50000);
+				input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
+				if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
+			}
 			be.invalidate();
-			input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
-			if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
 			sound.setBgm(settings["bgm"] != "off");
 			sound.warm();
 			guard.input(nowMs());
@@ -1697,58 +1778,19 @@ int main(int argc, char** argv)
 		{
 			std::ofstream("/run/banana/game.pid") << pid << "\n";	// bananad: the game to pause before a sleep
 			std::ofstream("/run/banana/game.path") << rom << "\n";	// ... and to resume if a shutdown interrupts it
-			while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-			unlink("/run/banana/game.pid");
-			unlink("/run/banana/game.path");
-		}
-		long secs = (long)((nowMs() - start) / 1000);
-		if (system("banana-perf ui") != 0) {}
-		logf("game ended after %ld s (status %d)", secs, status);
-		{
-			// take the panel back: a game (or its compositor) may still be letting go of the DRM master, so retry and
-			// say why if it never comes back (a black screen with the menu running under it is exactly this failure)
-			int tries = 0;
-			while (!disp.openSingle(o.top, err) && tries < 400) { if (!tries) logf("panel reopen: %s (retrying)", err.c_str()); sleepUs(50000); tries++; }
-			logf("panel %s after the game (%d tries)", disp.isOpen() ? "back" : "STILL CLOSED", tries);
-		}
-		be.invalidate();
-		input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
-		if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
-		std::lock_guard<std::mutex> l(worker.uiLock);
-		{
-			int achA = -1, achB = 0;
-			std::ifstream(PROGRESS) >> achA >> achB;
-			lib.recordPlay(game, secs, achA, achB);	// (a start that failed straight away isn't a play)
-			// what the game unlocked, one line per achievement: the menu's toast is built from these, and the badge PNG
-			// is drawn in the tile. A game that unlocked nothing wrote nothing; a line that is short is a line that was
-			// not written at all (the patch always writes all seven fields), so the defaults stand.
-			// Bananad showed these as they unlocked (the marker), so the menu only clears it; without the marker
-			// (HUD off, or a daemon that predates it) the menu's own toasts are the only place they appear.
-			if (access("/run/banana/hud-live", F_OK) != 0)
+			gameIndex = game;
+			gameStart = start;
+			gameResident = residentGames;
+			if (residentGames)
 			{
-				std::ifstream ch(CHEEVOS);
-				std::string line;
-				while (std::getline(ch, line))
-				{
-					std::vector<std::string> f = tsv(line, 7);
-					if (f[0].empty() || f[1].empty()) continue;
-					settingsView.notify(f[2], f[3], 0, f[6]);
-				}
+				gamePid = pid;	// the main loop reaps it; the compositor keeps drawing
+				return;
 			}
-			unlink("/run/banana/hud-live");
+			while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+			finishGame(status);
 		}
-		ui->dataChanged();
-		ui->setLibrary(lib.currentShelf(), game);
-		if (disp.isOpen()) irisFromGame(disp, be, *ui);
-		sound.setBgm(settings["bgm"] != "off");	// the ambient loop comes back with the menu
-		sound.warm();				// the game handed the DSP frontend back: have it open before the next press
-		// a game that ended because it was quit goes back to a menu the next boot should show too; one a shutdown
-		// stopped leaves the marker bananad wrote, for the next boot to resume
-		if (access("/run/banana/shutting-down", F_OK) != 0) resumeCancel(o.data);
-		guard.input(nowMs());			// the game's own time doesn't count as menu idle
-		dirty = true;
-		batteryDue = true;	// a step passed during the game shows now
 	};
+
 
 	if (system("banana-perf ui") != 0) {}
 	// the launch hook (below) wakes the menu when it is written: an idle menu sleeps in poll() until a press otherwise,
@@ -1770,6 +1812,13 @@ int main(int argc, char** argv)
 	while (!quit)
 	{
 		double now = nowMs();
+		// a resident game is a client of this process: reap it without blocking the compositor
+		if (gamePid > 0)
+		{
+			int st = 0;
+			pid_t r = waitpid(gamePid, &st, WNOHANG);
+			if (r == gamePid || (r < 0 && errno == ECHILD)) finishGame(st);
+		}
 		if (resumeDue > 0 && now >= resumeDue)
 		{
 			// the launch file the menu already watches; the game then owns the panel as usual
@@ -1813,6 +1862,7 @@ int main(int argc, char** argv)
 					std::getline(f, want);
 				}
 				unlink("/run/banana/launch");
+				if (gamePid > 0) { logf("launch file ignored: a game is running"); continue; }
 				bool found = false;
 				for (int s = 0; s < lib.systemCount() && !found; s++)
 					for (int i = 0; i < (int)lib.shelf(s).games.size(); i++)
@@ -1874,6 +1924,7 @@ int main(int argc, char** argv)
 		if (g >= 0)
 		{
 			lib.clearLaunch();
+			if (gamePid > 0) { logf("launch ignored: a game is running"); continue; }
 			runGame(g);
 			continue;
 		}

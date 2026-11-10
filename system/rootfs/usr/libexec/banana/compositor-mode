@@ -1,0 +1,7 @@
+#!/bin/sh
+# Phase 4.1: "ui" runs a game as a Wayland client of banana-ui (the in-process compositor); "cage" is the
+# one-release escape hatch (compositor = "cage" in bananad.conf). The default is cage until the resident path
+# has passed suspend/resume; the release then flips it to ui.
+v=$(sed -n 's/^ *compositor *= *//p' /data/banana/bananad.conf 2>/dev/null | tail -n 1)
+v=$(printf '%s' "$v" | tr -d '"[:space:]')
+printf '%s\n' "${v:-cage}"

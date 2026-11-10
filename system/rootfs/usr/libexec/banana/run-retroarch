@@ -451,15 +451,21 @@ rm -f $RL
 ulimit -c unlimited 2>/dev/null; cd /data 2>/dev/null
 tries=0
 while :; do
-    # cage is a kiosk compositor: one application, fullscreen, and it turns the output with the panel (the
-    # connector's "panel orientation" property, which wlroots reads) so RetroArch's menu, its OSD and the game
-    # are all upright -- the per-driver rotation patches are not needed under it.
-    cage -- retroarch -v --config $CFG --appendconfig "$L|$RA$BZA" -L "$CORE" "$2" < $FIFO --log-file $RL &
-    P=$!
-    # bananad's SIGUSR1 on the way out of a sleep goes here: cage re-modesets its output, because a panel its
-    # driver turned off on the way down comes back dark and only a modeset clears it (Banana has no session
-    # manager to hear about a resume).
-    echo $P > /run/banana/cage.pid
+    # Phase 4.1: "ui" runs RetroArch directly as a client of banana-ui's in-process compositor; "cage" is the
+    # one-release escape hatch.
+    MODE=$(/usr/libexec/banana/compositor-mode)
+    if [ "$MODE" = ui ]; then
+        export WAYLAND_DISPLAY=banana-0	# the in-process compositor's socket
+        retroarch -v --config $CFG --appendconfig "$L|$RA$BZA" -L "$CORE" "$2" < $FIFO --log-file $RL &
+        P=$!
+    else
+        cage -- retroarch -v --config $CFG --appendconfig "$L|$RA$BZA" -L "$CORE" "$2" < $FIFO --log-file $RL &
+        P=$!
+        # bananad's SIGUSR1 on the way out of a sleep goes here: cage re-modesets its output, because a panel its
+        # driver turned off on the way down comes back dark and only a modeset clears it (Banana has no session
+        # manager to hear about a resume).
+        echo $P > /run/banana/cage.pid
+    fi
     trap 'kill -TERM $P 2>/dev/null' TERM INT HUP
     # A watchdog: RetroArch prints "Unloading game" as it tears a game down, then exits. On this SoC the teardown can
     # hang there (the AudioReach PCM or the Vulkan swapchain not letting go) -- the config and SRAM are already saved
