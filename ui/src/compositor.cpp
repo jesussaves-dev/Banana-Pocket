@@ -86,6 +86,7 @@ namespace banana
 		wl_listener inflightCbGone = {};
 
 		bool hidMenu = false;			// presentGame() is on screen and the overlay is off
+		uint32_t overlayFb = 0;			// the 3D card buffer (ARGB), shown above the client when non-zero
 		bool restoreMenu = false;		// show the menu as soon as the current flip completes
 		bool stopping = false;
 		bool saidShm = false;
@@ -197,7 +198,7 @@ namespace banana
 			if (frames < 3) logf("commit: fb=%u src=%ux%u", fb, pw, ph);
 			if (frames < kTraceFrames)
 				tracef("frame: commit serial=%llu fb=%u %ux%u", (unsigned long long)b->serial, fb, pw, ph);
-			if (!d->presentGame(fb, pw, ph))
+			if (!d->presentGame(fb, pw, ph, overlayFb))
 			{
 				presenter->abandon();
 				if (!d->flipPending())
@@ -962,6 +963,11 @@ namespace banana
 	void Compositor::frame()
 	{
 		if (impl) impl->frame();
+	}
+
+	void Compositor::setOverlayFb(uint32_t fb)
+	{
+		if (impl) impl->overlayFb = fb;
 	}
 
 	bool Compositor::gameActive() const

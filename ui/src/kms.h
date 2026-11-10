@@ -61,7 +61,13 @@ namespace banana
 		// hides the menu overlay; showMenu() puts the menu back. Both honor the one-flip-in-flight rule.
 		int drmFd() const { return fd; }
 		bool atomic() const { return count > 0 && p[0].atomic; }
-		bool presentGame(uint32_t fb, uint32_t w, uint32_t h);
+		// overlayFb is the panel-sized ARGB card to show above the primary, 0 to hide the overlay
+		bool presentGame(uint32_t fb, uint32_t w, uint32_t h, uint32_t overlayFb = 0);
+		// the 3D card buffer: clear it, fill a panel-space rectangle (premultiplied ARGB), hand its FB to the
+		// compositor. False when the atomic overlay path is not in use.
+		bool overlayCardBegin();
+		void overlayCardFill(int x, int y, int w, int h, uint32_t argb);
+		uint32_t overlayCardFb() const;
 		bool showMenu();
 		// black primary, overlay off: used before the compositor is torn down so the plane stops scanning a
 		// presenter-owned framebuffer before the DRM fd is closed
@@ -83,6 +89,7 @@ namespace banana
 			uint32_t conn = 0, crtc = 0;
 			uint8_t mode[68] = { 0 };
 			Buf buf[2];		// the menu, ARGB8888 (atomic overlay) or XRGB8888 (legacy primary)
+			Buf card;		// the 3D card layer, ARGB8888 over a client on the primary (atomic only)
 			Buf black;		// XRGB8888, the primary when the menu is on the overlay
 			int front = 0;
 			Damage missed[2];

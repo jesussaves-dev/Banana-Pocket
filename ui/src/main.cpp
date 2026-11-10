@@ -1688,6 +1688,9 @@ int main(int argc, char** argv)
 	bool launchSeen = true;
 	bool cheevosSeen = true;	// /run/banana/cheevos: the achievements a game just unlocked, read on this pass
 	bool shotWanted = false;	// /run/banana/screen.req: write the frame to screen.jpg on this pass (below)
+	bool overlaySeen = true;	// /run/banana/overlay: a 3D card over the client on the primary
+	bool cardUp = false;
+	double cardUntil = 0;
 	if (resume == Resume::Ready) resumeDue = nowMs() + 500;	// a short window: the game is the point
 	while (!quit)
 	{
@@ -1757,6 +1760,45 @@ int main(int argc, char** argv)
 				}
 				unlink("/run/banana/toast");
 			}
+		}
+		// 3D: a card over a client on the primary, from /run/banana/overlay (kind|title|body|badge|duration_ms).
+		// This slice draws a panel-space test rectangle; the real card renderer replaces it in 3D.2.
+		if (overlaySeen || launchWatch < 0)
+		{
+			overlaySeen = false;
+			if (access("/run/banana/overlay", F_OK) == 0)
+			{
+				std::ifstream f("/run/banana/overlay");
+				std::string line;
+				if (std::getline(f, line))
+				{
+					for (char& c : line) if (c == '|') c = '\t';	// the overlay record is pipe-separated
+					std::vector<std::string> g = tsv(line, 5);
+					int ms = g.size() > 4 ? atoi(g[4].c_str()) : 2000;
+					if (ms <= 0) ms = 2000;
+					if (disp.overlayCardBegin())
+					{
+						uint32_t argb = 0xff3aa0ff;
+						if (!g.empty() && g[0] == "volume") argb = 0xff54c26b;
+						else if (!g.empty() && g[0] == "brightness") argb = 0xffe0b64a;
+						else if (!g.empty() && g[0] == "achievement") argb = 0xffc05cff;
+						else if (!g.empty() && g[0] == "error") argb = 0xffe05c5c;
+						disp.overlayCardFill(120, 120, 840, 240, argb);
+						comp.setOverlayFb(disp.overlayCardFb());
+						cardUp = true;
+						cardUntil = now + ms;
+						logf("overlay card %s for %d ms", g.empty() ? "?" : g[0].c_str(), ms);
+					}
+				}
+				unlink("/run/banana/overlay");
+			}
+		}
+		if (cardUp && now >= cardUntil)
+		{
+			cardUp = false;
+			if (disp.overlayCardBegin()) {}
+			comp.setOverlayFb(0);
+			logf("overlay card hidden");
 		}
 		int g = lib.pendingLaunch();
 		if (g >= 0)
@@ -1994,6 +2036,7 @@ int main(int argc, char** argv)
 						if (ev->len && !strcmp(ev->name, "screen.req")) shotWanted = true;
 						else if (ev->len && !strcmp(ev->name, "cheevos")) cheevosSeen = true;
 						else if (ev->len && !strcmp(ev->name, "toast")) cheevosSeen = true;
+						else if (ev->len && !strcmp(ev->name, "overlay")) overlaySeen = true;
 						e += sizeof(inotify_event) + ev->len;
 					}
 				}

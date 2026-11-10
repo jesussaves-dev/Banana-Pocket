@@ -329,12 +329,12 @@ namespace banana
 			{
 				if (drmModeCreatePropertyBlob(f, &p[0].mode, sizeof p[0].mode, &p[0].mode_blob) ||
 				    !makeBuf(p[0].buf[0], DRM_FORMAT_ARGB8888) || !makeBuf(p[0].buf[1], DRM_FORMAT_ARGB8888) ||
-				    !makeBuf(p[0].black, DRM_FORMAT_XRGB8888))
+				    !makeBuf(p[0].black, DRM_FORMAT_XRGB8888) || !makeBuf(p[0].card, DRM_FORMAT_ARGB8888))
 				{
 					p[0].atomic = false;
 					if (p[0].mode_blob) { drmModeDestroyPropertyBlob(f, p[0].mode_blob); p[0].mode_blob = 0; }
 					freeBuf(p[0].black);
-					freeBuf(p[0].buf[0]); freeBuf(p[0].buf[1]);
+					freeBuf(p[0].buf[0]); freeBuf(p[0].buf[1]); freeBuf(p[0].card);
 				}
 			}
 			if (!p[0].atomic)
@@ -432,7 +432,7 @@ namespace banana
 		if (fd < 0) return;
 		for (auto& pn : p)
 		{
-			freeBuf(pn.buf[0]); freeBuf(pn.buf[1]); freeBuf(pn.black);
+			freeBuf(pn.buf[0]); freeBuf(pn.buf[1]); freeBuf(pn.black); freeBuf(pn.card);
 			if (pn.mode_blob) { drmModeDestroyPropertyBlob(fd, pn.mode_blob); pn.mode_blob = 0; }
 		}
 		::close(fd);
@@ -534,9 +534,40 @@ namespace banana
 		return true;
 	}
 
-	bool Display::presentGame(uint32_t fb, uint32_t w, uint32_t h)
+	bool Display::presentGame(uint32_t fb, uint32_t w, uint32_t h, uint32_t overlayFb)
 	{
-		return commitFrame(p[0], fb, w, h, 0);
+		return commitFrame(p[0], fb, w, h, overlayFb);
+	}
+
+	bool Display::overlayCardBegin()
+	{
+		if (count <= 0 || !p[0].atomic || !p[0].card.map) return false;
+		memset(p[0].card.map, 0, p[0].card.size);	// transparent: the client on the primary shows through
+		return true;
+	}
+
+	void Display::overlayCardFill(int x, int y, int w, int h, uint32_t argb)
+	{
+		if (count <= 0 || !p[0].card.map) return;
+		int x0 = std::max(0, x), y0 = std::max(0, y);
+		int x1 = std::min<int>(SW, x + w), y1 = std::min<int>(SH, y + h);
+		if (x1 <= x0 || y1 <= y0) return;
+		// premultiplied, like the plane's blend mode
+		uint32_t a = (argb >> 24) & 0xff;
+		uint32_t r = ((argb >> 16) & 0xff) * a / 255;
+		uint32_t g = ((argb >> 8) & 0xff) * a / 255;
+		uint32_t b = (argb & 0xff) * a / 255;
+		uint32_t px = (a << 24) | (r << 16) | (g << 8) | b;
+		for (int yy = y0; yy < y1; yy++)
+		{
+			uint32_t* row = (uint32_t*)(p[0].card.map + (size_t)yy * p[0].card.pitch);
+			for (int xx = x0; xx < x1; xx++) row[xx] = px;
+		}
+	}
+
+	uint32_t Display::overlayCardFb() const
+	{
+		return count > 0 && p[0].atomic ? p[0].card.fb : 0;
 	}
 
 	bool Display::showMenu()

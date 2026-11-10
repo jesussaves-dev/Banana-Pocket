@@ -31,6 +31,7 @@ namespace banana
 		void dispatch();		// drain Wayland events and flush replies
 		void vblank();			// a page flip completed: release the scanned buffer, fire its callback
 		void frame();			// present the latest committed client frame when no flip is in flight
+		void setOverlayFb(uint32_t fb);	// the 3D card over a client frame on the primary (0 hides it)
 		bool gameActive() const;	// a client frame is pending or on screen (the menu must not present)
 		bool eglActive() const;		// the EGL rotate presenter is running (3C validation)
 
