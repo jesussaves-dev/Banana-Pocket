@@ -39,3 +39,8 @@ __pycache__/
 
 # the local OpenCode config (holds provider keys); keep the tracked copy out of the repo
 /opencode.json
+
+# Phase 2 dmabuf test harness: generated protocol code and binaries
+/tools/dmabuf-capture/build/
+/ui/build/
+/tools/egl-buffer-client/build/

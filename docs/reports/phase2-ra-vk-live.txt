@@ -1,0 +1,22 @@
+capture-server v1
+drm card=/dev/dri/card1 driver=msm 1.13.0
+display connector=36 crtc=50 mode=1080x1240 primary=38 overlay=44
+MASTER ok
+READY socket=wayland-dmabuf seconds=20 drm=1 test=1 live=1
+CLIENT pid=6873 cmd=/data/ra-client.sh
+GLOBAL dmabuf formats=2
+GLOBAL dmabuf formats=2
+GLOBAL dmabuf formats=2
+GLOBAL dmabuf formats=2
+GLOBAL dmabuf formats=2
+GLOBAL dmabuf formats=2
+BUFFER client=ra-client.sh type=dmabuf format=XR24 modifier=0x0000000000000000 (LINEAR) size=1240x1080 planes=1 p0=off0/str5120
+TEST client=ra-client.sh size=1240x1080 format=XR24 modifier=0x0000000000000000 planes=1
+TEST primary ok
+TEST overlay ok
+TEST rotate90 reject errno=22 (Invalid argument)
+TEST import ok fb=54
+LIVE started
+CLIENT did not stop after SIGTERM; sending SIGKILL
+SUMMARY client=ra-client.sh buffers=1 unique=1 frames=1 live=1 rotation_tested=1 rotation_ok=0
+command exit: 0

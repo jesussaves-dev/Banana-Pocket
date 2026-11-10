@@ -15,6 +15,7 @@
 #include "../rnds/RndsUI.h"
 #include "input.h"
 #include "kms.h"
+#include "compositor.h"
 #include "library.h"
 #include "soft.h"
 #include "splash.h"
@@ -29,6 +30,7 @@
 #include "layout.h"
 
 #include <algorithm>
+#include <deque>
 #include <atomic>
 #include <cerrno>
 #include <cstdarg>
@@ -81,6 +83,98 @@ static void logf(const char* fmt, ...)
 	vfprintf(stderr, fmt, ap);
 	fputc('\n', stderr);
 	va_end(ap);
+}
+
+// ---- the pause menu's reach into a game ---------------------------------------------------------------------
+// A signal to a process and every descendant of it. The launcher is its own process group (runGame's setsid), but
+// run-port and run-bananatube start the app with setsid again, so a group signal would miss the app itself: the
+// tree is walked through /proc instead. Used to freeze a game (SIGSTOP) under the pause menu and thaw it (SIGCONT).
+static void signalTree(pid_t root, int sig)
+{
+	if (root <= 0) return;
+	std::vector<std::pair<pid_t, pid_t>> procs;	// (pid, ppid)
+	if (DIR* d = opendir("/proc"))
+	{
+		while (dirent* e = readdir(d))
+		{
+			char* end = nullptr;
+			long pid = strtol(e->d_name, &end, 10);
+			if (pid <= 0 || *end) continue;
+			char path[64], buf[512];
+			snprintf(path, sizeof path, "/proc/%ld/stat", pid);
+			FILE* f = fopen(path, "r");
+			if (!f) continue;
+			size_t n = fread(buf, 1, sizeof buf - 1, f);
+			fclose(f);
+			buf[n] = 0;
+			const char* rp = strrchr(buf, ')');	// the command name can hold spaces and parentheses
+			int ppid = 0;
+			if (rp && sscanf(rp + 1, " %*c %d", &ppid) == 1) procs.push_back({ (pid_t)pid, (pid_t)ppid });
+		}
+		closedir(d);
+	}
+	std::vector<pid_t> tree{ root };
+	for (size_t i = 0; i < tree.size(); i++)
+		for (const auto& pr : procs)
+			if (pr.second == tree[i] && std::find(tree.begin(), tree.end(), pr.first) == tree.end()) tree.push_back(pr.first);
+	for (pid_t pid : tree) kill(pid, sig);
+}
+
+// One command line to RetroArch through its stdin FIFO (run-retroarch holds the pipe open; stdin_cmd_enable). Never
+// blocks: no reader means no RetroArch, and the line is dropped.
+static bool retroarchCmd(const char* cmd)
+{
+	int fd = open("/run/banana/retroarch.cmd", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+	if (fd < 0) return false;
+	std::string line = std::string(cmd) + "\n";
+	ssize_t w;
+	do w = write(fd, line.data(), line.size()); while (w < 0 && errno == EINTR);
+	close(fd);
+	return w == (ssize_t)line.size();
+}
+
+// A save state of the running game: "<rom stem>.state" for slot 0, ".stateN" for N, in /data/states or one of its
+// per-core folders (RetroArch sorts them by core). The newest match wins; "" when the slot has none.
+static std::string statePath(const std::string& rom, int slot)
+{
+	std::string base = rom.substr(rom.rfind('/') + 1);
+	size_t dot = base.rfind('.');
+	if (dot != std::string::npos && dot > 0) base = base.substr(0, dot);
+	std::string name = base + ".state" + (slot > 0 ? std::to_string(slot) : std::string());
+	std::vector<std::string> dirs = { "/data/states" };
+	if (DIR* d = opendir("/data/states"))
+	{
+		while (dirent* e = readdir(d))
+			if (e->d_name[0] != '.') dirs.push_back(std::string("/data/states/") + e->d_name);
+		closedir(d);
+	}
+	std::string best;
+	time_t bestAt = 0;
+	for (const auto& dir : dirs)
+	{
+		struct stat st;
+		std::string pth = dir + "/" + name;
+		if (stat(pth.c_str(), &st) == 0 && S_ISREG(st.st_mode) && (best.empty() || st.st_mtime > bestAt)) { best = pth; bestAt = st.st_mtime; }
+	}
+	return best;
+}
+
+// How many discs a game has: the entries of an .m3u playlist (RetroArch's multi-disc format), else 1.
+static int discCount(const std::string& rom)
+{
+	size_t dot = rom.rfind('.');
+	std::string ext = dot == std::string::npos ? "" : rom.substr(dot + 1);
+	for (auto& c : ext) c = (char)tolower((unsigned char)c);
+	if (ext != "m3u") return 1;
+	std::ifstream f(rom);
+	std::string line;
+	int n = 0;
+	while (std::getline(f, line))
+	{
+		size_t a = line.find_first_not_of(" \t\r");
+		if (a != std::string::npos && line[a] != '#') n++;
+	}
+	return std::max(1, n);
 }
 
 // ---- resume the game a shutdown interrupted ---------------------------------------------------------------
@@ -1222,7 +1316,10 @@ int main(int argc, char** argv)
 	sound.setBgm(settings["bgm"] != "off");		// the ambient loop, if the card or the image has one
 	if (settings["splash"] != "off" && settings["sounds"] != "off") sound.warm();
 
-	Display disp;
+	// Phase 3A: the compositor owns the display (atomic KMS when available); the main loop stays here and is
+	// the persistent loop the Wayland dispatch joins in 3B.
+	Compositor comp;
+	Display& disp = comp.display();
 	std::string err;
 	// the panel's driver may still be probing when init starts us
 	for (int tries = 0; !disp.openSingle(o.top, err); tries++)
@@ -1313,8 +1410,22 @@ int main(int argc, char** argv)
 	Input input;
 	input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
 
+	// Phase 3B: the in-process Wayland server (one kiosk client; cage stays the game path). It needs the atomic
+	// display, so a legacy panel logs why it is off and the menu runs exactly as before.
+	if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
+	// 3E.2: keyboard-class devices reach a client on the primary; the pad and the power/volume keys stay direct.
+	bool forwardOn = false;
+	input.raw = [&](int type, int code, int value, InputClass cls)
+	{
+		if (cls == InputClass::KEYBOARD) comp.forwardInput(type, code, value);
+	};
+
+	// 4.1: a game runs as a client of this process by default; compositor = "cage" in bananad.conf is the
+	// one-release escape hatch back to the kiosk launcher (the launchers read the same key).
+	const bool residentGames = getConfValue(o.data + "/bananad.conf", "compositor", "ui") != "cage";
 	Repeat rep;
 	bool dirty = true, quit = false, drawn = false;	// drawn: a frame on the canvas waiting for the flips
+	bool gameWas = false;	// a Wayland client owned the primary last pass: the menu is restored when it goes
 	double quietUntil = 0;	// no frame before this: the last one flipped nothing (see present below)
 	// the AMOLED burn-in guard: the panel's backlight, owned here while the menu runs (bananad's own idle dim leaves
 	// it to us while /run/banana/panel-ui is there). IdleGuard does the dim/blank/wake; attached just below.
@@ -1347,6 +1458,24 @@ int main(int argc, char** argv)
 	std::string osdLabel;
 	int osdPercent = 0;
 	double osdUntil = 0;
+	// the pause menu (MENU over a game on the compositor) and the game it freezes
+	bool quickMenu = false, quickPending = false;
+	int quickSel = 0, quickArmed = -1;
+	std::vector<std::string> quickRows;	// the row ids (English labels) for this game
+	Settings::PauseView quickView;		// what be.overlay draws, rebuilt before each draw
+	// what the menu knows of RetroArch (it cannot be asked: a query on its stdin crashes it): the save slot RetroArch
+	// is on and the one picked here, the disc, fast-forward; all set at launch and changed only through this menu
+	int raSlot = 0, pickSlot = 0, discs = 1, discNow = 1, discPick = 1;
+	bool ffOn = false;
+	std::string gameRom;
+	// Lines for RetroArch's stdin, sent one at a time ~100 ms apart while it runs: it keeps one flag per command name
+	// per poll, so two STATE_SLOT_PLUS (or the eject/next/eject of a disc change) in one frame would count once
+	std::deque<std::string> raQueue;
+	double raNextAt = 0;
+	pid_t gamePid = -1;
+	double gameStart = 0;
+	int gameIndex = -1;
+	bool gameResident = false, gameRA = false;
 	be.overlay = [&](int screen)
 	{
 		if (screen != 0) return;
@@ -1354,7 +1483,230 @@ int main(int argc, char** argv)
 		if (low.showing(t)) settingsView.notice(low.title, low.body, low.percent);
 		else if (plug.showing(t)) settingsView.notice(plug.title, plug.body, plug.percent);
 		else if (osdUntil > t) settingsView.level(osdLabel, osdPercent);
+		else if (quickMenu) settingsView.pauseMenu(quickView);
 		else settingsView.drawToast(t);	// the achievement toasts, over whatever page is up
+	};
+
+	// 3D cards and the 3E quick menu. showCard draws the menu's own card on a cleared screen and turns only its box
+	// into the double-buffered overlay; while a client owns the primary, the overlay carries it.
+	bool cardUp = false;
+	double cardUntil = 0;
+	// draw whatever be.overlay shows now and put its box on the overlay plane for ms
+	auto pushCard = [&](const std::string& kind, int ms)
+	{
+		double t = nowMs();
+		if (!comp.clientOnScreen() || !disp.overlayCardBegin()) return;
+		be.beginScreen(0);
+		be.endScreen();	// be.overlay draws the level/toast onto the screen
+		int cx = 0, cy = 0, cw = 0, ch = 0;
+		if (!settingsView.cardRect(cx, cy, cw, ch)) return;
+		disp.overlayCardTurn(be.pixels(0), cx, cy, cx + cw, cy + ch);
+		comp.setOverlayFb(disp.overlayCardFb());
+		cardUp = true;
+		cardUntil = t + ms;
+		logf("overlay card %s for %d ms", kind.empty() ? "?" : kind.c_str(), ms);
+	};
+	auto showCard = [&](const std::string& kind, const std::string& title, const std::string& body,
+	                    const std::string& badge, int ms)
+	{
+		if (kind == "volume" || kind == "brightness")
+		{
+			osdLabel = kind == "brightness" ? "Brightness" : "Volume";
+			osdPercent = atoi(body.c_str());
+			osdUntil = nowMs() + ms;
+		}
+		else
+			settingsView.notify(title, body, 0, badge);
+		pushCard(kind, ms);
+	};
+	auto drawQuick = [&]() { pushCard("pause", 1000000000); };
+	auto hideCard = [&]()
+	{
+		if (!cardUp) return;
+		cardUp = false;
+		comp.setOverlayFb(0);
+		logf("overlay card hidden");
+	};
+	// The pause menu: MENU over a game freezes it (SIGSTOP on the launcher's whole tree, so a port or BananaTube stops
+	// too) and lists what can be done; RetroArch's own menu stays one row away (and on MENU + X). It replaces the
+	// RetroArch menu as the first thing MENU opens: fewer choices, Banana's look, the same for every game.
+	// the right panel and the header for the selected row
+	auto quickBuild = [&]()
+	{
+		Settings::PauseView& v = quickView;
+		v.sel = quickSel;
+		v.armed = quickArmed;
+		v.title = gameIndex >= 0 ? lib.gameAt(gameIndex).title : std::string();
+		std::string status;
+		int pct = lib.power().percent;
+		if (pct >= 0) status = std::to_string(pct) + "%   ";
+		status += lib.clockText();
+		long mins = (long)((nowMs() - gameStart) / 60000);
+		char played[24];
+		snprintf(played, sizeof played, mins >= 60 ? "   %ldh%02ld" : "   %ldm", mins >= 60 ? mins / 60 : mins, mins % 60);
+		v.status = status + played;
+		int prog = -1, total = 0;
+		if (FILE* f = fopen("/run/banana/ra-progress", "r")) { if (fscanf(f, "%d %d", &prog, &total) != 2) prog = -1; fclose(f); }
+		v.rows.clear();
+		for (const auto& id : quickRows)
+		{
+			Settings::PauseRow r;
+			r.label = id;
+			if (id == "Save state" || id == "Load state") { r.value = tr("Slot") + " " + std::to_string(pickSlot); r.arrows = true; }
+			else if (id == "Change disc") { r.value = tr("Disc") + " " + std::to_string(discPick) + "/" + std::to_string(discs); r.arrows = true; }
+			else if (id == "Fast-forward") r.value = ffOn ? "On" : "Off";
+			else if (id == "Achievements" && prog >= 0) r.value = std::to_string(prog) + "/" + std::to_string(total);
+			v.rows.push_back(r);
+		}
+		const std::string row = quickSel >= 0 && quickSel < (int)quickRows.size() ? quickRows[quickSel] : std::string();
+		v.picture.clear();
+		v.caption.clear();
+		v.lines.clear();
+		if (row == "Save state" || row == "Load state")
+		{
+			std::string st = statePath(gameRom, pickSlot);
+			std::string slot = tr("Slot") + " " + std::to_string(pickSlot);
+			struct stat sb;
+			if (!st.empty() && stat(st.c_str(), &sb) == 0)
+			{
+				if (access((st + ".png").c_str(), R_OK) == 0) v.picture = st + ".png";
+				char when[32];
+				struct tm tmv;
+				localtime_r(&sb.st_mtime, &tmv);
+				strftime(when, sizeof when, lib.twelveHour ? "%Y-%m-%d %I:%M %p" : "%Y-%m-%d %H:%M", &tmv);
+				v.caption = slot + "   " + when;
+			}
+			else v.caption = slot + "   " + tr("Empty");
+		}
+		else if (row == "Change disc")
+			v.caption = tr("Disc") + " " + std::to_string(discNow) + "/" + std::to_string(discs) +
+			            (discPick != discNow ? "   ->   " + std::to_string(discPick) : std::string());
+		else if (row == "Achievements")
+		{
+			if (prog >= 0) v.caption = std::to_string(prog) + " / " + std::to_string(total);
+			// this session's unlocks, newest first: cheevos is tab-separated (unlocked, total, title, description,
+			// points, rarity, badge); the newest one's badge is the picture
+			std::vector<std::string> got;
+			std::ifstream f("/run/banana/cheevos");
+			for (std::string line; std::getline(f, line);)
+			{
+				std::vector<std::string> fld;
+				for (size_t a = 0, b; ; a = b + 1)
+				{
+					b = line.find('\t', a);
+					fld.push_back(line.substr(a, b == std::string::npos ? std::string::npos : b - a));
+					if (b == std::string::npos) break;
+				}
+				if (fld.size() < 3 || fld[2].empty()) continue;
+				got.insert(got.begin(), fld[2]);
+				if (fld.size() >= 7 && !fld[6].empty() && access(fld[6].c_str(), R_OK) == 0) v.picture = fld[6];
+			}
+			v.lines = got;
+		}
+		if (v.picture.empty() && gameIndex >= 0) v.picture = lib.gameAt(gameIndex).box;
+	};
+	auto drawQuickView = [&]() { quickBuild(); drawQuick(); };
+	// The pause menu: MENU over a game freezes it (SIGSTOP on the launcher's whole tree, so a port or BananaTube stops
+	// too) and lists what can be done; RetroArch's own menu stays one row away (and on MENU + X). It replaces the
+	// RetroArch menu as the first thing MENU opens: fewer choices, Banana's look, the same for every game.
+	auto openQuick = [&]()
+	{
+		if (gamePid <= 0) { quickPending = false; return; }
+		bool ok = input.grab(true);
+		quickMenu = true;
+		quickPending = false;
+		quickSel = 0;
+		quickArmed = -1;
+		pickSlot = raSlot;
+		discPick = discNow;
+		if (gameRA)
+		{
+			quickRows = { "Resume", "Save state", "Load state" };
+			if (discs > 1) quickRows.push_back("Change disc");
+			quickRows.push_back("Fast-forward");
+			quickRows.push_back("Shader");
+			if (access("/run/banana/ra-progress", R_OK) == 0) quickRows.push_back("Achievements");
+			for (const char* r : { "Restart game", "RetroArch menu", "Quit game" }) quickRows.push_back(r);
+		}
+		else quickRows = { "Resume", "Quit" };
+		signalTree(gamePid, SIGSTOP);
+		if (FILE* f = fopen("/run/banana/overlay-open", "w")) { fputs("1\n", f); fclose(f); }
+		drawQuickView();
+		logf("quick menu: open, game frozen%s", ok ? "" : " (EVIOCGRAB failed)");
+	};
+	auto closeQuick = [&]()
+	{
+		if (!quickMenu && !quickPending) return;
+		bool was = quickMenu;
+		quickMenu = quickPending = false;
+		if (!was) return;
+		signalTree(gamePid, SIGCONT);
+		input.grab(false);
+		unlink("/run/banana/overlay-open");
+		hideCard();
+		logf("quick menu: closed, game running");
+	};
+	// RetroArch has no "save to slot N": step its slot to the one picked here first (queued: sent once it is thawed)
+	auto syncSlot = [&]()
+	{
+		for (; raSlot < pickSlot; raSlot++) raQueue.push_back("STATE_SLOT_PLUS");
+		for (; raSlot > pickSlot; raSlot--) raQueue.push_back("STATE_SLOT_MINUS");
+	};
+	// A on a row. Load state, Restart and Quit lose progress, so they ask "Press A again" first.
+	auto quickAct = [&]()
+	{
+		const std::string row = quickSel >= 0 && quickSel < (int)quickRows.size() ? quickRows[quickSel] : std::string();
+		bool risky = row == "Load state" || row == "Restart game" || row == "Quit game" || row == "Quit";
+		if (risky && quickArmed != quickSel) { quickArmed = quickSel; drawQuickView(); return; }
+		logf("quick menu: %s", row.c_str());
+		if (row == "Achievements" || (row == "Change disc" && discPick == discNow)) return;	// nothing to do
+		if (row == "Fast-forward")
+		{
+			// stays open: the line is queued and goes out on Resume; the row shows the new state
+			raQueue.push_back("FAST_FORWARD");
+			ffOn = !ffOn;
+			drawQuickView();
+			return;
+		}
+		pid_t game = gamePid;
+		closeQuick();	// thawed first: RetroArch reads its stdin only while it runs
+		if (row == "Save state") { syncSlot(); raQueue.push_back("SAVE_STATE"); }
+		else if (row == "Load state") { syncSlot(); raQueue.push_back("LOAD_STATE"); }
+		else if (row == "Change disc")
+		{
+			// the tray opens, the disc index moves, the tray closes: RetroArch's own disc-change sequence
+			raQueue.push_back("DISK_EJECT_TOGGLE");
+			for (; discNow < discPick; discNow++) raQueue.push_back("DISK_NEXT");
+			for (; discNow > discPick; discNow--) raQueue.push_back("DISK_PREV");
+			raQueue.push_back("DISK_EJECT_TOGGLE");
+		}
+		else if (row == "Shader") raQueue.push_back("SHADER_TOGGLE");
+		else if (row == "Restart game") raQueue.push_back("RESET");
+		else if (row == "RetroArch menu") raQueue.push_back("MENU_TOGGLE");
+		else if (row == "Quit game") raQueue.push_back("QUIT");
+		else if (row == "Quit" && game > 0) kill(game, SIGTERM);	// the launcher's trap ends the app's own session
+	};
+	auto quickKey = [&](Key k)
+	{
+		int n = (int)quickRows.size();
+		const std::string row = quickSel >= 0 && quickSel < n ? quickRows[quickSel] : std::string();
+		if (k == Key::B || k == Key::MENU) closeQuick();
+		else if (k == Key::A) quickAct();
+		else if ((k == Key::UP || k == Key::DOWN) && n > 0)
+		{
+			quickSel = (quickSel + (k == Key::UP ? n - 1 : 1)) % n;
+			quickArmed = -1;
+			drawQuickView();
+		}
+		else if (k == Key::LEFT || k == Key::RIGHT)
+		{
+			int d = k == Key::LEFT ? -1 : 1;
+			if (row == "Save state" || row == "Load state") pickSlot = (pickSlot + d + 10) % 10;
+			else if (row == "Change disc") discPick = (discPick - 1 + d + discs) % discs + 1;
+			else return;
+			quickArmed = -1;
+			drawQuickView();
+		}
 	};
 
 	// ---- AMOLED burn-in guard: the panel's backlight goes to a night level after 90 s idle and off after 180 s, and
@@ -1465,6 +1817,26 @@ int main(int argc, char** argv)
 			guard.input(t);
 		}
 		if ((ev.type == InputEvent::PRESS || ev.type == InputEvent::TOUCH_DOWN) && low.hide(nowMs())) dirty = true;
+		// 3E: while a client owns the primary the menu does not act on input. MENU opens the quick menu after its
+		// release (so the opening press is not grabbed); while it is up only B closes it and the game sees nothing.
+		if (comp.clientOnScreen())
+		{
+			if (quickMenu)
+			{
+				if (ev.type == InputEvent::PRESS) quickKey(ev.key);
+				return;
+			}
+			if (forwardOn && (ev.type == InputEvent::TOUCH_DOWN || ev.type == InputEvent::TOUCH_MOVE || ev.type == InputEvent::TOUCH_UP))
+				comp.forwardTouch(ev.type == InputEvent::TOUCH_DOWN ? 0 : ev.type == InputEvent::TOUCH_MOVE ? 1 : 2,
+				                  (int)ev.x, (int)ev.y, ev.pointer);
+			if (ev.type == InputEvent::PRESS && ev.key == Key::MENU) { quickPending = true; return; }
+			// another button while MENU is held is a RetroArch hotkey (MENU + Start quits, + X its own menu, ...): no
+			// pause menu on that release
+			if (quickPending && ev.type == InputEvent::PRESS) { quickPending = false; return; }
+			if (quickPending && ev.type == InputEvent::RELEASE && ev.key == Key::MENU) { openQuick(); return; }
+			return;
+		}
+		quickPending = false;
 		if (settingsView.isOpen())
 		{
 			std::lock_guard<std::mutex> l(worker.uiLock);
@@ -1545,6 +1917,76 @@ int main(int argc, char** argv)
 		}
 	};
 
+	// 4.1: a game under the in-process compositor stays a client of this process, so the menu loop reaps it and
+	// runs the same finish path a cage game does.
+	auto finishGame = [&](int status)
+	{
+		closeQuick();	// a game that ends (or crashes) under the pause menu must not leave the pad grabbed
+		int game = gameIndex;
+		long secs = (long)((nowMs() - gameStart) / 1000);
+		if (system("banana-perf ui") != 0) {}
+		logf("game ended after %ld s (status %d)", secs, status);
+		unlink("/run/banana/game.pid");
+		unlink("/run/banana/game.path");
+		if (!gameResident)
+		{
+			// take the panel back: a game (or its compositor) may still be letting go of the DRM master, so retry and
+			// say why if it never comes back (a black screen with the menu running under it is exactly this failure)
+			int tries = 0;
+			while (!disp.openSingle(o.top, err) && tries < 400) { if (!tries) logf("panel reopen: %s (retrying)", err.c_str()); sleepUs(50000); tries++; }
+			logf("panel %s after the game (%d tries)", disp.isOpen() ? "back" : "STILL CLOSED", tries);
+			be.invalidate();
+			input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
+			if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
+		}
+		else
+		{
+			be.invalidate();	// the compositor kept the panel; the menu is drawn again when the client goes
+			drawn = false;
+			dirty = true;
+		}
+		std::lock_guard<std::mutex> l(worker.uiLock);
+		{
+			const char* PROGRESS = "/run/banana/ra-progress";	// "<unlocked> <total>", from the emulator (docs/EMULATORS.md)
+			const char* CHEEVOS  = "/run/banana/cheevos";		// one line per unlock, from the same patch
+			int achA = -1, achB = 0;
+			std::ifstream(PROGRESS) >> achA >> achB;
+			lib.recordPlay(game, secs, achA, achB);	// (a start that failed straight away isn't a play)
+			// what the game unlocked, one line per achievement: the menu's toast is built from these, and the badge PNG
+			// is drawn in the tile. A game that unlocked nothing wrote nothing; a line that is short is a line that was
+			// not written at all (the patch always writes all seven fields), so the defaults stand.
+			// Bananad showed these as they unlocked (the marker), so the menu only clears it; without the marker
+			// (HUD off, or a daemon that predates it) the menu's own toasts are the only place they appear.
+			if (access("/run/banana/hud-live", F_OK) != 0)
+			{
+				std::ifstream ch(CHEEVOS);
+				std::string line;
+				while (std::getline(ch, line))
+				{
+					std::vector<std::string> f = tsv(line, 7);
+					if (f[0].empty() || f[1].empty()) continue;
+					settingsView.notify(f[2], f[3], 0, f[6]);
+				}
+			}
+			unlink("/run/banana/hud-live");
+		}
+		ui->dataChanged();
+		ui->setLibrary(lib.currentShelf(), game);
+		if (!gameResident && disp.isOpen()) irisFromGame(disp, be, *ui);
+		sound.setBgm(settings["bgm"] != "off");	// the ambient loop comes back with the menu
+		sound.warm();				// the game handed the DSP frontend back: have it open before the next press
+		// a game that ended because it was quit goes back to a menu the next boot should show too; one a shutdown
+		// stopped leaves the marker bananad wrote, for the next boot to resume
+		if (access("/run/banana/shutting-down", F_OK) != 0) resumeCancel(o.data);
+		guard.input(nowMs());			// the game's own time doesn't count as menu idle
+		dirty = true;
+		batteryDue = true;	// a step passed during the game shows now
+		gamePid = -1;
+		gameIndex = -1;
+		gameResident = false;
+		gameRA = false;
+	};
+
 	// The game alone owns the panel while it runs: banana-ui draws nothing, and the game sizes and rotates its own
 	// picture. The menu is drawn afresh when it comes back.
 	auto runGame = [&](int game)
@@ -1552,7 +1994,10 @@ int main(int argc, char** argv)
 		const SystemDef& sd = lib.systemOf(game);
 		std::string rom = lib.gameAt(game).path;
 		std::string cmd = replaceAll(replaceAll(sd.run, "%ROM%", shellQuote(rom)), "%SYSTEM%", shellQuote(sd.id));
-		logf("starting %s: %s", sd.id.c_str(), cmd.c_str());
+		// 4.1: every launcher runs as a client of this process (the EGL presenter letterboxes and rotates any window
+		// size); compositor = "cage" in bananad.conf hands the panel over instead.
+		bool resident = residentGames;
+		logf("starting %s%s: %s", sd.id.c_str(), resident ? " (resident)" : "", cmd.c_str());
 		{
 			std::ofstream f(o.data + "/last-system");
 			f << ui->systemIndex() << "\n";
@@ -1562,8 +2007,12 @@ int main(int argc, char** argv)
 		sound.release();
 		boost.release();
 		forgetDecoded();
-		input.close();
-		disp.close();
+		if (!resident)
+		{
+			input.close();
+			comp.stop();	// a Wayland client's buffers belong to the closing DRM fd
+			disp.close();
+		}
 		drawn = false;	// the menu is drawn afresh when the panel comes back
 		rep.key = Key::NONE;
 		if (system(("banana-perf " + shellQuote(sd.perf.empty() ? "balanced" : sd.perf)).c_str()) != 0) {}
@@ -1577,9 +2026,13 @@ int main(int argc, char** argv)
 		{
 			// the panel, input and sound were handed over above: take them back rather than pretend a game ran
 			logf("fork failed: %s", strerror(errno));
-			for (int tries = 0; !disp.openSingle(o.top, err) && tries < 100; tries++) sleepUs(50000);
+			if (!resident)
+			{
+				for (int tries = 0; !disp.openSingle(o.top, err) && tries < 100; tries++) sleepUs(50000);
+				input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
+				if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
+			}
 			be.invalidate();
-			input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
 			sound.setBgm(settings["bgm"] != "off");
 			sound.warm();
 			guard.input(nowMs());
@@ -1609,57 +2062,28 @@ int main(int argc, char** argv)
 		{
 			std::ofstream("/run/banana/game.pid") << pid << "\n";	// bananad: the game to pause before a sleep
 			std::ofstream("/run/banana/game.path") << rom << "\n";	// ... and to resume if a shutdown interrupts it
-			while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-			unlink("/run/banana/game.pid");
-			unlink("/run/banana/game.path");
-		}
-		long secs = (long)((nowMs() - start) / 1000);
-		if (system("banana-perf ui") != 0) {}
-		logf("game ended after %ld s (status %d)", secs, status);
-		{
-			// take the panel back: a game (or its compositor) may still be letting go of the DRM master, so retry and
-			// say why if it never comes back (a black screen with the menu running under it is exactly this failure)
-			int tries = 0;
-			while (!disp.openSingle(o.top, err) && tries < 400) { if (!tries) logf("panel reopen: %s (retrying)", err.c_str()); sleepUs(50000); tries++; }
-			logf("panel %s after the game (%d tries)", disp.isOpen() ? "back" : "STILL CLOSED", tries);
-		}
-		be.invalidate();
-		input.open(disp.width(), disp.height(), disp.rotation(), disp.panelWidth(), disp.panelHeight());
-		std::lock_guard<std::mutex> l(worker.uiLock);
-		{
-			int achA = -1, achB = 0;
-			std::ifstream(PROGRESS) >> achA >> achB;
-			lib.recordPlay(game, secs, achA, achB);	// (a start that failed straight away isn't a play)
-			// what the game unlocked, one line per achievement: the menu's toast is built from these, and the badge PNG
-			// is drawn in the tile. A game that unlocked nothing wrote nothing; a line that is short is a line that was
-			// not written at all (the patch always writes all seven fields), so the defaults stand.
-			// Bananad showed these as they unlocked (the marker), so the menu only clears it; without the marker
-			// (HUD off, or a daemon that predates it) the menu's own toasts are the only place they appear.
-			if (access("/run/banana/hud-live", F_OK) != 0)
+			gameIndex = game;
+			gameStart = start;
+			gameResident = resident;
+			gameRA = sd.run.find("run-retroarch") != std::string::npos;
+			gameRom = rom;
+			raQueue.clear();
+			// the pause menu's view of RetroArch: slot 0 (run-retroarch starts every launch there; retroarch.cfg's
+			// saved state_slot is not what it starts on), disc 1, fast-forward off
+			raSlot = 0;
+			discs = discCount(rom);
+			discNow = 1;
+			ffOn = false;
+			if (resident)
 			{
-				std::ifstream ch(CHEEVOS);
-				std::string line;
-				while (std::getline(ch, line))
-				{
-					std::vector<std::string> f = tsv(line, 7);
-					if (f[0].empty() || f[1].empty()) continue;
-					settingsView.notify(f[2], f[3], 0, f[6]);
-				}
+				gamePid = pid;	// the main loop reaps it; the compositor keeps drawing
+				return;
 			}
-			unlink("/run/banana/hud-live");
+			while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+			finishGame(status);
 		}
-		ui->dataChanged();
-		ui->setLibrary(lib.currentShelf(), game);
-		if (disp.isOpen()) irisFromGame(disp, be, *ui);
-		sound.setBgm(settings["bgm"] != "off");	// the ambient loop comes back with the menu
-		sound.warm();				// the game handed the DSP frontend back: have it open before the next press
-		// a game that ended because it was quit goes back to a menu the next boot should show too; one a shutdown
-		// stopped leaves the marker bananad wrote, for the next boot to resume
-		if (access("/run/banana/shutting-down", F_OK) != 0) resumeCancel(o.data);
-		guard.input(nowMs());			// the game's own time doesn't count as menu idle
-		dirty = true;
-		batteryDue = true;	// a step passed during the game shows now
 	};
+
 
 	if (system("banana-perf ui") != 0) {}
 	// the launch hook (below) wakes the menu when it is written: an idle menu sleeps in poll() until a press otherwise,
@@ -1676,10 +2100,18 @@ int main(int argc, char** argv)
 	bool launchSeen = true;
 	bool cheevosSeen = true;	// /run/banana/cheevos: the achievements a game just unlocked, read on this pass
 	bool shotWanted = false;	// /run/banana/screen.req: write the frame to screen.jpg on this pass (below)
+	bool overlaySeen = true;	// /run/banana/overlay: a 3D card over the client on the primary
 	if (resume == Resume::Ready) resumeDue = nowMs() + 500;	// a short window: the game is the point
 	while (!quit)
 	{
 		double now = nowMs();
+		// a resident game is a client of this process: reap it without blocking the compositor
+		if (gamePid > 0)
+		{
+			int st = 0;
+			pid_t r = waitpid(gamePid, &st, WNOHANG);
+			if (r == gamePid || (r < 0 && errno == ECHILD)) finishGame(st);
+		}
 		if (resumeDue > 0 && now >= resumeDue)
 		{
 			// the launch file the menu already watches; the game then owns the panel as usual
@@ -1688,10 +2120,21 @@ int main(int argc, char** argv)
 			logf("resume: launching %s", resumeRom.c_str());
 			resumeDue = 0;
 		}
-		// the burn-in guard: dim the panel to a night level after 90 s idle, turn it off after 180 s -- but never
-		// blank it while on the charger (a dark panel on the cable read as a sleep)
+		// the burn-in guard is the menu's: dim after bananad.conf's dim_minutes, blank 90 s later -- but never while a
+		// game is on screen (Settings > Sleep & power promises that; a client's picture is not menu idle, and a video
+		// would go dark) and never blank it while on the charger (a dark panel on the cable read as a sleep)
+		// the pause menu's queued RetroArch lines: one per ~100 ms, only while the game runs (not frozen under the menu)
+		if (!raQueue.empty() && !quickMenu && now >= raNextAt)
+		{
+			if (gamePid > 0 && gameRA) { logf("retroarch: %s", raQueue.front().c_str()); retroarchCmd(raQueue.front().c_str()); }
+			raQueue.pop_front();
+			raNextAt = now + 100;
+		}
 		guard.setCharging(lib.charging());
-		if (guard.tick(now, &sound) && guard.stage() == 2) sound.setBgm(false);	// blanked: let the sound device go too
+		if (!comp.clientOnScreen() && guard.tick(now, &sound) && guard.stage() == 2) sound.setBgm(false);	// blanked: let the sound device go too
+		// 3E.2: keys reach the client only while it owns the primary, the quick menu is down and the guard is awake
+		bool fwd = comp.clientOnScreen() && !quickMenu && guard.stage() == 0;
+		if (fwd != forwardOn) { forwardOn = fwd; comp.setInputForward(fwd); }
 		{
 			std::lock_guard<std::mutex> l(worker.uiLock);
 			ui->update(now);
@@ -1720,6 +2163,7 @@ int main(int argc, char** argv)
 					std::getline(f, want);
 				}
 				unlink("/run/banana/launch");
+				if (gamePid > 0) { logf("launch file ignored: a game is running"); continue; }
 				bool found = false;
 				for (int s = 0; s < lib.systemCount() && !found; s++)
 					for (int i = 0; i < (int)lib.shelf(s).games.size(); i++)
@@ -1746,10 +2190,42 @@ int main(int argc, char** argv)
 				unlink("/run/banana/toast");
 			}
 		}
+		// 3D: a card over a client on the primary, from /run/banana/overlay (kind|title|body|badge|duration_ms).
+		// The card is drawn by the menu's own renderer (level/toast/notice) on a cleared screen, and only its box is
+		// turned into the double-buffered overlay buffer, so the pixels are the menu's at 1x and the rest is clear.
+		if (overlaySeen || launchWatch < 0)
+		{
+			overlaySeen = false;
+			if (access("/run/banana/overlay", F_OK) == 0)
+			{
+				std::ifstream f("/run/banana/overlay");
+				std::string line;
+				if (std::getline(f, line))
+				{
+					for (char& c : line) if (c == '|') c = '\t';	// the overlay record is pipe-separated
+					std::vector<std::string> g = tsv(line, 5);
+					std::string kind = g.empty() ? std::string() : g[0];
+					std::string title = g.size() > 1 ? g[1] : std::string();
+					std::string body = g.size() > 2 ? g[2] : std::string();
+					std::string badge = g.size() > 3 ? g[3] : std::string();
+					int ms = g.size() > 4 ? atoi(g[4].c_str()) : 2000;
+					if (ms <= 0) ms = 2000;
+					showCard(kind, title, body, badge, ms);
+				}
+				unlink("/run/banana/overlay");
+			}
+		}
+		if (cardUp && now >= cardUntil)
+		{
+			hideCard();
+			// a volume/charger/achievement card over the quick menu: put the pause card back when it expires
+			if (quickMenu) drawQuickView();
+		}
 		int g = lib.pendingLaunch();
 		if (g >= 0)
 		{
 			lib.clearLaunch();
+			if (gamePid > 0) { logf("launch ignored: a game is running"); continue; }
 			runGame(g);
 			continue;
 		}
@@ -1809,7 +2285,7 @@ int main(int argc, char** argv)
 		// the next frame is drawn while the last one's flips are still pending (present copies it out, so the canvas is
 		// free again at once), and handed over when the panel has flipped: drawing and the wait
 		// for the panel's vblank overlap instead of adding up to two refreshes a frame
-		if (want && disp.isOpen() && !drawn && nowMs() >= quietUntil)
+		if (want && disp.isOpen() && !drawn && !comp.gameActive() && !comp.clientOnScreen() && nowMs() >= quietUntil)
 		{
 			double t0 = nowMs();
 			{
@@ -1821,7 +2297,7 @@ int main(int argc, char** argv)
 			drawn = true;
 			dirty = false;
 		}
-		if (drawn && disp.isOpen() && !disp.flipPending())
+		if (drawn && disp.isOpen() && !disp.flipPending() && !comp.gameActive() && !comp.clientOnScreen())
 		{
 			const uint32_t* scr[2] = { be.pixels(0), be.pixels(1) };
 			Damage dmg[2] = { be.takeDamage(0), be.takeDamage(1) };
@@ -1890,9 +2366,15 @@ int main(int argc, char** argv)
 			if (timeout < 0 || left < timeout) timeout = left;
 		}
 		{
-			// ms until the burn-in guard's next step (dim at 90 s, blank at 180 s)
-			int g = guard.nextMs(now);
+			// ms until the burn-in guard's next step (dim after dim_minutes, blank 90 s later). Not while a game is on
+			// screen: tick() is skipped then, so an overdue deadline would clamp to 1 ms and spin poll() all game long
+			int g = comp.clientOnScreen() ? -1 : guard.nextMs(now);
 			if (g >= 0 && (timeout < 0 || g < timeout)) timeout = g;
+			if (!raQueue.empty() && !quickMenu)
+			{
+				int q = std::max(1, (int)(raNextAt - now) + 1);	// the next queued RetroArch line
+				if (timeout < 0 || q < timeout) timeout = q;
+			}
 		}
 		if (resumeDue > 0)
 		{
@@ -1908,8 +2390,10 @@ int main(int argc, char** argv)
 		auto addFd = [&](int fd) { if (fd >= 0 && nf < (int)(sizeof fds / sizeof fds[0])) { fds[nf].fd = fd; fds[nf].events = POLLIN; fds[nf].revents = 0; nf++; } };
 		addFd(sigPipe[0]); addFd(worker.wakeFd); addFd(roms.fd); addFd(launchWatch); addFd(powerFd);
 		if (disp.isOpen()) addFd(disp.pollFd());
+		addFd(comp.wlFd());
 		nf = input.fillFds(fds, nf, (int)(sizeof fds / sizeof fds[0]));
 		if (timeout == 0) timeout = 1;	// a deadline that is due is handled above; never spin on poll(2)
+		comp.flush();	// releases/callbacks/input queued since the last dispatch must go out before we block
 		int n = poll(fds, nf, timeout);
 		if (n == 0 && !want) dirty = true;	// the engine's next step is due
 		if (n <= 0) continue;
@@ -1929,11 +2413,28 @@ int main(int argc, char** argv)
 					if (c == SIGUSR1)
 					{
 						// bananad after a resume: the panel's driver disabled it on the way down, and it can come
-						// back dark -- the kernel re-does its own part of the display, but a hold in the pipeline
-						// (a DPU encoder that timed out going down) is only cleared by a modeset, so take the
-						// panel again rather than redraw into a dead one
-						disp.close();
-						for (int tries = 0; !disp.openSingle(o.top, err) && tries < 50; tries++) sleepUs(20000);
+						// back dark. With a resident game, re-modeset the panel and re-arm the client instead of
+						// tearing the compositor down (the client's buffers are tied to this DRM fd). Without a
+						// game, take the panel again as before.
+						if (gamePid > 0 && disp.isOpen())
+						{
+							int tries = 0;
+							while (!disp.restore() && tries < 50) { sleepUs(20000); tries++; }
+							if (tries >= 50) logf("resume: panel restore failed (resident game)");
+							else
+							{
+								comp.resume();
+								// bananad's wake SIGCONTs the game's group: the pause menu keeps it frozen
+								if (quickMenu) { signalTree(gamePid, SIGSTOP); drawQuickView(); }
+							}
+						}
+						else
+						{
+							comp.stop();
+							disp.close();
+							for (int tries = 0; !disp.openSingle(o.top, err) && tries < 50; tries++) sleepUs(20000);
+							if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
+						}
 						std::lock_guard<std::mutex> l(worker.uiLock);
 						be.invalidate(); ui->dataChanged(); dirty = true; batteryDue = true; guard.wake(nowMs(), &sound); sound.setBgm(settings["bgm"] != "off"); sound.warm();
 					}
@@ -1979,6 +2480,7 @@ int main(int argc, char** argv)
 						if (ev->len && !strcmp(ev->name, "screen.req")) shotWanted = true;
 						else if (ev->len && !strcmp(ev->name, "cheevos")) cheevosSeen = true;
 						else if (ev->len && !strcmp(ev->name, "toast")) cheevosSeen = true;
+						else if (ev->len && !strcmp(ev->name, "overlay")) overlaySeen = true;
 						e += sizeof(inotify_event) + ev->len;
 					}
 				}
@@ -1990,11 +2492,26 @@ int main(int argc, char** argv)
 				if (read(worker.wakeFd, &v, 8) < 0) {}
 				dirty = true;
 			}
+			else if (comp.wlFd() >= 0 && p.fd == comp.wlFd())
+				comp.dispatch();
 			else if (disp.isOpen() && p.fd == disp.pollFd())
+			{
 				disp.handleEvents();
+				comp.vblank();	// a flip completed: release the client buffer, present the next frame
+			}
 			else
 				input.read(p.fd, handle);
 		}
+		if (comp.eglActive())
+		{
+			static double lastEglBeat = 0;
+			if (now - lastEglBeat >= 5000) { lastEglBeat = now; logf("compositor: EGL alive"); }
+		}
+		// the client went away (or its last frame completed): give the panel back to the menu with a full redraw
+		bool gameNow = comp.gameActive() || comp.clientOnScreen();
+		if (!gameNow) closeQuick();	// the client went away while the quick menu was up
+		if (gameWas && !gameNow) { be.invalidate(); dirty = true; drawn = false; }
+		gameWas = gameNow;
 		// A screen dump, asked for by writing /run/banana/screen.req (the launch watch above fires for it): the frame
 		// the menu has composed, which is what a person looking at the handheld sees -- Display turns it for the panel
 		// afterwards -- written as a JPEG to /run/banana/screen.jpg, with the request removed. For development over

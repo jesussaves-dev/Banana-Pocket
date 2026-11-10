@@ -285,6 +285,13 @@ if [ ! -f $M ]; then
     grep -q '^mupen64plus-ThreadedRenderer = ' $O 2>/dev/null && sed -i 's|^mupen64plus-ThreadedRenderer = .*|mupen64plus-ThreadedRenderer = "True"|' $O || echo 'mupen64plus-ThreadedRenderer = "True"' >> $O
     touch $M
 fi
+# A save state gets a screenshot beside it (<state>.png): Banana's pause menu shows it for the slot it is on. Written
+# once (the marker), so turning it off in RetroArch's own menu afterwards is kept.
+M=/data/retroarch/.banana-state-thumbs-1
+if [ ! -f $M ]; then
+    set_cfg savestate_thumbnail_enable true
+    touch $M
+fi
 # Shaders: Shaders > Load Preset opens the image's libretro Slang presets (/usr/share/libretro/shaders/slang), read
 # where they are: copied to the card they took hundreds of MB (a few thousand small files in exFAT's large clusters)
 # and a long first start. Slang, not GLSL: the video driver is Vulkan (above) and its shader backend is Slang, so the
@@ -436,6 +443,15 @@ FIFO=/run/banana/retroarch.cmd
 rm -f $FIFO; mkfifo -m 600 $FIFO && exec 3<>$FIFO
 L=/run/banana/retroarch-stdin.cfg
 printf 'stdin_cmd_enable = "true"\n' > $L
+# Under banana-ui's compositor the button under the screen (MODE) opens Banana's pause menu, which has a row for
+# RetroArch's own menu; RetroArch's menu toggle moves to MODE + X (a hotkey combo like MODE + Start, so a plain MODE
+# press never opens both). For this launch only: RetroArch saves its effective config on exit, so the card's own
+# value is read here and put back after the game (cage keeps the autoconfig's plain MODE).
+R_MTB=$(sed -n 's/^ *input_menu_toggle_btn *= *//p' $CFG 2>/dev/null | sed 's/^"//; s/"$//' | tail -n 1)
+[ "$(/usr/libexec/banana/compositor-mode)" = ui ] && printf 'input_menu_toggle_btn = "3"\n' >> $L
+# The pause menu steps RetroArch's save slot and cannot ask which one it is on (a query on stdin crashes it), so
+# every launch starts on slot 0, the one the menu assumes.
+printf 'state_slot = "0"\n' >> $L
 # RetroArch's ALSA driver aborts (SIGABRT, 134) when the DSP hasn't finished letting go of the frontend the menu
 # had; a second start half a second later takes it. Two extra tries cover a slow teardown, and nothing else.
 # Its own log goes on the card: the one thing worth having after a game that would not start is what RetroArch said
@@ -451,15 +467,21 @@ rm -f $RL
 ulimit -c unlimited 2>/dev/null; cd /data 2>/dev/null
 tries=0
 while :; do
-    # cage is a kiosk compositor: one application, fullscreen, and it turns the output with the panel (the
-    # connector's "panel orientation" property, which wlroots reads) so RetroArch's menu, its OSD and the game
-    # are all upright -- the per-driver rotation patches are not needed under it.
-    cage -- retroarch -v --config $CFG --appendconfig "$L|$RA$BZA" -L "$CORE" "$2" < $FIFO --log-file $RL &
-    P=$!
-    # bananad's SIGUSR1 on the way out of a sleep goes here: cage re-modesets its output, because a panel its
-    # driver turned off on the way down comes back dark and only a modeset clears it (Banana has no session
-    # manager to hear about a resume).
-    echo $P > /run/banana/cage.pid
+    # Phase 4.1: "ui" runs RetroArch directly as a client of banana-ui's in-process compositor; "cage" is the
+    # one-release escape hatch.
+    MODE=$(/usr/libexec/banana/compositor-mode)
+    if [ "$MODE" = ui ]; then
+        export WAYLAND_DISPLAY=banana-0	# the in-process compositor's socket
+        retroarch -v --config $CFG --appendconfig "$L|$RA$BZA" -L "$CORE" "$2" < $FIFO --log-file $RL &
+        P=$!
+    else
+        cage -- retroarch -v --config $CFG --appendconfig "$L|$RA$BZA" -L "$CORE" "$2" < $FIFO --log-file $RL &
+        P=$!
+        # bananad's SIGUSR1 on the way out of a sleep goes here: cage re-modesets its output, because a panel its
+        # driver turned off on the way down comes back dark and only a modeset clears it (Banana has no session
+        # manager to hear about a resume).
+        echo $P > /run/banana/cage.pid
+    fi
     trap 'kill -TERM $P 2>/dev/null' TERM INT HUP
     # A watchdog: RetroArch prints "Unloading game" as it tears a game down, then exits. On this SoC the teardown can
     # hang there (the AudioReach PCM or the Vulkan swapchain not letting go) -- the config and SRAM are already saved
@@ -496,6 +518,8 @@ if [ -n "$BZON" ]; then
     [ -n "$R_OVL" ] && set_cfg input_overlay "$R_OVL"
     [ -n "$R_SHA" ] && set_cfg video_shader_enable "$R_SHA"
 fi
+# the menu toggle the pause menu moved for this launch (above): the card's own value, or none (the autoconfig's)
+if [ -n "$R_MTB" ]; then set_cfg input_menu_toggle_btn "$R_MTB"; else sed -i '/^ *input_menu_toggle_btn *=/d' $CFG; fi
 /usr/libexec/banana/ra-secrets scrub; rm -f $RA
 exec 3>&-; rm -f $FIFO /run/banana/cage.pid	# a pid file left behind names whoever gets the pid next
 set_cfg stdin_cmd_enable false

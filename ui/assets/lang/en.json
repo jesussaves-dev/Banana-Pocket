@@ -138,6 +138,21 @@
   "Backup saved": "Backup saved",
   "Settings restored": "Settings restored",
   "Emulator settings reset": "Emulator settings reset",
-  "System settings reset": "System settings reset"
- }
+  "System settings reset": "System settings reset",
+  "Paused": "Paused",
+  "Resume": "Resume",
+  "Save state": "Save state",
+  "Load state": "Load state",
+  "Restart game": "Restart game",
+  "RetroArch menu": "RetroArch menu",
+  "Quit game": "Quit game",
+  "Quit": "Quit",
+  "Slot": "Slot",
+  "Empty": "Empty",
+  "Disc": "Disc",
+  "Change disc": "Change disc",
+  "Fast-forward": "Fast-forward",
+  "Shader": "Shader",
+  "Achievements": "Achievements"
+}
 }

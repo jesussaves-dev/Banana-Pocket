@@ -1165,9 +1165,25 @@ namespace banana
 		text(label, true, 19, x + 15 + kw + 8, 431, p.ink);
 	}
 
+	void Settings::rememberCard(float x, float y, float w, float h)
+	{
+		cardX = (int)std::lround(X(x));
+		cardY = (int)std::lround(X(y));
+		cardW = (int)std::lround(X(w));
+		cardH = (int)std::lround(X(h));
+	}
+
+	bool Settings::cardRect(int& x, int& y, int& w, int& h) const
+	{
+		if (cardW <= 0 || cardH <= 0) return false;
+		x = cardX; y = cardY; w = cardW; h = cardH;
+		return true;
+	}
+
 	void Settings::notice(const std::string& title, const std::string& body, int percent)
 	{
 		SPal p = pal(light);
+		rememberCard(40, 344, 560, 104);
 		box("bubble", false, 40, 344, 560, 104);
 		// the status bar's battery, three times its size on the same pixel grid, its level red at 10% and under
 		auto it = cache.find("battery");
@@ -1189,6 +1205,77 @@ namespace banana
 		wrapped(body, 18, 172, 392, 404, 2, p.muted);
 	}
 
+	void Settings::pauseMenu(const PauseView& v)
+	{
+		SPal p = pal(light);
+		const float x0 = 12, y0 = 12, w = 616, h = 533;
+		rememberCard(x0, y0, w, h);
+		box("bubble", false, x0, y0, w, h);
+		// header: the game, and on the right the battery, the clock and the time played
+		float sw = v.status.empty() ? 0 : text(v.status, false, 16, 0, 0, p.muted, false, 0, true);
+		text(fit(v.title.empty() ? tr("Paused") : v.title, true, 20, w - 48 - sw), true, 20, x0 + 16, y0 + 12, p.ink);
+		if (sw > 0) text(v.status, false, 16, x0 + w - 16 - sw, y0 + 16, p.muted);
+		// left: the rows
+		const float lx = x0 + 12, lw = 320, top = y0 + 48, pitch = 40;
+		for (int i = 0; i < (int)v.rows.size(); i++)
+		{
+			const PauseRow& r = v.rows[i];
+			const bool on = i == v.sel, armed = i == v.armed;
+			float y = top + i * pitch;
+			box(on ? "pick" : "slot", on, lx, y, lw, pitch - 6);
+			Color c = armed ? (on ? p.onPickAccent : p.accent) : on ? p.onPick : p.muted;
+			text(fit(armed ? tr("Press A again") : tr(r.label), true, 18, lw - 120), true, 18, lx + 14, y + 7, c);
+			if (!armed && !r.value.empty())
+			{
+				std::string val = tr(r.value);
+				if (r.arrows && on) val = "< " + val + " >";
+				float vw = text(val, true, 18, 0, 0, c, false, 0, true);
+				text(val, true, 18, lx + lw - 14 - vw, y + 7, c);
+			}
+		}
+		// right: the picture (fitted, aspect kept), its caption and a short list
+		const float px = x0 + 344, pw = w - 344 - 12, ph = 210;
+		box("slot", false, px, top, pw, ph);
+		if (!v.picture.empty())
+		{
+			struct stat st;
+			std::string key = "pause:" + v.picture;
+			if (stat(v.picture.c_str(), &st) == 0) key += ":" + std::to_string((long long)st.st_mtime);	// a new save redraws
+			auto it = cache.find(key);
+			if (it == cache.end())
+			{
+				rnds::Bitmap bm = rnds::decodeFile(v.picture);
+				Cached c;
+				if (!bm.empty()) c.tex = be->upload(bm, true);
+				it = cache.emplace(key, c).first;
+			}
+			if (it->second.tex && it->second.tex->w > 0 && it->second.tex->h > 0)
+			{
+				float iw = (float)it->second.tex->w, ih = (float)it->second.tex->h;
+				float k = std::min((pw - 12) / iw, (ph - 12) / ih);
+				float dw = iw * k, dh = ih * k;
+				be->draw(it->second.tex, std::round(X(px + (pw - dw) / 2)), std::round(X(top + (ph - dh) / 2)),
+				         std::round(X(dw)), std::round(X(dh)), Color::hex(0xffffff));
+			}
+		}
+		float ty = top + ph + 12;
+		if (!v.caption.empty()) { wrapped(v.caption, 16, px + 4, ty, pw - 8, 2, p.ink); ty += 44; }
+		for (size_t i = 0; i < v.lines.size() && i < 7; i++, ty += 24)
+			text(fit(v.lines[i], false, 15, pw - 8), false, 15, px + 4, ty, p.muted);
+		// footer: the button letter in ink, its word muted, explicit gaps (the pixel font's space is narrow)
+		const std::pair<std::string, std::string> hints[3] = { { "A", tr("Choose") }, { "< >", tr("Change") }, { "B", tr("Resume") } };
+		const float gap = 6, sep = 22;
+		float hw = -sep;
+		for (const auto& hp : hints)
+			hw += text(hp.first, true, 16, 0, 0, p.ink, false, 0, true) + gap + text(hp.second, false, 16, 0, 0, p.muted, false, 0, true) + sep;
+		float hx = x0 + (w - hw) / 2, hy = y0 + h - 30;
+		for (const auto& hp : hints)
+		{
+			hx += text(hp.first, true, 16, hx, hy, p.ink) + gap;
+			hx += text(hp.second, false, 16, hx, hy, p.muted) + sep;
+		}
+	}
+
 	void Settings::level(const std::string& label, int percent)
 	{
 		// ROCKNIXDS's volume indicator (BN's in-game menu), in the same place: a pill at the top of the
@@ -1203,6 +1290,7 @@ namespace banana
 		bool sun = label == "Brightness";
 		const Color light = Color::hex(0xf1ede2), bar = Color::hex(0xffe68a), off = Color::hex(0x3a3540), red = Color::hex(0xff8a96);
 		const float w = 310, h = 42, x0 = (640 - w) / 2, y0 = 4, x1 = x0 + w, cy = y0 + h / 2;
+		rememberCard(x0, y0, w, h);
 		box("osd", false, x0, y0, w, h);
 		int k = std::max(2, (int)std::lround(2 * s));	// device px per icon pixel
 		const char* const* ic = sun ? SUN : percent <= 0 ? MUTE : VOL;
@@ -2474,6 +2562,7 @@ namespace banana
 			{ ".........", "........#", ".......##", "......##.", "#....##..", "##..##...", ".####....", "..##.....", "........." },
 			{ "##.....##", ".##...##.", "..##.##..", "...###...", "...###...", "..##.##..", ".##...##.", "##.....##", "........." } };
 		const Color light = Color::hex(0xf1ede2), acc = Color::hex(toastNow.accent);
+		rememberCard(8, 4, 624, 64);
 		box("osd", false, 8, 4, 624, 64);
 		float bs = 48, tx = 16, ty = 12;
 		float bx = std::round(X(tx)), by = std::round(X(ty)), bsz = std::round(X(bs));

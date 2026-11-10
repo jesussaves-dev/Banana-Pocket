@@ -1,0 +1,86 @@
+banana DRM hardware report
+captured (UTC): 2026-11-09 20:10:51
+board: retroid-pocket-classic
+version: 0.5.12
+kernel: Linux banana 7.2.0 #3 SMP PREEMPT_DYNAMIC Mon Nov  2 10:36:00 EST 2026 aarch64 GNU/Linux
+probe commit: aad7175
+probe sha256: 8e5dba89fadb5f67cdd8263ad8b206eda1d1b086c290c89f0cc9304e1058498c
+probe args: --take-master --connector DSI-1
+
+banana drm-plane-probe 2
+kernel  : Linux 7.2.0 aarch64
+driver  : msm 1.13.0 (0) "MSM Snapdragon DRM"
+card    : /dev/dri/card1
+compatible: retroid,pocket-classic qcom,sm4450
+caps    : dumb=1 prime=3 addfb2_modifiers=1 async_flip=0 timestamp_monotonic=1
+objects : 1 connector(s), 1 encoder(s), 1 CRTC(s), 0 framebuffer(s)
+
+connectors
+  DSI-1 (id 36) connected, encoder 35, 2 mode(s)   <- target
+    mode 0: 1080x1240 @ 60 Hz "1080x1240" preferred
+    mode 1: 1080x1240 @ 120 Hz "1080x1240"
+    panel orientation: 3 (right-side-up) immutable
+    CRTC_ID: 50
+
+crtcs
+  CRTC 50 (index 0) active   <- target
+    mode: 1080x1240 @ 60 Hz "1080x1240"
+    GAMMA_LUT_SIZE: 1024
+    OUT_FENCE_PTR: yes
+
+planes (advertised; the atomic tests below decide what is actually accepted)
+  plane 38 PRIMARY  possible CRTCs: 50
+    (the target's primary)
+    formats: AR24 AB24 RA24 BX24 BA24 AR30 XR30 XR24 XB24 RX24 RG24 BG24 RG16 BG16 AR15 AB15 RA15 BA15 XR15 XB15 RX15 BX15 AR12 AB12 RA12 BA12 XR12 XB12 RX12 BX12 P010 NV12 NV21 NV16 NV61 VYUY UYVY YUYV YVYU YU12 YV12
+    IN_FORMATS: 2 modifier(s)
+      0x0500000000000001 COMPRESSED: AR24 AB24 AR30 XR30 XR24 XB24 BG16 P010 NV12
+      0x0000000000000000 LINEAR: AR24 AB24 RA24 BX24 BA24 AR30 XR30 XR24 XB24 RX24 RG24 BG24 RG16 BG16 AR15 AB15 RA15 BA15 XR15 XB15 RX15 BX15 AR12 AB12 RA12 BA12 XR12 XB12 RX12 BX12 P010 NV12
+    linear: AR24 yes, XR24 yes
+    zpos: 0..255 (now 0)
+    alpha: 0..65535
+    blend: none(2) premultiplied(0) coverage(1)
+    rotation: none rotate-0 rotate-90 rotate-0|rotate-90 rotate-180 rotate-0|rotate-180
+    props: CRTC_ID yes, FB_ID yes, SRC/CRTC yes, IN_FENCE_FD yes, OUT_FENCE_PTR no
+  plane 44 OVERLAY  possible CRTCs: 50
+    (the target's overlay)
+    formats: AR24 AB24 RA24 BX24 BA24 AR30 XR30 XR24 XB24 RX24 RG24 BG24 RG16 BG16 AR15 AB15 RA15 BA15 XR15 XB15 RX15 BX15 AR12 AB12 RA12 BA12 XR12 XB12 RX12 BX12 P010 NV12 NV21 NV16 NV61 VYUY UYVY YUYV YVYU YU12 YV12
+    IN_FORMATS: 2 modifier(s)
+      0x0500000000000001 COMPRESSED: AR24 AB24 AR30 XR30 XR24 XB24 BG16 P010 NV12
+      0x0000000000000000 LINEAR: AR24 AB24 RA24 BX24 BA24 AR30 XR30 XR24 XB24 RX24 RG24 BG24 RG16 BG16 AR15 AB15 RA15 BA15 XR15 XB15 RX15 BX15 AR12 AB12 RA12 BA12 XR12 XB12 RX12 BX12 P010 NV12
+    linear: AR24 yes, XR24 yes
+    zpos: 0..255 (now 0)
+    alpha: 0..65535
+    blend: none(2) premultiplied(0) coverage(1)
+    rotation: none rotate-0 rotate-90 rotate-0|rotate-90 rotate-180 rotate-0|rotate-180
+    props: CRTC_ID yes, FB_ID yes, SRC/CRTC yes, IN_FENCE_FD yes, OUT_FENCE_PTR no
+
+target
+  connector 36, CRTC 50 (index 0)
+  primary plane: found
+  overlay plane: found (AR24 advertised)
+  zpos: primary 0, overlay 0
+  primary rotation advertised: rotate-90
+  request ids: connector CRTC_ID=21, CRTC MODE_ID=24 ACTIVE=23
+  plane 38 request ids: CRTC_ID=21 FB_ID=18 SRC=10/11/12/13 CRTC=14/15/16/17
+  plane 44 request ids: CRTC_ID=21 FB_ID=18 SRC=10/11/12/13 CRTC=14/15/16/17
+  stacking: primary zpos 0, overlay zpos 255 -> overlay above
+
+atomic tests (TEST_ONLY)
+  framebuffer: AddFB2WithModifiers(LINEAR)
+  [ok]     1 modeset: primary at the panel's mode
+  [ok]     2a overlay band (600x200, zpos, alpha, premultiplied)
+  [ok]     2b overlay full panel (AR24, zpos, alpha, premultiplied)
+  [reject] 3 overlay rotated 90 (informational): Invalid argument (22)
+           the driver rejected a property, format, modifier or the combination
+  [reject] 4a primary rotated 90 (XR24, landscape -> portrait): Invalid argument (22)
+           the driver rejected a property, format, modifier or the combination
+  [reject] 4b primary rotated 90 (AR24, landscape -> portrait): Invalid argument (22)
+           the driver rejected a property, format, modifier or the combination
+  [ok]     5a primary scaled 640x480 -> the panel
+  [ok]     5b primary letterboxed (destination offset 0,120)
+  [ok]     6 overlay scaled 600x200 -> 300x400 (informational)
+  matrix: 6 ok, 3 rejected, 0 skipped
+
+VERDICT: GO (EGL rotate) -- overlay works, primary rotation was rejected: budget one EGL pass
+  (direct plane means no extra GPU/CPU copy; the DPU still composites and scanout costs bandwidth)
+probe exit: 0 (0 = decision, 2 = HOLD/incomplete; 143/137 = timeout or signal)

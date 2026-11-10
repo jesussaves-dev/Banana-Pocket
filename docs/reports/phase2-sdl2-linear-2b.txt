@@ -1,0 +1,19 @@
+capture-server v1
+drm card=/dev/dri/card1 driver=msm 1.13.0
+display connector=36 crtc=50 mode=1080x1240 primary=38 overlay=44
+MASTER ok
+READY socket=wayland-dmabuf seconds=12 drm=1 test=1 live=0
+CLIENT pid=5376 cmd=/data/sdl2-gl-client
+GLOBAL dmabuf formats=2
+Failed to create /root/.cache for shader cache (Read-only file system)---disabling.
+BUFFER client=sdl2-gl-client type=dmabuf format=XR24 modifier=0x0000000000000000 (LINEAR) size=1240x1080 planes=1 p0=off0/str5120
+TEST client=sdl2-gl-client size=1240x1080 format=XR24 modifier=0x0000000000000000 planes=1
+TEST primary ok
+TEST overlay ok
+TEST rotate90 reject errno=22 (Invalid argument)
+TEST import ok fb=54
+sdl2 video_driver=wayland
+sdl2 window=1240x1080 renderer=opengles2 flags=0xa
+sdl2 done
+SUMMARY client=sdl2-gl-client buffers=480 unique=1 frames=0 live=0 rotation_tested=1 rotation_ok=0
+command exit: 0

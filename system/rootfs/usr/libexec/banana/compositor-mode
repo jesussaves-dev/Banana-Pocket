@@ -1,0 +1,6 @@
+#!/bin/sh
+# Phase 4.1: "ui" (default) runs a game as a Wayland client of banana-ui's in-process compositor; "cage" is the
+# one-release escape hatch (compositor = "cage" in bananad.conf) and restores the old kiosk launcher.
+v=$(sed -n 's/^ *compositor *= *//p' /data/banana/bananad.conf 2>/dev/null | tail -n 1)
+v=$(printf '%s' "$v" | tr -d '"[:space:]')
+printf '%s\n' "${v:-ui}"

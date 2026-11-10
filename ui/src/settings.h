@@ -74,12 +74,28 @@ namespace banana
 		// the volume or brightness keys' level: a small bubble near the bottom of the panel, its label, the percent and
 		// a bar (drawn like notice)
 		void level(const std::string& label, int percent);
+		// the in-game pause menu over a frozen game (the compositor's overlay plane), two columns: the actions on the
+		// left (a value with < > when Left/Right change it), and on the right what the selected row is about (a save
+		// state's thumbnail, the achievements, the box art). Strings are English keys; the menu translates them.
+		struct PauseRow { std::string label, value; bool arrows = false; };
+		struct PauseView
+		{
+			std::string title, status;		// the game's name; battery, clock and time played (already formatted)
+			std::vector<PauseRow> rows;
+			int sel = 0, armed = -1;		// armed: the row asking "Press A again"
+			std::string picture;			// the right panel's image (a PNG path; "" for none)
+			std::string caption;			// a line under it (already formatted, not translated)
+			std::vector<std::string> lines;		// a short list under that (achievement titles), not translated
+		};
+		void pauseMenu(const PauseView& v);
 		// A toast: a pop-up across the top of the panel in ROCKNIXDS's look, one at a time out of a queue, drawn by the
 		// host over whatever screen is up (the battery's notice and the volume's level share that overlay). An
 		// achievement passes the badge RetroArch downloaded, which is drawn in the tile; a plain message passes a glyph
 		// (0 "i", 1 a tick, 2 a cross) and the accent follows it.
 		void notify(const std::string& title, const std::string& body, int glyph = 0, const std::string& badge = std::string());
 		void drawToast(double nowMs);
+		// the card just drawn by level/notice/drawToast, in composed-screen pixels (for the 3D overlay)
+		bool cardRect(int& x, int& y, int& w, int& h) const;
 		// for the host's poll timeout: is anything showing or waiting, and how long the showing one has left
 		bool toasting() const { return toastUntil > now || !toasts.empty(); }
 		double toastLeftMs() const { return toastUntil - now; }
@@ -150,6 +166,8 @@ namespace banana
 		std::vector<Toast> toasts;
 		Toast toastNow;
 		double toastUntil = 0;
+		int cardX = 0, cardY = 0, cardW = 0, cardH = 0;	// the last card's core box on the composed screen
+		void rememberCard(float x, float y, float w, float h);
 		void toast(const std::string& l1, const std::string& l2, uint32_t accent, int icon, double ms = 3000,
 				const std::string& badge = std::string());
 		// the first-time setup: the steps (Wi-Fi, the time zone, RetroAchievements, box art), run once after

@@ -1,6 +1,12 @@
 #pragma once
 // banana-ui: the panel through KMS, with no compositor and no GPU. The panel gets two dumb scanout buffers;
 // present() copies the part that changed into the hidden one and flips to it on the next vblank.
+//
+// Phase 3A: when the DRM driver exposes an overlay plane (and atomic KMS), the menu is drawn on that overlay
+// (ARGB8888, premultiplied, zpos top) and a black buffer stays on the primary. The panel is portrait-native
+// 1080x1240 while the menu draws 1240x1080: the rotation happens once, in software, in turn() (90 degrees
+// clockwise). The Wayland output of a future game client is the logical 1240x1080; its game frame would be
+// rotated by the same 90 degrees. Without an overlay/atomic KMS the old single-plane path is kept.
 #include <cstdint>
 #include <string>
 
@@ -50,17 +56,62 @@ namespace banana
 		// the night light: 0 off, 1 warm, 2 warmer. A gamma LUT on the panel, so it covers a game too (set from the
 		// menu, which holds the master; the kernel keeps the LUT across the compositor hand-over)
 		void setWarmth(int level);
+		// Phase 3B: the DRM fd (the compositor imports a client's DMA-BUF on it), whether the atomic overlay path
+		// is in use, and the two compositor frames. presentGame() puts a client's framebuffer on the primary and
+		// hides the menu overlay; showMenu() puts the menu back. Both honor the one-flip-in-flight rule.
+		int drmFd() const { return fd; }
+		bool atomic() const { return count > 0 && p[0].atomic; }
+		// overlayFb is the panel-sized ARGB card to show above the primary, 0 to hide the overlay
+		bool presentGame(uint32_t fb, uint32_t w, uint32_t h, uint32_t overlayFb = 0, int fenceFd = -1);
+		// 3F: the primary plane accepts IN_FENCE_FD (the EGL presenter may skip glFinish only when it does)
+		bool fenceSupported() const { return count > 0 && p[0].primary.in_fence_fd != 0; }
+		// the 3D card buffer: clear it, fill a panel-space rectangle (premultiplied ARGB), hand its FB to the
+		// compositor. False when the atomic overlay path is not in use.
+		bool overlayCardBegin();
+		void overlayCardTurn(const uint32_t* canvas, int x0, int y0, int x1, int y1);
+		uint32_t overlayCardFb() const;
+		bool showMenu();
+		// black primary, overlay off: used before the compositor is torn down so the plane stops scanning a
+		// presenter-owned framebuffer before the DRM fd is closed
+		bool blank();
 
 	private:
 		struct Buf { uint32_t handle = 0, fb = 0, pitch = 0; uint64_t size = 0; uint8_t* map = nullptr; };
-		struct Panel { uint32_t conn = 0, crtc = 0; uint8_t mode[68]; Buf buf[2]; int front = 0; Damage missed[2]; };
+		// one DRM plane's ids and the properties this display needs (found by type and possible_crtcs, never by id)
+		struct Plane
+		{
+			uint32_t id = 0, type = 0;
+			uint32_t crtc_id = 0, fb_id = 0, src_x = 0, src_y = 0, src_w = 0, src_h = 0, crt_x = 0, crt_y = 0, crt_w = 0, crt_h = 0;
+			uint32_t in_fence_fd = 0;	// 3F: the primary's GPU sync file property (0: unsupported)
+			uint32_t zpos = 0, alpha = 0, blend = 0;
+			uint64_t zpos_max = 0;
+			bool zpos_mutable = false, has_alpha = false, has_blend = false;
+		};
+		struct Panel
+		{
+			uint32_t conn = 0, crtc = 0;
+			uint8_t mode[68] = { 0 };
+			Buf buf[2];		// the menu, ARGB8888 (atomic overlay) or XRGB8888 (legacy primary)
+			Buf card[2];	// the 3D card layer, ARGB8888 over a client on the primary (atomic only)
+			int cardFront = 0;
+			Buf black;		// XRGB8888, the primary when the menu is on the overlay
+			int front = 0;
+			Damage missed[2];
+			Plane primary, overlay;
+			bool atomic = false;
+			uint32_t mode_blob = 0;
+		};
 		int fd = -1, W = 0, H = 0, pending = 0, count = 1;
 		int rot = 0, SW = 0, SH = 0;	// the panel's rotation, and its size in its own rows (the scanout buffers')
 		Panel p[2];
 		void turn(const uint32_t* src, Buf& bf, const Damage& d);
 		void applyGamma();
 		int warmth = 0;
-		bool makeBuf(Buf& b);
+		bool makeBuf(Buf& b, uint32_t fourcc);
 		void freeBuf(Buf& b);
+		uint32_t propId(uint32_t obj, uint32_t type, const char* name, uint64_t* value = nullptr);
+		bool findPlanes(Panel& pn, uint32_t crtc_index);
+		bool atomicModeset(Panel& pn);
+		bool commitFrame(Panel& pn, uint32_t primaryFb, uint32_t srcW, uint32_t srcH, uint32_t overlayFb, int fenceFd = -1);
 	};
 }

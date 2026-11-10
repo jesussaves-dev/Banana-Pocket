@@ -341,10 +341,33 @@ static pid_t ui_pid(void)
 	return r;
 }
 
+/* while banana-ui's compositor owns the panel it writes the 3D card file; the menu turns it into an overlay above a
+ * client. A cage game or a stopped compositor keeps the existing OSD/SHOW_MSG paths. */
+static int compositor_on(void) { return access("/run/banana/compositor", F_OK) == 0; }
+/* the menu's quick menu is up: the pad is grabbed, so its F-combos (F+B analog, F+volume backlight) are suspended
+ * while power and a single volume key keep working */
+static int overlay_open(void) { return access("/run/banana/overlay-open", F_OK) == 0; }
+
+static void overlay_show(const char *kind, const char *title, const char *body, const char *badge, int ms)
+{
+	if (!compositor_on()) return;
+	char v[512];
+	snprintf(v, sizeof v, "%s|%s|%s|%s|%d\n", kind, title ? title : "", body ? body : "",
+	         badge ? badge : "", ms);
+	FILE *f = fopen("/run/banana/overlay.new", "w");
+	if (!f) return;
+	fputs(v, f);
+	fclose(f);
+	rename("/run/banana/overlay.new", "/run/banana/overlay");
+}
+
 /* the menu's level card for a volume or brightness key: what changed and its percent in /run/banana/osd, then
  * SIGUSR2 tells banana-ui to show it (it ignores a file older than a moment, e.g. one written during a game) */
 static void osd(const char *what, int percent)
 {
+	char pct[32];
+	snprintf(pct, sizeof pct, "%d%%", percent);
+	overlay_show(what, what, pct, "", 2000);	// a client under the in-process compositor
 	char v[64];
 	snprintf(v, sizeof v, "%s %d\n", what, percent);
 	FILE *f = fopen("/run/banana/osd.new", "w");
@@ -790,7 +813,7 @@ static void suspend_now(const char *why)
 		if (cg > 0) kill(cg, SIGUSR1);
 	}
 	pid_t ui = ui_pid();
-	if (ui && !game) kill(ui, SIGUSR1);	/* draws the panel again (the clock and the battery moved on) */
+	if (ui && (!game || compositor_on())) kill(ui, SIGUSR1);	/* draws the panel again (the clock and the battery moved on); a resident game needs the re-modeset too */
 	double t_back = mono();
 	undim();
 	hooks("post", 1);
@@ -1444,6 +1467,7 @@ static int hud_on(void) { return cfg.hud && pid_of(game_pid_path) > 0; }
 
 static int hud_show(const char *text)
 {
+	if (compositor_on()) overlay_show("hud", text, "", "", 3000);	// battery/unplug/errors over a client
 	if (!hud_on()) return 0;
 	char line[256];
 	snprintf(line, sizeof line, "SHOW_MSG %s", text);
@@ -1477,10 +1501,22 @@ static int cheevos_poll(void)
 	char ln[1024];
 	while (fgets(ln, sizeof ln, f)) {
 		cheevos_off += (long)strlen(ln);
-		if (hud_on() && cheevos_line(ln)) {
+		if (!cheevos_line(ln)) continue;
+		if (hud_on()) {
 			shown++;
 			FILE *m = fopen(hud_live_path, "w");	/* the menu must not toast it again */
 			if (m) fclose(m);
+		} else if (compositor_on()) {
+			char c[1024];
+			snprintf(c, sizeof c, "%s", ln);
+			size_t len = strlen(c);
+			while (len && (c[len - 1] == '\n' || c[len - 1] == '\r')) c[--len] = 0;
+			char *f[7];
+			int nf = 0;
+			f[nf++] = c;
+			for (char *p = c; *p && nf < 7; ++p)
+				if (*p == '\t') { *p = 0; f[nf++] = p + 1; }
+			if (nf == 7 && f[2][0]) overlay_show("achievement", f[2], f[3], f[6], 4000);
 		}
 	}
 	fclose(f);
@@ -1900,7 +1936,11 @@ static void power_update(void)
 	if (!battery_state(bat, sizeof bat, &pct, &charging)) pct = 100;
 	int plugged = charger_online();
 	static int prev_plugged = -1;
-	if (prev_plugged >= 0 && prev_plugged != plugged) say("charger %s", plugged ? "plugged in" : "unplugged");
+	if (prev_plugged >= 0 && prev_plugged != plugged) {
+		say("charger %s", plugged ? "plugged in" : "unplugged");
+		overlay_show(plugged ? "charger" : "unplug", "Charger",
+		             plugged ? "Plugged in" : "Unplugged", "", 3000);
+	}
 	if (prev_plugged == 0 && plugged) vibrate(cfg.vibrate_ms);	/* the cable went in (not at boot, nor on unplug) */
 	prev_plugged = plugged;
 	if (plugged) charging = 1;	/* plugged in counts as charging (see charger_online) */
@@ -2072,7 +2112,7 @@ static void handle(const struct input_event *e)
 	 * analogue stick (RetroArch's TOGGLE_ANALOG_DPAD, the command banana's RetroArch patch adds). The RPC has no
 	 * analogue stick, so this is what lets a game that reads only the stick -- a Dreamcast racer -- be played with
 	 * the d-pad, and hands the d-pad back for a game that wants it as a d-pad. */
-	case BTN_SOUTH: if (e->value && fn_held) ra_cmd("TOGGLE_ANALOG_DPAD"); break;
+	case BTN_SOUTH: if (e->value && fn_held && !overlay_open()) ra_cmd("TOGGLE_ANALOG_DPAD"); break;
 	case KEY_POWER:
 		if (now < ignore_power_until) break;
 		/* Transfer mode (Settings > System > Mass storage, read-write): the menu is stopped and /data is the
@@ -2099,7 +2139,8 @@ static void handle(const struct input_event *e)
 		if (e->value) {
 			int game = pid_of("/run/banana/game.pid") > 0;
 			if (game && fn_held) break;
-			if ((game && select_held) || (!game && fn_held)) brightness(1, select_held && !fn_held ? 10 : cfg.brightness_step);
+			if (((game && select_held) || (!game && fn_held)) && !overlay_open())
+				brightness(1, select_held && !fn_held ? 10 : cfg.brightness_step);
 			else volume(1);
 		}
 		break;
@@ -2107,7 +2148,8 @@ static void handle(const struct input_event *e)
 		if (e->value) {
 			int game = pid_of("/run/banana/game.pid") > 0;
 			if (game && fn_held) break;
-			if ((game && select_held) || (!game && fn_held)) brightness(-1, select_held && !fn_held ? 10 : cfg.brightness_step);
+			if (((game && select_held) || (!game && fn_held)) && !overlay_open())
+				brightness(-1, select_held && !fn_held ? 10 : cfg.brightness_step);
 			else volume(-1);
 		}
 		break;
