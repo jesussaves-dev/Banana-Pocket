@@ -127,7 +127,12 @@ Format per task: **goal · files · steps · verify · done when · stop if**.
   no `panel restore failed` in the log.
 - **stop if:** any cycle fails → capture `dmesg | tail -n 40` and the banana-ui log tail, STOP.
 
-### T6 — Acceptance gate (trimmed 2026-11-10) · `IN PROGRESS` · needs: T3, T4, T5
+### T6 — Acceptance gate (trimmed 2026-11-10) · `DONE (2026-11-10)` · needs: T3, T4, T5
+- **Item 1 closed (later the same day):** the 52 fps was the *presented* count in a scene where the game sends fewer
+  distinct frames, not the compositor. RetroArch's own `--max-frames` timing (600 vs 3600 frames, Crash, SwanStation)
+  gives **60.22 fps under the compositor and 60.01 under cage**, and a 30 s 3F trace presented all 1800 frames at a
+  16.67 ms interval with **0 drops**. Item 3 (escape hatch) was exercised by the same run (`compositor = "cage"`, game
+  launched and exited under cage).
 Scoped to what the 4.2 changes (872ce06) can break. Record results in `docs/reports/compositor-acceptance-<date>.txt`:
 1. **Pacing:** 10 min PSX (Vulkan) and Dreamcast (glcore) resident: ≥ 59.9 fps at the compositor (cage
    baseline 59.91, F7), no `drm`/`dpu` errors in `dmesg`, `banana-ui` + RetroArch RSS recorded. Runner:
@@ -183,7 +188,8 @@ header to "Done".
   `state_slot = "0"` per launch.
 - Verified on the unit with a uinput pad: slot 3 saved to `.state3`, slot 1 loaded `.state1`, thumbnail shown,
   fast-forward/shader lines sent (shader on → off seen in the frame dump), achievements panel with test data.
-  **Not tested:** Change disc (no `.m3u` game on the card).
+  **Change disc verified 2026-11-10** with a two-entry test `.m3u`: the row showed `Disc 1/2`, and RetroArch logged
+  the tray open, `Setting disc in tray: 2/2` and the tray closed, one queued line each.
 - Verified on the unit with a uinput pad: every RetroArch row (state saved/loaded, `[Core] Reset.`, RetroArch's
   Quick Menu opened, quit status 0, config restored) and a port (frozen, Quit). **Not yet checked by hand:** a
   real MODE press no longer opening RetroArch's menu, MODE + X opening it, MODE + Start still quitting.

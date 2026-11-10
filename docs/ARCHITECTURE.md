@@ -6,7 +6,7 @@
   - `p1` (`BANANA-BOOT`, FAT, 160MB): `a|b/{Image,<board>.dtb}`, `extlinux/extlinux.conf`.
   - `p2`/`p3` (`banana-root-a|b`, RO squashfs LZ4, 256MB): Active/inactive rootfs slots.
   - `p4` (`BANANA`, RW exFAT, `/data`, init via `/usr/libexec/banana/firstboot`): `roms/`, `bios/`, `saves/`, `states/`, `banana/{settings.conf,bananad.conf,accounts.conf,wifi.conf,asound.state,volume,setup-done,logs/,updates/,ssh/}`.
-- **Update (`/usr/libexec/banana/update apply`):** Unpacks `/data/banana/updates/banana-<board>-<version>.update.tar` -> verifies `board` & `sha256sums` -> streams `rootfs.squashfs` (16MB chunks) to inactive slot -> verifies read-back SHA256 -> populates `a/` or `b/` boot slot -> atomic `mv` on `extlinux.conf`. Logs: `/data/banana/logs/updates.log`.
+- **Update (`/usr/libexec/banana/update apply`):** Unpacks `/data/banana/updates/banana-<board>-<version>.update.tar` -> verifies `board` & `sha256sums` -> streams `rootfs.squashfs` (16MB chunks) to inactive slot -> verifies read-back SHA256 -> populates `a/` or `b/` boot slot -> atomic `mv` on `extlinux.conf`. Logs: `/data/banana/logs/updates.log`. `update prune` (rcS, ~2 min after boot) keeps the two newest packages and the running version's, deleting the rest.
 
 ## 2. Boot & Init
 - **Built-in Drivers:** `CH13726A` DSI (`rotation = <90>`), `rsinput` (MCU gamepad), `FT5452` touch, PMIC/`qcom_battmgr`, `pwm_fan`. Zero `fbcon`/VTs/`udev`.
