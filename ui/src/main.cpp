@@ -1026,7 +1026,19 @@ static bool audioFlowing()
 {
 	std::ifstream cards("/proc/asound/cards");
 	std::string all((std::istreambuf_iterator<char>(cards)), std::istreambuf_iterator<char>());
-	if (all.find('[') == std::string::npos) return true;	// no sound card (QEMU, a broken probe): nothing to wait for
+	if (all.find('[') == std::string::npos)
+	{
+		// No card *yet* is the usual cold boot: the ADSP's APM only answers ~6.3 s after the kernel starts, and the
+		// card binds after it -- later than the splash. Wait then; only a system with no DSP coming (QEMU) has nothing
+		// to wait for.
+		bool dsp = false;
+		if (DIR* r = opendir("/sys/class/remoteproc"))
+		{
+			while (dirent* e = readdir(r)) if (strncmp(e->d_name, "remoteproc", 10) == 0) dsp = true;
+			closedir(r);
+		}
+		return !dsp;
+	}
 	if (DIR* d = opendir("/proc/asound"))
 	{
 		bool running = false;
@@ -1066,7 +1078,7 @@ static void playSplash(Display& disp, SoftBackend& be, const Options& o, const s
 	gSplash.onCue = [&sound](const std::string& n) { sound.play(n); };
 	double t0 = nowMs();
 	// the hold (see audioFlowing): from the moment the clock reaches HOLD_AT until the sound plays, at most HOLD_MAX
-	const double HOLD_MAX = 2500;
+	const double HOLD_MAX = 3500;	// measured holds up to ~2.2 s on a cold boot
 	double holdStart = -1, offset = 0;
 	bool released = !waitAudio;
 	for (;;)

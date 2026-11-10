@@ -231,3 +231,22 @@ device, instead of `start failure (-1)` ~12 s later and no sound until ~20–33 
   thing that has the device open and playing by 8.1 s.
 - **Fix A** is the kernel patch `0062-…`; **Fix B** is the `rcS` ordering above. The `rcS: audio: …` marks are kept —
   they are a few lines and make the next audio regression obvious.
+
+## The click with the sound server (2026-11-10)
+
+With PipeWire the chain is longer than the rcS marks above: the card binds only once the ADSP's APM answers
+(**~6.35 s after the kernel, every boot**), then WirePlumber probes it and the first stream starts the DSP
+(`trigger_time` **8.4–9.2 s**). The splash fires the click ~1 s after the panel opens (6.2–8.3 s), so the click and
+the sound raced, and when the sound lost, the click was kept and played late.
+
+- **The `CMD timeout for [1001021]` is not a lost reply.** A test kernel that re-sent `APM_CMD_GET_SPF_STATE` every
+  100 ms (90 queries) got no answer to any of them before ~6.35 s; the APM simply is not up before then. The 5 s
+  timeout ending at the same moment is a coincidence of when the query is sent (~1.3 s). No kernel or rcS ordering
+  moves it, so that patch was dropped.
+- **rcS's 4 s card wait often expires first** (`rcS: audio: card` ~5.4–5.7 s with no card yet): the card appears
+  after ~6.35 s.
+- **The fix is in the splash:** it holds on the frame before the bunch falls until a playback frontend is
+  `RUNNING` (`/proc/asound/card*/pcm*p/sub0/status`), treating "no card yet" as a wait whenever a DSP is coming
+  (`/sys/class/remoteproc`), with a 3.5 s cap. Measured over three cold boots: held 1.8–1.9 s, released at the
+  stream's `trigger_time`, amp locked ~40 ms later, click ~0.95 s after that; the menu at ~9.8 s.
+- Each boot logs `splash: held N ms for the sound` in `banana-ui.log`.
