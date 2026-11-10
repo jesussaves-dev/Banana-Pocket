@@ -38,6 +38,7 @@ namespace banana
 		// way to wake a screen the burn-in guard has blanked, and the guard's wake is the menu's, so the menu has
 		// to *see* the press. WAKE is not a menu button (uiButton ignores it), so it wakes and does nothing else.
 		case KEY_POWER: case KEY_SLEEP: case KEY_WAKEUP: return Key::WAKE;
+		case KEY_VOLUMEUP: case KEY_VOLUMEDOWN: return Key::VOLUME;
 		default: return Key::NONE;
 		}
 	}

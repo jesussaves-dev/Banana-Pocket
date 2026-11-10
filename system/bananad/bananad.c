@@ -1467,7 +1467,9 @@ static int hud_on(void) { return cfg.hud && pid_of(game_pid_path) > 0; }
 
 static int hud_show(const char *text)
 {
-	if (compositor_on()) overlay_show("hud", text, "", "", 3000);	// battery/unplug/errors over a client
+	/* under banana-ui's compositor the card on the overlay plane is the one place it shows (RetroArch's own message
+	 * box would say it a second time); under cage it is RetroArch's message box, as before */
+	if (compositor_on()) { if (cfg.hud) overlay_show("hud", text, "", "", 3000); return 0; }
 	if (!hud_on()) return 0;
 	char line[256];
 	snprintf(line, sizeof line, "SHOW_MSG %s", text);
@@ -1624,8 +1626,11 @@ static void volume(int dir)
 	/* The level is shown by whoever owns the panel: the menu gets its pill (banana-ui's OSD, which it is drawing),
 	 * a game gets the same number in RetroArch's message box, written to the FIFO the launcher already hears. The
 	 * volume itself is one amplifier level either way. */
-	if (pid_of("/run/banana/game.pid") > 0) { char b[96]; hud_fmt(HUD_VOLUME, pct, b, sizeof b); hud_show(b); }
-	else osd("volume", pct);
+	/* over banana-ui's compositor (menu or game) the level pill on the overlay plane; a game under cage gets the line
+	 * in RetroArch's message box. "On-screen info while playing" off keeps a game's screen clear either way. */
+	int game = pid_of("/run/banana/game.pid") > 0;
+	if (game && !compositor_on()) { char b[96]; hud_fmt(HUD_VOLUME, pct, b, sizeof b); hud_show(b); }
+	else if (!game || cfg.hud) osd("volume", pct);
 }
 
 static void brightness(int dir, int step_pct)
@@ -1651,11 +1656,12 @@ static void brightness(int dir, int step_pct)
 	}
 	save_backlight_at = mono() + 2;
 	if (pct >= 0) {
-		if (pid_of("/run/banana/game.pid") > 0) {
+		int game = pid_of("/run/banana/game.pid") > 0;
+		if (game && !compositor_on()) {
 			char b[96];
 			hud_fmt(HUD_BRIGHT, pct, b, sizeof b);
 			hud_show(b);
-		} else
+		} else if (!game || cfg.hud)
 			osd("brightness", pct);
 	}
 }
@@ -1937,9 +1943,7 @@ static void power_update(void)
 	int plugged = charger_online();
 	static int prev_plugged = -1;
 	if (prev_plugged >= 0 && prev_plugged != plugged) {
-		say("charger %s", plugged ? "plugged in" : "unplugged");
-		overlay_show(plugged ? "charger" : "unplug", "Charger",
-		             plugged ? "Plugged in" : "Unplugged", "", 3000);
+		say("charger %s", plugged ? "plugged in" : "unplugged");	/* banana-ui shows the notice (menu and game) */
 	}
 	if (prev_plugged == 0 && plugged) vibrate(cfg.vibrate_ms);	/* the cable went in (not at boot, nor on unplug) */
 	prev_plugged = plugged;
@@ -2130,27 +2134,20 @@ static void handle(const struct input_event *e)
 		if (e->value) { power_down = 1; power_since = now; }
 		else if (power_down) { power_down = 0; suspend_now("power button"); }
 		break;
-	/* F + volume is the backlight in the menu, Select + volume in a game (in the menu Select is the search key,
-	 * so it cannot also be the modifier there), in 10% steps down to a 2% night-mode floor. In a game F is
-	 * RetroArch's own menu button (the pad profile binds BTN_MODE as hotkey and menu toggle), so pressing it there
-	 * pops that menu over whatever the OS draws and the pill is never seen: F + volume in a game is left alone
-	 * rather than silently changing the level behind the menu. */
+	/* F (MODE) + volume is the backlight, in the menu and in a game under banana-ui's compositor, in steps down to a
+	 * 2% night-mode floor: there MODE is Banana's pause menu, which opens on MODE's release and not after a combo.
+	 * A game under cage keeps Select + volume (MODE is RetroArch's own menu there, which would cover the pill), and
+	 * F + volume is left alone in it rather than silently changing the level behind that menu. */
 	case KEY_VOLUMEUP:
-		if (e->value) {
-			int game = pid_of("/run/banana/game.pid") > 0;
-			if (game && fn_held) break;
-			if (((game && select_held) || (!game && fn_held)) && !overlay_open())
-				brightness(1, select_held && !fn_held ? 10 : cfg.brightness_step);
-			else volume(1);
-		}
-		break;
 	case KEY_VOLUMEDOWN:
 		if (e->value) {
-			int game = pid_of("/run/banana/game.pid") > 0;
-			if (game && fn_held) break;
-			if (((game && select_held) || (!game && fn_held)) && !overlay_open())
-				brightness(-1, select_held && !fn_held ? 10 : cfg.brightness_step);
-			else volume(-1);
+			int dir = e->code == KEY_VOLUMEUP ? 1 : -1;
+			int game = pid_of("/run/banana/game.pid") > 0, comp = compositor_on();
+			if (game && !comp && fn_held) break;
+			int bright = (comp || !game) ? fn_held : select_held;
+			if (bright && !overlay_open())
+				brightness(dir, game && !comp ? 10 : cfg.brightness_step);
+			else volume(dir);
 		}
 		break;
 	}

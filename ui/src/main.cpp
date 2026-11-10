@@ -595,7 +595,7 @@ struct PlugNotice
 		int s = p.charging ? 1 : 0;
 		if (seen < 0 || s == seen) { seen = s; return false; }
 		seen = s;
-		until = now + 4000;
+		until = now + 2500;
 		percent = p.percent;
 		title = s ? "Charging" : "On battery";
 		body = p.percent >= 0 ? std::to_string(p.percent) + (s ? "% and charging" : "% left")
@@ -1793,6 +1793,9 @@ int main(int argc, char** argv)
 	double resumeDue = 0;	// the end of the resume's any-key cancel window (0: none pending)
 	auto handle = [&](const InputEvent& ev)
 	{
+		// a volume key is bananad's (the level, or the backlight with MENU held): here it only cancels the pause menu
+		// a held MENU would open on its release, and nothing else in the menu sees it
+		if (ev.key == Key::VOLUME) { if (ev.type == InputEvent::PRESS) quickPending = false; return; }
 		// The first press or touch stays in the menu -- except the power key: the press (and release) that turned the
 		// console on arrives here too, and cancelling on it made every real boot skip the resume.
 		if (resumeDue > 0 && (ev.type == InputEvent::PRESS || ev.type == InputEvent::TOUCH_DOWN) && ev.key != Key::WAKE)
@@ -2274,7 +2277,8 @@ int main(int argc, char** argv)
 		{
 			batteryDue = false;
 			if (low.check(lib.power(), shutdownPercent(o.data), now)) dirty = true;
-			if (plug.check(lib.power(), now)) dirty = true;
+			// over a game the notice goes on the overlay plane (bananad no longer sends a second, "Charger" card)
+			if (plug.check(lib.power(), now)) { dirty = true; if (comp.clientOnScreen() && !quickMenu) pushCard("charger", 2500); }
 		}
 
 		bool want;

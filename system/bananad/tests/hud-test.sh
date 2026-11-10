@@ -34,7 +34,7 @@ want2 'cheevos shrink: 1 1'
 want2 'cheevos off: 0 0'
 has() { grep -qF "$2" "$1" || { echo "FAIL: $1 lacks $2" >&2; fail=1; }; }
 has "$HERE/bananad.c" 'signal(SIGPIPE, SIG_IGN);'
-has "$HERE/bananad.c" 'else osd("volume", pct);'
+has "$HERE/bananad.c" 'else if (!game || cfg.hud) osd("volume", pct);'   # the pill: the menu, and a game under the compositor
 has "$HERE/bananad.c" 'ra_cmd("PAUSE_TOGGLE")'
 has "$HERE/bananad.c" 'IN_CLOSE_WRITE'
 has "$HERE/bananad.c" '/run/banana/hud-live'

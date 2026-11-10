@@ -9,7 +9,9 @@
 
 namespace banana
 {
-	enum class Key { NONE, LEFT, RIGHT, UP, DOWN, A, B, X, Y, L, R, START, SELECT, MENU, WAKE };
+	// VOLUME: either volume key. bananad owns the level; the menu only needs to know one was pressed (MENU + volume is
+	// the backlight, which must not also open the pause menu on MENU's release)
+	enum class Key { NONE, LEFT, RIGHT, UP, DOWN, A, B, X, Y, L, R, START, SELECT, MENU, WAKE, VOLUME };
 	// what a device is, for the compositor's seat (3E.2): the pad and the power/volume keys stay direct evdev
 	enum class InputClass { PAD, TOUCH, KEYS, KEYBOARD };
 
