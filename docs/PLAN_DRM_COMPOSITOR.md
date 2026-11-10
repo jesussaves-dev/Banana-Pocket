@@ -127,18 +127,19 @@ Format per task: **goal · files · steps · verify · done when · stop if**.
   no `panel restore failed` in the log.
 - **stop if:** any cycle fails → capture `dmesg | tail -n 40` and the banana-ui log tail, STOP.
 
-### T6 — Acceptance gate · `TODO` · needs: T3, T4, T5
-Run and record each result (pass/fail + number) in a new `docs/reports/compositor-acceptance-<date>.txt`:
-1. 10 min PSX (Vulkan) and Dreamcast (glcore) at 60.00 fps; dropped frames ≤ cage baseline + 1%.
-2. 5 min full-screen scrolling pattern: no tearing, no `drm`/`dpu` errors in `dmesg`.
-3. `system/bananad/tests/sleep-test.sh` 50/50, then 20 real sleep/wake with a game (T5 counts).
-4. `make sound-test` (see `docs/SOUND-TEST.md`) + audio in a port and BananaTube.
-5. Burn-in guard: menu idle dims at 90 s, off at 180 s; guard suspended while a client is focused.
-6. RSS: `banana-ui` with a game vs. old `banana-ui + cage`; overlay buffers ≤ +12 MB.
-7. Input: 100 pause-card open/close cycles, analog toggle, volume keys during the card.
-8. `make -s test`, `make bench` within noise.
-9. `compositor = "cage"` still boots the old path; A/B update + **Previous version** work.
+### T6 — Acceptance gate (trimmed 2026-11-10) · `IN PROGRESS` · needs: T3, T4, T5
+Scoped to what the 4.2 changes (872ce06) can break. Record results in `docs/reports/compositor-acceptance-<date>.txt`:
+1. **Pacing:** 10 min PSX (Vulkan) and Dreamcast (glcore) resident: ≥ 59.9 fps at the compositor (cage
+   baseline 59.91, F7), no `drm`/`dpu` errors in `dmesg`, `banana-ui` + RetroArch RSS recorded. Runner:
+   a device script that launches via `/run/banana/launch` and diffs the `egl: frame N` counter.
+2. **BananaTube by hand:** one video plays upright with sound and exits to the menu, no cage.
+3. **Escape hatch:** `compositor = "cage"` in `bananad.conf` → a RetroArch game, a port and BananaTube each run
+   under cage (`pidof cage` non-empty) and return to the menu; remove the line afterwards.
 - **stop if:** any item fails → record it, STOP; do not start T7.
+- **Dropped, with reasons:** `sleep-test.sh` and real sleep cycles (bananad unchanged since 4.1b; T5 did 20
+  real cycles); 100 pause-card cycles (input/grab code unchanged; 3E passed 50/50); `make sound-test` (no audio
+  path change); burn-in guard (only the user's separate uncommitted edit touches it); A/B update / Previous
+  version (untouched; exercised by the next release install); `make -s test` + `make bench` (passed 2026-11-10).
 
 ### T7 — Remove cage (next release after T6) · `TODO` · needs: T6 **and** one released image with T4
 - **files:** `buildroot/configs/banana_retroid_pocket_classic_defconfig` (`BR2_PACKAGE_CAGE` and its comments
