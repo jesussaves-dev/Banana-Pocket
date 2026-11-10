@@ -38,7 +38,9 @@
 #include <condition_variable>
 #include <csignal>
 #include <cstdio>
+#include <cctype>
 #include <cstring>
+#include <iterator>
 #include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
@@ -1015,8 +1017,44 @@ static void showFrame(Display& disp, SoftBackend& be, int sig)
 static Splash gSplash;
 
 // plays until the intro is over and the menu is ready (with the animation off: only the wait for the menu)
+// The boot click's race: the splash fires it ~1 s after the panel opens, and the sound path (the card, WirePlumber's
+// probe, the first stream starting the DSP) comes up at about the same moment -- a little later and the click was
+// kept and played late, after the landing it belongs to. So the splash waits for the sound instead: it holds before
+// the bunch starts to fall until a playback frontend is RUNNING (PipeWire has the DSP pulling audio, the amp locks
+// within ~50 ms), then the fall's ~1 s leads into a click that plays the moment it is asked. Read-only: /proc/asound.
+static bool audioFlowing()
+{
+	std::ifstream cards("/proc/asound/cards");
+	std::string all((std::istreambuf_iterator<char>(cards)), std::istreambuf_iterator<char>());
+	if (all.find('[') == std::string::npos) return true;	// no sound card (QEMU, a broken probe): nothing to wait for
+	if (DIR* d = opendir("/proc/asound"))
+	{
+		bool running = false;
+		while (dirent* e = readdir(d))
+		{
+			if (strncmp(e->d_name, "card", 4) != 0 || !isdigit((unsigned char)e->d_name[4])) continue;
+			std::string card = std::string("/proc/asound/") + e->d_name;
+			if (DIR* c = opendir(card.c_str()))
+			{
+				while (dirent* p = readdir(c))
+				{
+					size_t n = strlen(p->d_name);
+					if (strncmp(p->d_name, "pcm", 3) != 0 || n < 5 || p->d_name[n - 1] != 'p') continue;
+					std::ifstream st(card + "/" + p->d_name + "/sub0/status");
+					std::string line;
+					while (std::getline(st, line)) if (line.find("RUNNING") != std::string::npos) running = true;
+				}
+				closedir(c);
+			}
+		}
+		closedir(d);
+		return running;
+	}
+	return true;
+}
+
 static void playSplash(Display& disp, SoftBackend& be, const Options& o, const std::string& variant, bool on,
-	std::atomic<bool>& ready, std::mutex& readyM, std::condition_variable& readyCv, Sound& sound, int sig)
+	std::atomic<bool>& ready, std::mutex& readyM, std::condition_variable& readyCv, Sound& sound, int sig, bool waitAudio)
 {
 	if (!on || !gSplash.load(o.splash, o.banana + "/banana-48.png", variant, be.width(), be.height()))
 	{
@@ -1027,14 +1065,31 @@ static void playSplash(Display& disp, SoftBackend& be, const Options& o, const s
 	}
 	gSplash.onCue = [&sound](const std::string& n) { sound.play(n); };
 	double t0 = nowMs();
+	// the hold (see audioFlowing): from the moment the clock reaches HOLD_AT until the sound plays, at most HOLD_MAX
+	const double HOLD_MAX = 2500;
+	double holdStart = -1, offset = 0;
+	bool released = !waitAudio;
 	for (;;)
 	{
-		double t = nowMs() - t0;
+		double raw = nowMs() - t0, t = raw - offset;
+		if (!released && t >= Splash::HOLD_AT)
+		{
+			if (holdStart < 0) holdStart = raw - (t - Splash::HOLD_AT);
+			bool flowing = audioFlowing();
+			if (flowing || raw - holdStart >= HOLD_MAX)
+			{
+				released = true;
+				offset = raw - holdStart;
+				t = raw - offset;
+				logf("splash: held %.0f ms for the sound%s", offset, flowing ? "" : " (gave up: not playing yet)");
+			}
+			else t = Splash::HOLD_AT;
+		}
 		bool r = ready;
 		if (gSplash.finished(t, r)) break;
 		gSplash.draw(be.canvas(0), t, r);
 		showFrame(disp, be, sig);
-		int wait = gSplash.nextFrame(nowMs() - t0, ready);
+		int wait = gSplash.nextFrame(nowMs() - t0 - offset, ready);
 		if (wait > 16) sleepUs(std::min(wait, 50) * 1000);	// waiting on the library: look again now and then
 	}
 }
@@ -1393,7 +1448,8 @@ int main(int argc, char** argv)
 	Resume resume = resumePlan(o.data, resumeRom);
 	if (resume == Resume::Ready) logf("resume: ready %s (any key cancels)", resumeRom.c_str());
 	else if (resume != Resume::None) resumeCancel(o.data);
-	playSplash(disp, be, o, variant, settings["splash"] != "off" && resume != Resume::Ready, ready, readyM, readyCv, sound, sigPipe[0]);
+	playSplash(disp, be, o, variant, settings["splash"] != "off" && resume != Resume::Ready, ready, readyM, readyCv, sound, sigPipe[0],
+	           settings["sounds"] != "off");
 	// the splash is done: free its layers (bgTop is a full screen) before the menu's idle loop, so they are not held
 	// for the whole session (the idle RSS budget)
 	gSplash = Splash();

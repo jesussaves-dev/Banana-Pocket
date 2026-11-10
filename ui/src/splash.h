@@ -25,6 +25,9 @@ namespace banana
 		std::function<void(const std::string&)> onCue;	// "insert": once, the frame the bunch seats (CLICK_AT)
 
 		static constexpr double INTRO_END = 1390;
+		// the frame before the bunch starts to fall (only the background is up): the host may hold the animation here
+		// until the sound is actually playing, so the landing and its click always arrive together
+		static constexpr double HOLD_AT = 60;
 
 	private:
 		struct Rgba { int w = 0, h = 0; std::vector<uint32_t> px; };	// premultiplied 0xAARRGGBB

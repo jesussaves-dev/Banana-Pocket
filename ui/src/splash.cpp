@@ -9,7 +9,7 @@ namespace banana
 	static constexpr double WORD_AT = 560, LETTER = 60, LOAD_AT = 600, DOT = 240;
 	static constexpr double SHINE_AT = 1000, SHINE = 300;
 	static constexpr double CLICK_AT = 1000;	// the bunch lands and the wordmark is complete: the intro's cue ("insert")
-	static constexpr double DROP_AT = 60;		// the bunch leaves the top a beat after the background
+	static constexpr double DROP_AT = Splash::HOLD_AT;	// the bunch leaves the top a beat after the background
 
 	// the layout, in CSS px of a 640x480 panel
 	static constexpr float BUNCH_Y = 96, WORD_Y = 268, LOAD_Y = 342, DOTS_Y = 368;
