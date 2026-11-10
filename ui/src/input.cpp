@@ -73,6 +73,7 @@ namespace banana
 			if (mt || st)
 			{
 				dv.touch = true;
+				dv.cls = InputClass::TOUCH;
 				dv.grabbable = true;
 				dv.pointer = st && !testBit(keys, BTN_TOUCH);
 				input_absinfo ax = {}, ay = {};
@@ -89,7 +90,10 @@ namespace banana
 			}
 			else
 			{
-				bool any = testBit(abs, ABS_HAT0X);
+				bool letter = false;
+				for (int k = KEY_A; k <= KEY_Z && !letter; k++)
+					letter = testBit(keys, k);
+				bool any = testBit(abs, ABS_HAT0X) || letter;
 				for (int k = KEY_ESC; k < KEY_MAX && !any; k++)
 					if (testBit(keys, k) && mapKey(k) != Key::NONE) any = true;
 				if (!any) { ::close(fd); continue; }
@@ -97,7 +101,10 @@ namespace banana
 				// working with the quick menu up); anything else with game keys is the pad
 				bool keysDev = testBit(keys, KEY_POWER) || testBit(keys, KEY_VOLUMEUP) || testBit(keys, KEY_VOLUMEDOWN) ||
 				               testBit(keys, KEY_SLEEP) || testBit(keys, KEY_WAKEUP);
-				dv.grabbable = !keysDev;
+				bool padBtn = testBit(keys, BTN_SOUTH) || testBit(keys, BTN_EAST) || testBit(keys, BTN_MODE) ||
+				              testBit(keys, BTN_DPAD_UP);
+				dv.cls = letter && !padBtn ? InputClass::KEYBOARD : keysDev ? InputClass::KEYS : InputClass::PAD;
+				dv.grabbable = dv.cls == InputClass::PAD;
 			}
 			devs.push_back(dv);
 		}
@@ -164,6 +171,7 @@ namespace banana
 			for (int i = 0; i < n / (int)sizeof(input_event); i++)
 			{
 				const input_event& e = ev[i];
+				if (raw) raw((int)e.type, (int)e.code, e.value, dv->cls);
 				if (dv->touch)
 				{
 					if (e.type == EV_ABS && (e.code == ABS_MT_POSITION_X || e.code == ABS_X)) { dv->x = e.value; dv->moved = true; }

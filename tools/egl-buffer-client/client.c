@@ -33,6 +33,10 @@ struct State
 	struct wl_compositor* comp;
 	struct xdg_wm_base* xdg;
 	struct zwp_linux_dmabuf_v1* dmabuf;
+	struct wl_seat* seat;
+	struct wl_keyboard* kb;
+	struct wl_pointer* ptr;
+	struct wl_touch* touch;
 	struct wl_surface* surf;
 	struct xdg_surface* xs;
 	struct xdg_toplevel* top;
@@ -65,12 +69,142 @@ static const struct xdg_toplevel_listener topListener = { .configure = topConfig
 static void wmPing(void* data, struct xdg_wm_base* wm, uint32_t serial) { (void)data; xdg_wm_base_pong(wm, serial); }
 static const struct xdg_wm_base_listener wmListener = { .ping = wmPing };
 
+// 3E.2: print what the compositor's seat sends (keyboard focus, keys and modifiers; pointer/touch enter/leave).
+static void kbKeymap(void* data, struct wl_keyboard* kb, uint32_t format, int32_t fd, uint32_t size)
+{
+	(void)data; (void)kb;
+	printf("keyboard keymap format=%u size=%u\n", format, size);
+	fflush(stdout);
+	close(fd);
+}
+static void kbEnter(void* data, struct wl_keyboard* kb, uint32_t serial, struct wl_surface* surf, struct wl_array* keys)
+{
+	(void)data; (void)kb; (void)surf;
+	printf("keyboard enter serial=%u keys=%u\n", serial, (unsigned)(keys->size / sizeof(uint32_t)));
+	fflush(stdout);
+}
+static void kbLeave(void* data, struct wl_keyboard* kb, uint32_t serial, struct wl_surface* surf)
+{
+	(void)data; (void)kb; (void)surf;
+	printf("keyboard leave serial=%u\n", serial);
+	fflush(stdout);
+}
+static void kbKey(void* data, struct wl_keyboard* kb, uint32_t serial, uint32_t time, uint32_t key, uint32_t state)
+{
+	(void)data; (void)kb; (void)serial; (void)time;
+	printf("key event key=%u state=%u\n", key, state);
+	fflush(stdout);
+}
+static void kbMods(void* data, struct wl_keyboard* kb, uint32_t serial, uint32_t dep, uint32_t lat, uint32_t lock, uint32_t group)
+{
+	(void)data; (void)kb; (void)serial;
+	printf("keyboard modifiers dep=0x%x lat=0x%x lock=0x%x group=%u\n", dep, lat, lock, group);
+	fflush(stdout);
+}
+static void kbRepeat(void* data, struct wl_keyboard* kb, int32_t rate, int32_t delay) { (void)data; (void)kb; (void)rate; (void)delay; }
+static const struct wl_keyboard_listener kbListener = {
+	.keymap = kbKeymap, .enter = kbEnter, .leave = kbLeave, .key = kbKey, .modifiers = kbMods, .repeat_info = kbRepeat,
+};
+
+static void ptrEnter(void* data, struct wl_pointer* p, uint32_t serial, struct wl_surface* surf, wl_fixed_t x, wl_fixed_t y)
+{
+	(void)data; (void)p; (void)surf;
+	printf("pointer enter serial=%u %d,%d\n", serial, (int)wl_fixed_to_double(x), (int)wl_fixed_to_double(y));
+	fflush(stdout);
+}
+static void ptrLeave(void* data, struct wl_pointer* p, uint32_t serial, struct wl_surface* surf)
+{
+	(void)data; (void)p; (void)surf;
+	printf("pointer leave serial=%u\n", serial);
+	fflush(stdout);
+}
+static void ptrMotion(void* data, struct wl_pointer* p, uint32_t time, wl_fixed_t x, wl_fixed_t y)
+{
+	(void)data; (void)p; (void)time;
+	printf("pointer motion %d,%d\n", (int)wl_fixed_to_double(x), (int)wl_fixed_to_double(y));
+	fflush(stdout);
+}
+static void ptrButton(void* data, struct wl_pointer* p, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
+{
+	(void)data; (void)p; (void)time;
+	printf("pointer button %u state=%u serial=%u\n", button, state, serial);
+	fflush(stdout);
+}
+static void ptrAxis(void* data, struct wl_pointer* p, uint32_t time, uint32_t axis, wl_fixed_t value)
+{
+	(void)data; (void)p; (void)time;
+	printf("pointer axis %u %d\n", axis, (int)wl_fixed_to_double(value));
+	fflush(stdout);
+}
+static void ptrFrame(void* data, struct wl_pointer* p) { (void)data; (void)p; }
+static const struct wl_pointer_listener ptrListener = {
+	.enter = ptrEnter, .leave = ptrLeave, .motion = ptrMotion, .button = ptrButton, .axis = ptrAxis, .frame = ptrFrame,
+};
+
+static void touchDown(void* data, struct wl_touch* t, uint32_t serial, uint32_t time, struct wl_surface* surf, int32_t id, wl_fixed_t x, wl_fixed_t y)
+{
+	(void)data; (void)t; (void)surf; (void)time;
+	printf("touch down id=%d serial=%u %d,%d\n", id, serial, (int)wl_fixed_to_double(x), (int)wl_fixed_to_double(y));
+	fflush(stdout);
+}
+static void touchUp(void* data, struct wl_touch* t, uint32_t serial, uint32_t time, int32_t id)
+{
+	(void)data; (void)t; (void)time;
+	printf("touch up id=%d serial=%u\n", id, serial);
+	fflush(stdout);
+}
+static void touchMotion(void* data, struct wl_touch* t, uint32_t time, int32_t id, wl_fixed_t x, wl_fixed_t y)
+{
+	(void)data; (void)t; (void)time;
+	printf("touch motion id=%d %d,%d\n", id, (int)wl_fixed_to_double(x), (int)wl_fixed_to_double(y));
+	fflush(stdout);
+}
+static void touchFrame(void* data, struct wl_touch* t) { (void)data; (void)t; }
+static void touchCancel(void* data, struct wl_touch* t)
+{
+	(void)data; (void)t;
+	printf("touch cancel\n");
+	fflush(stdout);
+}
+static const struct wl_touch_listener touchListener = {
+	.down = touchDown, .up = touchUp, .motion = touchMotion, .frame = touchFrame, .cancel = touchCancel,
+};
+
+static void seatCaps(void* data, struct wl_seat* seat, uint32_t caps)
+{
+	struct State* s = (struct State*)data;
+	printf("seat caps=0x%x\n", caps);
+	fflush(stdout);
+	if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !s->kb)
+	{
+		s->kb = wl_seat_get_keyboard(seat);
+		wl_keyboard_add_listener(s->kb, &kbListener, s);
+	}
+	if ((caps & WL_SEAT_CAPABILITY_POINTER) && !s->ptr)
+	{
+		s->ptr = wl_seat_get_pointer(seat);
+		wl_pointer_add_listener(s->ptr, &ptrListener, s);
+	}
+	if ((caps & WL_SEAT_CAPABILITY_TOUCH) && !s->touch)
+	{
+		s->touch = wl_seat_get_touch(seat);
+		wl_touch_add_listener(s->touch, &touchListener, s);
+	}
+}
+static void seatName(void* data, struct wl_seat* seat, const char* name) { (void)data; (void)seat; (void)name; }
+static const struct wl_seat_listener seatListener = { .capabilities = seatCaps, .name = seatName };
+
 static void regGlobal(void* data, struct wl_registry* reg, uint32_t name, const char* iface, uint32_t ver)
 {
 	struct State* s = (struct State*)data;
 	if (!strcmp(iface, wl_compositor_interface.name)) s->comp = wl_registry_bind(reg, name, &wl_compositor_interface, ver < 4 ? ver : 4);
 	else if (!strcmp(iface, xdg_wm_base_interface.name)) s->xdg = wl_registry_bind(reg, name, &xdg_wm_base_interface, 1);
 	else if (!strcmp(iface, zwp_linux_dmabuf_v1_interface.name)) s->dmabuf = wl_registry_bind(reg, name, &zwp_linux_dmabuf_v1_interface, ver < 4 ? ver : 4);
+	else if (!strcmp(iface, wl_seat_interface.name))
+	{
+		s->seat = wl_registry_bind(reg, name, &wl_seat_interface, ver < 5 ? ver : 5);
+		wl_seat_add_listener(s->seat, &seatListener, s);
+	}
 }
 static void regRemove(void* data, struct wl_registry* reg, uint32_t name) { (void)data; (void)reg; (void)name; }
 static const struct wl_registry_listener regListener = { .global = regGlobal, .global_remove = regRemove };

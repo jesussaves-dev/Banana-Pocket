@@ -26,7 +26,9 @@
 #include <unistd.h>
 #include <vector>
 #include <drm_fourcc.h>
+#include <linux/input.h>
 #include <wayland-server.h>
+#include <xkbcommon/xkbcommon.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include "xdg-shell-server-protocol.h"
@@ -99,6 +101,17 @@ namespace banana
 		std::unique_ptr<Presenter> presenter;	// EGL rotate (3C) or the direct 3B fallback
 		dev_t dev = 0;
 		char devName[128] = "";
+
+		// 3E.2 seat: the kiosk client's input resources and one xkb state for keymap/modifiers.
+		wl_resource* kb = nullptr;
+		wl_resource* ptr = nullptr;
+		wl_resource* touch = nullptr;
+		wl_resource* focusRes = nullptr;	// the surface the seat is focused on
+		bool focusOn = false;
+		bool inputForward = false;
+		xkb_context* xkbCtx = nullptr;
+		xkb_keymap* xkbMap = nullptr;
+		xkb_state* xkbState = nullptr;
 
 		struct Adv { uint32_t format; uint64_t modifier; } adv[2] = {
 			{ DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR },
@@ -218,6 +231,7 @@ namespace banana
 			pending = nullptr;
 			inflight = b;
 			hidMenu = true;
+			updateFocus();
 			if (!presenter->rotated())
 			{
 				// the direct path scans the client's own framebuffer: keep it referenced until the next commit
@@ -263,6 +277,7 @@ namespace banana
 		}
 		void surfaceGone(Surface* s)
 		{
+			if (focusRes == s->res) { focusOn = false; focusRes = nullptr; }
 			s->res = nullptr;
 			if (s->pend) { bufferRelease(s->pend); s->pend = nullptr; }
 			s->xdg = s->top = nullptr;	// the client's resources are going away too
@@ -291,10 +306,98 @@ namespace banana
 			// the Surface objects are freed by their wl_surface resource destroy callback (surfaceGone), which runs
 			// after this: wl_client_destroy emits the client destroy signal before it destroys the resources
 			surf = nullptr;
+			focusClear();
 			dropPending();
 			if (inflight) restoreMenu = true;
 			else if (hidMenu && !stopping) showMenu();
 			logf("client disconnected");
+		}
+
+		// ---- 3E.2 seat: keyboard focus, xkb keymap and forwarding ---------------------------------------------------
+
+		void sendMods(uint32_t serial)
+		{
+			if (!kb || !xkbState) return;
+			wl_keyboard_send_modifiers(kb, serial,
+				(uint32_t)xkb_state_serialize_mods(xkbState, XKB_STATE_MODS_DEPRESSED),
+				(uint32_t)xkb_state_serialize_mods(xkbState, XKB_STATE_MODS_LATCHED),
+				(uint32_t)xkb_state_serialize_mods(xkbState, XKB_STATE_MODS_LOCKED),
+				(uint32_t)xkb_state_serialize_layout(xkbState, XKB_STATE_LAYOUT_EFFECTIVE));
+		}
+		void sendKeymap()
+		{
+			if (!kb || !xkbMap) return;
+			char* str = xkb_keymap_get_as_string(xkbMap, XKB_KEYMAP_FORMAT_TEXT_V1);
+			if (!str) { logf("keyboard: no keymap text"); return; }
+			size_t len = strlen(str) + 1;
+			int fd = memfd_create("banana-keymap", MFD_CLOEXEC);
+			bool ok = fd >= 0;
+			for (size_t off = 0; ok && off < len;)
+			{
+				ssize_t n = write(fd, str + off, len - off);
+				if (n > 0) off += (size_t)n;
+				else if (n < 0 && errno == EINTR) continue;
+				else ok = false;
+			}
+			if (ok)
+			{
+				lseek(fd, 0, SEEK_SET);
+				wl_keyboard_send_keymap(kb, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, fd, (uint32_t)len);
+			}
+			else logf("keyboard: keymap memfd failed: %s", strerror(errno));
+			if (fd >= 0) close(fd);
+			free(str);
+		}
+		void updateFocus()
+		{
+			wl_resource* want = inputForward && surf ? surf->res : nullptr;
+			if (want == focusRes && focusOn) return;
+			if (focusOn && focusRes)
+			{
+				uint32_t serial = wl_display_next_serial(wl);
+				if (kb) wl_keyboard_send_leave(kb, serial, focusRes);
+				if (ptr)
+				{
+					wl_pointer_send_leave(ptr, serial, focusRes);
+					if (wl_resource_get_version(ptr) >= 5) wl_pointer_send_frame(ptr);
+				}
+				focusOn = false;
+			}
+			focusRes = want;
+			if (!want) return;
+			uint32_t serial = wl_display_next_serial(wl);
+			if (kb)
+			{
+				wl_array keys;
+				wl_array_init(&keys);
+				wl_keyboard_send_enter(kb, serial, want, &keys);
+				wl_array_release(&keys);
+			}
+			if (ptr)
+			{
+				wl_pointer_send_enter(ptr, serial, want, wl_fixed_from_int(0), wl_fixed_from_int(0));
+				if (wl_resource_get_version(ptr) >= 5) wl_pointer_send_frame(ptr);
+			}
+			focusOn = true;
+		}
+		void forwardKey(int code, int value)
+		{
+			if (!inputForward || !focusOn || !kb || !xkbState || value == 2) return;
+			xkb_keycode_t kc = (xkb_keycode_t)code + 8;	// evdev keycodes are XKB's minus 8
+			xkb_state_update_key(xkbState, kc, value ? XKB_KEY_DOWN : XKB_KEY_UP);
+			struct timespec ts;
+			clock_gettime(CLOCK_MONOTONIC, &ts);
+			uint32_t ms = (uint32_t)((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000);
+			uint32_t serial = wl_display_next_serial(wl);
+			wl_keyboard_send_key(kb, serial, ms, kc,
+			                     value ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
+			sendMods(serial);
+		}
+		void focusClear()
+		{
+			focusOn = false;
+			focusRes = nullptr;
+			kb = ptr = touch = nullptr;	// the client's resources are going away with it
 		}
 	};
 
@@ -556,30 +659,58 @@ namespace banana
 			if (version >= 2) wl_output_send_done(r);
 		}
 
+		void ptrGone(wl_resource* r)
+		{
+			Impl* im = (Impl*)wl_resource_get_user_data(r);
+			if (im->ptr == r) im->ptr = nullptr;
+		}
+		void kbGone(wl_resource* r)
+		{
+			Impl* im = (Impl*)wl_resource_get_user_data(r);
+			if (im->kb == r)
+			{
+				im->kb = nullptr;	// nothing left to send keys to
+				im->focusOn = false;
+				im->focusRes = nullptr;
+			}
+		}
+		void touchGone(wl_resource* r)
+		{
+			Impl* im = (Impl*)wl_resource_get_user_data(r);
+			if (im->touch == r) im->touch = nullptr;
+		}
 		void seatGetPtr(wl_client* c, wl_resource* res, uint32_t id)
 		{
+			Impl* im = (Impl*)wl_resource_get_user_data(res);
 			wl_resource* r = wl_resource_create(c, &wl_pointer_interface, wl_resource_get_version(res), id);
 			static const struct wl_pointer_interface ptrImpl = {
 				.set_cursor = [](wl_client*, wl_resource*, uint32_t, wl_resource*, int32_t, int32_t) {},
 				.release = [](wl_client*, wl_resource* r) { wl_resource_destroy(r); },
 			};
-			wl_resource_set_implementation(r, &ptrImpl, nullptr, nullptr);
+			wl_resource_set_implementation(r, &ptrImpl, im, ptrGone);
+			im->ptr = r;
 		}
 		void seatGetKb(wl_client* c, wl_resource* res, uint32_t id)
 		{
+			Impl* im = (Impl*)wl_resource_get_user_data(res);
 			wl_resource* r = wl_resource_create(c, &wl_keyboard_interface, wl_resource_get_version(res), id);
 			static const struct wl_keyboard_interface kbImpl = {
 				.release = [](wl_client*, wl_resource* r) { wl_resource_destroy(r); },
 			};
-			wl_resource_set_implementation(r, &kbImpl, nullptr, nullptr);
+			wl_resource_set_implementation(r, &kbImpl, im, kbGone);
+			im->kb = r;
+			im->sendKeymap();
+			im->updateFocus();
 		}
 		void seatGetTouch(wl_client* c, wl_resource* res, uint32_t id)
 		{
+			Impl* im = (Impl*)wl_resource_get_user_data(res);
 			wl_resource* r = wl_resource_create(c, &wl_touch_interface, wl_resource_get_version(res), id);
 			static const struct wl_touch_interface touchImpl = {
 				.release = [](wl_client*, wl_resource* r) { wl_resource_destroy(r); },
 			};
-			wl_resource_set_implementation(r, &touchImpl, nullptr, nullptr);
+			wl_resource_set_implementation(r, &touchImpl, im, touchGone);
+			im->touch = r;
 		}
 		void seatRelease(wl_client*, wl_resource* r) { wl_resource_destroy(r); }
 		const struct wl_seat_interface seatImpl = {
@@ -587,10 +718,9 @@ namespace banana
 		};
 		void seatBind(wl_client* c, void* data, uint32_t version, uint32_t id)
 		{
-			(void)data;
 			wl_resource* r = wl_resource_create(c, &wl_seat_interface, version < 5 ? version : 5, id);
-			wl_resource_set_implementation(r, &seatImpl, nullptr, nullptr);
-			wl_seat_send_capabilities(r, 0);	// input forwarding is Phase 3E
+			wl_resource_set_implementation(r, &seatImpl, data, nullptr);
+			wl_seat_send_capabilities(r, WL_SEAT_CAPABILITY_KEYBOARD | WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_TOUCH);
 			if (version >= 2) wl_seat_send_name(r, "seat0");
 		}
 
@@ -811,6 +941,12 @@ namespace banana
 		struct stat st;
 		if (fstat(d.drmFd(), &st) == 0) im->dev = st.st_rdev;
 
+		// 3E.2: one XKB keymap for the seat (the sysroot and image ship the X11 xkb data at /usr/share/X11/xkb)
+		im->xkbCtx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+		if (im->xkbCtx) im->xkbMap = xkb_keymap_new_from_names(im->xkbCtx, nullptr, XKB_KEYMAP_COMPILE_NO_FLAGS);
+		if (im->xkbMap) im->xkbState = xkb_state_new(im->xkbMap);
+		if (!im->xkbState) logf("keyboard: no xkb keymap; keys will not be forwarded");
+
 		im->clientCreated.notify = onClientCreated;
 		im->clientGone.notify = onClientGone;
 		im->pendCbGone.notify = cbGonePend;
@@ -891,6 +1027,9 @@ namespace banana
 				if (!direct->start(derr))
 				{
 					err = derr;
+					if (im->xkbState) xkb_state_unref(im->xkbState);
+					if (im->xkbMap) xkb_keymap_unref(im->xkbMap);
+					if (im->xkbCtx) xkb_context_unref(im->xkbCtx);
 					wl_display_destroy(im->wl);
 					delete im;
 					return false;
@@ -944,6 +1083,10 @@ namespace banana
 		if (im->onScreen) { im->bufferDrop(im->onScreen); im->onScreen = nullptr; }
 		im->pendingCb = im->inflightCb = im->pendCb = nullptr;
 		wl_display_destroy_clients(im->wl);
+		im->focusClear();
+		if (im->xkbState) { xkb_state_unref(im->xkbState); im->xkbState = nullptr; }
+		if (im->xkbMap) { xkb_keymap_unref(im->xkbMap); im->xkbMap = nullptr; }
+		if (im->xkbCtx) { xkb_context_unref(im->xkbCtx); im->xkbCtx = nullptr; }
 		tracef("stop: clients destroyed");
 		if (im->presenter) { im->presenter->stop(); im->presenter.reset(); }
 		tracef("stop: presenter stopped");
@@ -997,5 +1140,17 @@ namespace banana
 	bool Compositor::eglActive() const
 	{
 		return impl && impl->presenter && impl->presenter->rotated();
+	}
+
+	void Compositor::setInputForward(bool on)
+	{
+		if (!impl) return;
+		impl->inputForward = on;
+		impl->updateFocus();
+	}
+
+	void Compositor::forwardInput(int type, int code, int value)
+	{
+		if (impl && type == EV_KEY) impl->forwardKey(code, value);
 	}
 }

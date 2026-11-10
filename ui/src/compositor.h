@@ -35,6 +35,10 @@ namespace banana
 		bool gameActive() const;	// a client frame is pending or on screen (the menu must not present)
 		bool clientOnScreen() const;	// a client frame owns the primary (for the 3D card layer)
 		bool eglActive() const;		// the EGL rotate presenter is running (3C validation)
+		// 3E.2: keyboard events from a real keyboard class device go to the client while it owns the primary and
+		// the menu is not over it; on/off also sends wl_keyboard/pointer enter/leave.
+		void setInputForward(bool on);
+		void forwardInput(int type, int code, int value);
 
 		struct Impl;			// the server state, defined in compositor.cpp
 

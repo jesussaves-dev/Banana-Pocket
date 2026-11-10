@@ -516,7 +516,8 @@ Scope: an in-process `libwayland-server` (in `ui/src/compositor.cpp`) for one ki
 launch path; this server is reached only by a client that connects to `/run/banana/wayland/banana-0`.
 
 - **Globals:** `wl_compositor` 4, `wl_output` 3 (1240×1080, transform normal, scale 1), `wl_seat` 5 (capabilities
-  0 until 3E), `wl_shm` 1, `xdg_wm_base` 1 (one fullscreen toplevel), `zwp_linux_dmabuf_v1` 4 with feedback, and
+  keyboard|pointer|touch; 3E.2a forwards keyboard keys and modifiers with an xkbcommon keymap, pointer/touch events
+  are 3E.2b), `wl_shm` 1, `xdg_wm_base` 1 (one fullscreen toplevel), `zwp_linux_dmabuf_v1` 4 with feedback, and
   `wl_drm` 2 (device, AR24/XR24, PRIME) because Mesa's Wayland WSI asks for it. Protocol code is generated at build
   time from the sysroot XMLs (plus the vendored `ui/src/wayland/wayland-drm.xml`).
 - **Buffers:** only the pair the Phase 2 matrix proved: XR24/AR24, one plane, `DRM_FORMAT_MOD_LINEAR`. Nothing else

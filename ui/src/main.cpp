@@ -1320,6 +1320,12 @@ int main(int argc, char** argv)
 	// Phase 3B: the in-process Wayland server (one kiosk client; cage stays the game path). It needs the atomic
 	// display, so a legacy panel logs why it is off and the menu runs exactly as before.
 	if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
+	// 3E.2: keyboard-class devices reach a client on the primary; the pad and the power/volume keys stay direct.
+	bool forwardOn = false;
+	input.raw = [&](int type, int code, int value, InputClass cls)
+	{
+		if (cls == InputClass::KEYBOARD) comp.forwardInput(type, code, value);
+	};
 
 	Repeat rep;
 	bool dirty = true, quit = false, drawn = false;	// drawn: a frame on the canvas waiting for the flips
@@ -1773,6 +1779,9 @@ int main(int argc, char** argv)
 		// blank it while on the charger (a dark panel on the cable read as a sleep)
 		guard.setCharging(lib.charging());
 		if (guard.tick(now, &sound) && guard.stage() == 2) sound.setBgm(false);	// blanked: let the sound device go too
+		// 3E.2: keys reach the client only while it owns the primary, the quick menu is down and the guard is awake
+		bool fwd = comp.clientOnScreen() && !quickMenu && guard.stage() == 0;
+		if (fwd != forwardOn) { forwardOn = fwd; comp.setInputForward(fwd); }
 		{
 			std::lock_guard<std::mutex> l(worker.uiLock);
 			ui->update(now);

@@ -10,6 +10,8 @@
 namespace banana
 {
 	enum class Key { NONE, LEFT, RIGHT, UP, DOWN, A, B, X, Y, L, R, START, SELECT, MENU, WAKE };
+	// what a device is, for the compositor's seat (3E.2): the pad and the power/volume keys stay direct evdev
+	enum class InputClass { PAD, TOUCH, KEYS, KEYBOARD };
 
 	struct InputEvent
 	{
@@ -38,6 +40,8 @@ namespace banana
 		int fillFds(struct pollfd* out, int at, int cap) const;
 		// read what is waiting on fd; events go to sink
 		void read(int fd, const std::function<void(const InputEvent&)>& sink);
+		// every raw evdev event, before mapping: the compositor forwards keyboard devices to a Wayland client
+		std::function<void(int type, int code, int value, InputClass cls)> raw;
 
 	private:
 		struct Dev
@@ -49,6 +53,7 @@ namespace banana
 			bool down = false, wasDown = false, moved = false;
 			int hatX = 0, hatY = 0;
 			std::string path, name;
+			InputClass cls = InputClass::PAD;
 			bool grabbable = false;	// pad or touch, not the power/volume keys
 		};
 		std::vector<Dev> devs;
