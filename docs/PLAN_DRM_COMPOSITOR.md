@@ -135,6 +135,12 @@ Scoped to what the 4.2 changes (872ce06) can break. Record results in `docs/repo
 2. **BananaTube by hand:** one video plays upright with sound and exits to the menu, no cage.
 3. **Escape hatch:** `compositor = "cage"` in `bananad.conf` → a RetroArch game, a port and BananaTube each run
    under cage (`pidof cage` non-empty) and return to the menu; remove the line afterwards.
+- **Item 1 measured 2026-11-10** (dev build of 29fdbf9 + the pause menu, on the charger): Dreamcast (Flycast,
+  glcore) **59.999 fps**, RSS banana-ui 72 MB / RetroArch 176 MB; PSX (SwanStation, Vulkan, Crash Bandicoot)
+  **51.999 fps** ← FAIL, RSS 86 / 386 MB; 0 `drm`/`dpu` dmesg lines in both. Dreamcast at 60 on the same build
+  points at SwanStation/the game, not the compositor: next step is the same 10 min under `compositor = "cage"`
+  (if cage also shows ~52, it is not a T6 failure). Runner: `/data/t6-pace.sh` (`SECS=600`), output
+  `/data/banana/logs/t6-pace.txt`.
 - **stop if:** any item fails → record it, STOP; do not start T7.
 - **Dropped, with reasons:** `sleep-test.sh` and real sleep cycles (bananad unchanged since 4.1b; T5 did 20
   real cycles); 100 pause-card cycles (input/grab code unchanged; 3E passed 50/50); `make sound-test` (no audio
@@ -153,6 +159,21 @@ Scoped to what the 4.2 changes (872ce06) can break. Record results in `docs/repo
 README "What runs the show": drop cage; `docs/ROADMAP.md`: mark done with T6's numbers;
 `system/rootfs/etc/banana/retroarch.cfg`: note the socket is banana-ui's (`banana-0`). Then set this plan's
 header to "Done".
+
+### T9 — Banana pause menu (replaces RetroArch's menu on MODE) · `DONE (fe28b3c, 2026-11-10)`
+- `MODE` over a resident game opens a menu on the overlay plane and freezes the game (`signalTree(SIGSTOP)` on the
+  launcher's whole process tree, so ports/BananaTube freeze too). RetroArch: Resume, Save state, Load state,
+  Restart game, RetroArch menu, Quit game (via `/run/banana/retroarch.cmd`); others: Resume, Quit (SIGTERM to the
+  launcher). Load/Restart/Quit ask "Press A again". B or MODE resumes. MODE + another key is a RetroArch hotkey
+  combo and opens nothing.
+- RetroArch's own menu moves to MODE + X on the compositor path only (`run-retroarch` appends
+  `input_menu_toggle_btn = "3"` and restores the card's value after the game); cage keeps plain MODE.
+- Fixed with it: a card changed while a flip was in flight never reached a frozen client's screen (the
+  compositor now re-commits the overlay on the next vblank); a game ending under the menu releases the grab; a
+  wake re-freezes the game under an open menu.
+- Verified on the unit with a uinput pad: every RetroArch row (state saved/loaded, `[Core] Reset.`, RetroArch's
+  Quick Menu opened, quit status 0, config restored) and a port (frozen, Quit). **Not yet checked by hand:** a
+  real MODE press no longer opening RetroArch's menu, MODE + X opening it, MODE + Start still quitting.
 
 ### Deferred (do not start without the user)
 - Compressed/UBWC import via EGL (bandwidth win; F3 says direct import fails). Test a 1280-wide buffer first.
