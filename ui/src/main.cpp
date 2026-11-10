@@ -2106,13 +2106,23 @@ int main(int argc, char** argv)
 					if (c == SIGUSR1)
 					{
 						// bananad after a resume: the panel's driver disabled it on the way down, and it can come
-						// back dark -- the kernel re-does its own part of the display, but a hold in the pipeline
-						// (a DPU encoder that timed out going down) is only cleared by a modeset, so take the
-						// panel again rather than redraw into a dead one
-						comp.stop();
-						disp.close();
-						for (int tries = 0; !disp.openSingle(o.top, err) && tries < 50; tries++) sleepUs(20000);
-						if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
+						// back dark. With a resident game, re-modeset the panel and re-arm the client instead of
+						// tearing the compositor down (the client's buffers are tied to this DRM fd). Without a
+						// game, take the panel again as before.
+						if (gamePid > 0 && disp.isOpen())
+						{
+							int tries = 0;
+							while (!disp.restore() && tries < 50) { sleepUs(20000); tries++; }
+							if (tries >= 50) logf("resume: panel restore failed (resident game)");
+							else comp.resume();
+						}
+						else
+						{
+							comp.stop();
+							disp.close();
+							for (int tries = 0; !disp.openSingle(o.top, err) && tries < 50; tries++) sleepUs(20000);
+							if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
+						}
 						std::lock_guard<std::mutex> l(worker.uiLock);
 						be.invalidate(); ui->dataChanged(); dirty = true; batteryDue = true; guard.wake(nowMs(), &sound); sound.setBgm(settings["bgm"] != "off"); sound.warm();
 					}

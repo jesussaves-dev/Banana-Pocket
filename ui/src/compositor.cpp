@@ -241,6 +241,7 @@ namespace banana
 				{
 					logf("presenting a client frame failed; dropped it");
 					dropPending();
+					fireCb(pendingCb, pendingCbGone);	// the dropped frame's callback, or the client waits for it
 				}
 				return;
 			}
@@ -495,6 +496,28 @@ namespace banana
 			focusRes = nullptr;
 			touchDown = false;
 			kb = ptr = touch = nullptr;	// the client's resources are going away with it
+		}
+		void resume()
+		{
+			// The display has been modeset again (Display::restore), so the menu owns the planes and none of the
+			// client's frames are scanned. Release what the client is waiting on and let its next commit present.
+			tracef("resume");
+			if (inflight)
+			{
+				Buffer* b = inflight;
+				inflight = nullptr;
+				bufferRelease(b);
+			}
+			dropPending();
+			fireCb(inflightCb, inflightCbGone);
+			fireCb(pendingCb, pendingCbGone);
+			fireCb(pendCb, pendCbGone);
+			if (presenter) { presenter->abandon(); presenter->detached(); }
+			if (onScreen) { bufferDrop(onScreen); onScreen = nullptr; }
+			lastFb = lastW = lastH = 0;
+			hidMenu = false;
+			restoreMenu = false;
+			overlayFb = 0;
 		}
 	};
 
@@ -1224,6 +1247,11 @@ namespace banana
 	void Compositor::vblank()
 	{
 		if (impl) impl->vblank();
+	}
+
+	void Compositor::resume()
+	{
+		if (impl) impl->resume();
 	}
 
 	void Compositor::frame()

@@ -534,7 +534,11 @@ namespace banana
 		addPlane(pn.overlay, overlayFb, SW, SH, overlayFb != 0, -1);
 		int ret = drmModeAtomicCommit(fd, r, DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK, &pending);
 		drmModeAtomicFree(r);
-		if (ret) return false;
+		if (ret)
+		{
+			fprintf(stderr, "kms: atomic commit failed: ret=%d errno=%s\n", ret, strerror(errno));
+			return false;
+		}
 		pending++;
 		return true;
 	}

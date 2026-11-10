@@ -813,7 +813,7 @@ static void suspend_now(const char *why)
 		if (cg > 0) kill(cg, SIGUSR1);
 	}
 	pid_t ui = ui_pid();
-	if (ui && !game) kill(ui, SIGUSR1);	/* draws the panel again (the clock and the battery moved on) */
+	if (ui && (!game || compositor_on())) kill(ui, SIGUSR1);	/* draws the panel again (the clock and the battery moved on); a resident game needs the re-modeset too */
 	double t_back = mono();
 	undim();
 	hooks("post", 1);

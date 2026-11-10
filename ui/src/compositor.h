@@ -31,6 +31,7 @@ namespace banana
 		void dispatch();		// drain Wayland events and flush replies
 		void flush();			// send queued events (releases, callbacks, input) before blocking in poll
 		void vblank();			// a page flip completed: release the scanned buffer, fire its callback
+		void resume();			// after a suspend: the panel was re-modeset; re-arm the client without dropping it
 		void frame();			// present the latest committed client frame when no flip is in flight
 		void setOverlayFb(uint32_t fb);	// the 3D card over a client frame on the primary (0 hides it)
 		bool gameActive() const;	// a client frame is pending or on screen (the menu must not present)
