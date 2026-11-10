@@ -138,6 +138,14 @@
   "Backup saved": "Sicherung gespeichert",
   "Settings restored": "Einstellungen wiederhergestellt",
   "Emulator settings reset": "Emulator-Einstellungen zurückgesetzt",
-  "System settings reset": "Systemeinstellungen zurückgesetzt"
- }
+  "System settings reset": "Systemeinstellungen zurückgesetzt",
+  "Paused": "Pausiert",
+  "Resume": "Fortsetzen",
+  "Save state": "Zustand speichern",
+  "Load state": "Zustand laden",
+  "Restart game": "Spiel neu starten",
+  "RetroArch menu": "RetroArch-Menü",
+  "Quit game": "Spiel beenden",
+  "Quit": "Beenden"
+}
 }

@@ -96,6 +96,7 @@ namespace banana
 		bool hidMenu = false;			// presentGame() is on screen and the overlay is off
 		uint32_t overlayFb = 0;			// the 3D card buffer (ARGB), shown above the client when non-zero
 		uint32_t lastFb = 0, lastW = 0, lastH = 0;	// the primary currently on screen, for an overlay-only commit
+		uint32_t shownOverlay = 0;	// the overlay fb the last game commit carried (overlayFb can be ahead of it)
 		bool restoreMenu = false;		// show the menu as soon as the current flip completes
 		bool stopping = false;
 		bool saidShm = false;
@@ -253,6 +254,7 @@ namespace banana
 			lastFb = fb;
 			lastW = pw;
 			lastH = ph;
+			shownOverlay = overlayFb;
 			if (frames < kTraceFrames)
 				tracef("frame: presented serial=%llu fb=%u", (unsigned long long)b->serial, fb);
 			pending = nullptr;
@@ -308,6 +310,11 @@ namespace banana
 				showMenu();
 			}
 			if (!restoreMenu) frame();
+			// a card changed while a flip was in flight and no client frame follows (a paused or SIGSTOPped game,
+			// under the pause menu): re-commit the frame on screen with the overlay it should carry now
+			if (!restoreMenu && lastFb && overlayFb != shownOverlay && d->isOpen() && !d->flipPending() &&
+			    d->presentGame(lastFb, lastW, lastH, overlayFb))
+				shownOverlay = overlayFb;
 		}
 		void surfaceGone(Surface* s)
 		{
@@ -1242,8 +1249,9 @@ namespace banana
 		impl->overlayFb = fb;
 		// A client that is not committing (paused) must still show/hide the card: re-commit the frame that is on
 		// screen with the new overlay. A commit already in flight picks the new overlay up on the next frame.
-		if (impl->lastFb && impl->d->isOpen() && !impl->d->flipPending() && !impl->restoreMenu)
-			impl->d->presentGame(impl->lastFb, impl->lastW, impl->lastH, fb);
+		if (impl->lastFb && impl->d->isOpen() && !impl->d->flipPending() && !impl->restoreMenu &&
+		    impl->d->presentGame(impl->lastFb, impl->lastW, impl->lastH, fb))
+			impl->shownOverlay = fb;
 	}
 
 	bool Compositor::gameActive() const

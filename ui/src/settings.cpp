@@ -1205,6 +1205,42 @@ namespace banana
 		wrapped(body, 18, 172, 392, 404, 2, p.muted);
 	}
 
+	void Settings::pauseMenu(const std::string& title, const std::vector<std::string>& rows, int sel, int armed)
+	{
+		SPal p = pal(light);
+		const int n = (int)rows.size();
+		const float w = 400, rowH = 52, h = 64 + n * rowH + 44, x0 = (640 - w) / 2, y0 = std::max(8.0f, (557 - h) / 2);
+		rememberCard(x0, y0, w, h);
+		box("bubble", false, x0, y0, w, h);
+		std::string t = fit(title.empty() ? tr("Paused") : title, true, 22, w - 40);
+		float tw = text(t, true, 22, 0, 0, p.ink, false, 0, true);
+		text(t, true, 22, x0 + (w - tw) / 2, y0 + 18, p.ink);
+		for (int i = 0; i < n; i++)
+		{
+			float y = y0 + 60 + i * rowH;
+			box(i == sel ? "pick" : "slot", i == sel, x0 + 16, y, w - 32, rowH - 8);
+			const bool on = i == sel;
+			std::string label = i == armed ? tr("Press A again") : tr(rows[i]);
+			Color c = i == armed ? (on ? p.onPickAccent : p.accent) : on ? p.onPick : p.muted;
+			float lw = text(label, true, 20, 0, 0, c, false, 0, true);
+			text(label, true, 20, x0 + (w - lw) / 2, y + 10, c);
+		}
+		// "A Choose   B Resume": the button letter in ink, its word muted, explicit gaps (the pixel font's space is
+		// too narrow to separate them)
+		const std::pair<std::string, std::string> hints[2] = { { "A", tr("Choose") }, { "B", tr("Resume") } };
+		const float gap = 6, sep = 22;
+		float hw = sep;
+		for (const auto& hp : hints)
+			hw += text(hp.first, true, 16, 0, 0, p.ink, false, 0, true) + gap + text(hp.second, false, 16, 0, 0, p.muted, false, 0, true);
+		hw -= sep;
+		float hx = x0 + (w - hw) / 2, hy = y0 + h - 32;
+		for (const auto& hp : hints)
+		{
+			hx += text(hp.first, true, 16, hx, hy, p.ink) + gap;
+			hx += text(hp.second, false, 16, hx, hy, p.muted) + sep;
+		}
+	}
+
 	void Settings::level(const std::string& label, int percent)
 	{
 		// ROCKNIXDS's volume indicator (BN's in-game menu), in the same place: a pill at the top of the

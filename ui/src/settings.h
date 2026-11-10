@@ -74,6 +74,10 @@ namespace banana
 		// the volume or brightness keys' level: a small bubble near the bottom of the panel, its label, the percent and
 		// a bar (drawn like notice)
 		void level(const std::string& label, int percent);
+		// the in-game pause menu over a frozen game (the compositor's overlay plane): a bubble in the middle of the
+		// panel with the game's name, one row per action, the selected one on the pick plate; armed is the row that
+		// asked "Press A again" (-1 for none)
+		void pauseMenu(const std::string& title, const std::vector<std::string>& rows, int sel, int armed);
 		// A toast: a pop-up across the top of the panel in ROCKNIXDS's look, one at a time out of a queue, drawn by the
 		// host over whatever screen is up (the battery's notice and the volume's level share that overlay). An
 		// achievement passes the badge RetroArch downloaded, which is drawn in the tile; a plain message passes a glyph

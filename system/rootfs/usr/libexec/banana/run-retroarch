@@ -436,6 +436,12 @@ FIFO=/run/banana/retroarch.cmd
 rm -f $FIFO; mkfifo -m 600 $FIFO && exec 3<>$FIFO
 L=/run/banana/retroarch-stdin.cfg
 printf 'stdin_cmd_enable = "true"\n' > $L
+# Under banana-ui's compositor the button under the screen (MODE) opens Banana's pause menu, which has a row for
+# RetroArch's own menu; RetroArch's menu toggle moves to MODE + X (a hotkey combo like MODE + Start, so a plain MODE
+# press never opens both). For this launch only: RetroArch saves its effective config on exit, so the card's own
+# value is read here and put back after the game (cage keeps the autoconfig's plain MODE).
+R_MTB=$(sed -n 's/^ *input_menu_toggle_btn *= *//p' $CFG 2>/dev/null | sed 's/^"//; s/"$//' | tail -n 1)
+[ "$(/usr/libexec/banana/compositor-mode)" = ui ] && printf 'input_menu_toggle_btn = "3"\n' >> $L
 # RetroArch's ALSA driver aborts (SIGABRT, 134) when the DSP hasn't finished letting go of the frontend the menu
 # had; a second start half a second later takes it. Two extra tries cover a slow teardown, and nothing else.
 # Its own log goes on the card: the one thing worth having after a game that would not start is what RetroArch said
@@ -502,6 +508,8 @@ if [ -n "$BZON" ]; then
     [ -n "$R_OVL" ] && set_cfg input_overlay "$R_OVL"
     [ -n "$R_SHA" ] && set_cfg video_shader_enable "$R_SHA"
 fi
+# the menu toggle the pause menu moved for this launch (above): the card's own value, or none (the autoconfig's)
+if [ -n "$R_MTB" ]; then set_cfg input_menu_toggle_btn "$R_MTB"; else sed -i '/^ *input_menu_toggle_btn *=/d' $CFG; fi
 /usr/libexec/banana/ra-secrets scrub; rm -f $RA
 exec 3>&-; rm -f $FIFO /run/banana/cage.pid	# a pid file left behind names whoever gets the pid next
 set_cfg stdin_cmd_enable false

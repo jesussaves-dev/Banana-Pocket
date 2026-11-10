@@ -138,6 +138,14 @@
   "Backup saved": "Copia guardada",
   "Settings restored": "Ajustes restaurados",
   "Emulator settings reset": "Ajustes de emuladores restablecidos",
-  "System settings reset": "Ajustes del sistema restablecidos"
- }
+  "System settings reset": "Ajustes del sistema restablecidos",
+  "Paused": "Pausa",
+  "Resume": "Continuar",
+  "Save state": "Guardar estado",
+  "Load state": "Cargar estado",
+  "Restart game": "Reiniciar juego",
+  "RetroArch menu": "Menú de RetroArch",
+  "Quit game": "Salir del juego",
+  "Quit": "Salir"
+}
 }
