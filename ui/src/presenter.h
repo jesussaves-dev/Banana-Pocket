@@ -30,6 +30,12 @@ namespace banana
 		// Called once at the start of Compositor::stop(): scanoutCleared says the primary no longer scans any
 		// presenter-owned framebuffer, so freeing DRM framebuffers is safe now.
 		virtual void quiesce(bool scanoutCleared) { (void)scanoutCleared; }
+		// True for the opt-in 3C isolation variants: render() ran the diagnostic operation and the frame must
+		// be released without any KMS submission.
+		virtual bool diagnostic() const { return false; }
+		// True while a presenter-owned framebuffer is (or may be) on the primary plane. The compositor may only
+		// replace a presenter when this is false.
+		virtual bool scanning() const { return false; }
 	};
 
 	class DirectPresenter : public Presenter

@@ -6,10 +6,15 @@
 
 namespace banana
 {
+	// Opt-in isolation variants (gates under /run/banana): the op the presenter runs instead of the full path.
+	// Import: EGLImage + texture + glFinish. Pbuffer: the rotated draw into an ordinary EGL pbuffer. Clear: the
+	// scanout slot FBO clear. All three skip the KMS submission; None is the normal 3C path.
+	enum class DiagVariant { None, Import, Pbuffer, Clear, PlainFbo, BoRender, BoScanout, BoScanoutFb, BoPrime, BoFbAfter };
+
 	class EglPresenter : public Presenter
 	{
 	public:
-		explicit EglPresenter(class Display& d);
+		explicit EglPresenter(class Display& d, DiagVariant diag = DiagVariant::None);
 		~EglPresenter() override;
 
 		const char* name() const override { return "EGL rotate"; }
@@ -23,9 +28,12 @@ namespace banana
 		void detached() override;
 		void forget(ClientBuffer& b) override;
 		void quiesce(bool scanoutCleared) override;
+		bool diagnostic() const override { return diag != DiagVariant::None; }
+		bool scanning() const override;
 
 	private:
 		struct Impl;
 		Impl* impl = nullptr;
+		DiagVariant diag = DiagVariant::None;
 	};
 }

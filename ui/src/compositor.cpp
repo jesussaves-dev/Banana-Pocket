@@ -91,6 +91,9 @@ namespace banana
 		bool saidShm = false;
 		bool saidSecondary = false;
 		unsigned frames = 0;
+		uint64_t nextBufferSerial = 0;
+		static constexpr unsigned kTraceFrames = 16;	// durable per-frame trace budget
+		static constexpr unsigned kTraceSerials = 16;	// per-buffer lifecycle is bounded by serial, not by frame
 		std::unique_ptr<Presenter> presenter;	// EGL rotate (3C) or the direct 3B fallback
 		dev_t dev = 0;
 		char devName[128] = "";
@@ -103,6 +106,8 @@ namespace banana
 
 		void bufferFree(Buffer* b)
 		{
+			if (b->serial <= kTraceSerials)
+				tracef("buffer free serial=%llu fd=%d", (unsigned long long)b->serial, b->fd);
 			// the presenter owns the imported/EGL objects; it is still alive here (clients are destroyed before
 			// presenter->stop()), so the context and DRM fd are valid
 			if (presenter) presenter->forget(*b);
@@ -144,7 +149,36 @@ namespace banana
 			Buffer* b = pending;
 			uint32_t fb = 0;
 			std::string err;
-			if (frames < 3) tracef("frame: render begin %ux%u", b->w, b->h);
+			if ((!presenter || !presenter->diagnostic()) && frames < kTraceFrames)
+				tracef("frame: render begin serial=%llu res=%u %ux%u", (unsigned long long)b->serial,
+				       b->res ? wl_resource_get_id(b->res) : 0, b->w, b->h);
+			// The EGL presenter is panel-sized: a source that is not the 1240x1080 logical output cannot be
+			// rotated by it. Fall back to the direct presenter (3B: plane-scaled and sideways) only while no
+			// presenter-owned frame is on screen; a mid-session size change with a frame up is dropped.
+			if (presenter && presenter->rotated() && ((int)b->w != d->width() || (int)b->h != d->height()))
+			{
+				if (!d->flipPending() && !inflight && !presenter->scanning())
+				{
+					logf("source %ux%u is not %dx%d: switching to the direct presenter", b->w, b->h, d->width(), d->height());
+					presenter->stop();
+					auto direct = std::make_unique<DirectPresenter>(*d);
+					std::string derr;
+					if (!direct->start(derr))
+					{
+						logf("direct presenter unavailable: %s", derr.c_str());
+						presenter.reset();
+						dropPending();
+						return;
+					}
+					presenter = std::move(direct);
+				}
+				else
+				{
+					logf("source %ux%u cannot be rotated while a frame is on screen; dropping it", b->w, b->h);
+					dropPending();
+					return;
+				}
+			}
 			if (!presenter || !presenter->render(*b, fb, err))
 			{
 				logf("render: %s", err.empty() ? "no presenter" : err.c_str());
@@ -152,10 +186,17 @@ namespace banana
 				dropPending();
 				return;
 			}
+			if (presenter->diagnostic())
+			{
+				dropPending();	// the isolation operation and its glFinish are done; no KMS submission
+				return;
+			}
 			// the EGL path produces the panel-sized scanout buffer (1:1); the direct fallback passes the client size
 			uint32_t pw = presenter->rotated() ? (uint32_t)d->panelWidth() : b->w;
 			uint32_t ph = presenter->rotated() ? (uint32_t)d->panelHeight() : b->h;
-			if (frames < 3) { logf("commit: fb=%u src=%ux%u", fb, pw, ph); tracef("frame: commit fb=%u %ux%u", fb, pw, ph); }
+			if (frames < 3) logf("commit: fb=%u src=%ux%u", fb, pw, ph);
+			if (frames < kTraceFrames)
+				tracef("frame: commit serial=%llu fb=%u %ux%u", (unsigned long long)b->serial, fb, pw, ph);
 			if (!d->presentGame(fb, pw, ph))
 			{
 				presenter->abandon();
@@ -167,7 +208,8 @@ namespace banana
 				return;
 			}
 			presenter->presented();
-			if (frames < 3) tracef("frame: presented fb=%u", fb);
+			if (frames < kTraceFrames)
+				tracef("frame: presented serial=%llu fb=%u", (unsigned long long)b->serial, fb);
 			pending = nullptr;
 			inflight = b;
 			hidMenu = true;
@@ -634,11 +676,13 @@ namespace banana
 		}
 		bool paramsValidate(wl_resource* res, Impl::Buffer* b, int32_t w, int32_t h, uint32_t format)
 		{
-			if (w != kClientFormatW || h != kClientFormatH)
+			// Any positive size is accepted: a source the EGL presenter cannot rotate (anything but the
+			// panel's 1240x1080 logical output) makes Compositor::frame() switch to the direct presenter.
+			if (w <= 0 || h <= 0)
 			{
-				logf("rejecting %dx%d: the output and the 3C rotation are %dx%d", w, h, kClientFormatW, kClientFormatH);
+				logf("rejecting %dx%d: invalid dimensions", w, h);
 				wl_resource_post_error(res, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_INVALID_DIMENSIONS,
-				                       "only 1240x1080 is supported");
+				                       "invalid dimensions");
 				return false;
 			}
 			if (!banana::dmabufSupported(format, b->modifier, b->fd >= 0 ? 1 : 0))
@@ -684,6 +728,7 @@ namespace banana
 			Impl* im = (Impl*)wl_resource_get_user_data(res);
 			auto* b = new Impl::Buffer();
 			b->im = im;
+			b->serial = ++im->nextBufferSerial;
 			wl_resource* r = wl_resource_create(c, &zwp_linux_buffer_params_v1_interface, wl_resource_get_version(res), id);
 			wl_resource_set_implementation(r, &paramsImpl, b, paramsResourceGone);
 		}
@@ -779,12 +824,48 @@ namespace banana
 		// keeps the client working and says loudly that the output is not rotated. The EGL path is opt-in while it
 		// is being validated on the unit (an unexplained hang was seen with the first 3C client): create
 		// /run/banana/3c-egl before the menu starts to enable it.
-		bool eglWanted = access("/run/banana/3c-egl", F_OK) == 0;
+		// Stage 8 isolation variants: one gate each, never combined. They imply the EGL presenter but the compositor
+		// releases the frame instead of submitting it, so the operation is the only thing exercised.
+		const bool diagImport = access("/run/banana/3c-diag-import", F_OK) == 0;
+		const bool diagPbuffer = access("/run/banana/3c-diag-pbuffer", F_OK) == 0;
+		const bool diagClear = access("/run/banana/3c-diag-clear", F_OK) == 0;
+		const bool diagPlainFbo = access("/run/banana/3c-diag-plain-fbo", F_OK) == 0;
+		const bool diagBoRender = access("/run/banana/3c-diag-bo-render", F_OK) == 0;
+		const bool diagBoScanout = access("/run/banana/3c-diag-bo-scanout", F_OK) == 0;
+		const bool diagBoScanoutFb = access("/run/banana/3c-diag-bo-scanout-fb", F_OK) == 0;
+		const bool diagBoPrime = access("/run/banana/3c-diag-bo-prime", F_OK) == 0;
+		const bool diagBoFbAfter = access("/run/banana/3c-diag-bo-fb-after", F_OK) == 0;
+		const int diagCount = (diagImport ? 1 : 0) + (diagPbuffer ? 1 : 0) + (diagClear ? 1 : 0) +
+		                      (diagPlainFbo ? 1 : 0) + (diagBoRender ? 1 : 0) + (diagBoScanout ? 1 : 0) +
+		                      (diagBoScanoutFb ? 1 : 0) + (diagBoPrime ? 1 : 0) + (diagBoFbAfter ? 1 : 0);
+		const bool freshWanted = access("/run/banana/3c-fresh-image", F_OK) == 0;
+		DiagVariant diag = DiagVariant::None;
+		bool diagRefused = false;
+		if (diagCount > 1) { logf("more than one 3c diagnostic gate; diagnostics refused"); diagRefused = true; }
+		else if (diagCount == 1 && freshWanted)
+		{ logf("a 3c diagnostic gate cannot be combined with 3c-fresh-image; diagnostics refused"); diagRefused = true; }
+		else if (diagImport) diag = DiagVariant::Import;
+		else if (diagPbuffer) diag = DiagVariant::Pbuffer;
+		else if (diagClear) diag = DiagVariant::Clear;
+		else if (diagPlainFbo) diag = DiagVariant::PlainFbo;
+		else if (diagBoRender) diag = DiagVariant::BoRender;
+		else if (diagBoScanout) diag = DiagVariant::BoScanout;
+		else if (diagBoScanoutFb) diag = DiagVariant::BoScanoutFb;
+		else if (diagBoPrime) diag = DiagVariant::BoPrime;
+		else if (diagBoFbAfter) diag = DiagVariant::BoFbAfter;
+
+		const bool eglGate = access("/run/banana/3c-egl", F_OK) == 0;
+		bool eglWanted = !diagRefused && (diag != DiagVariant::None || eglGate);
 		traceInit(eglWanted ? "/data/banana/logs/3c-trace" : nullptr);
-		if (eglWanted) tracef("start: EGL gate on");
+		if (diag != DiagVariant::None)
+		{
+			if (eglGate) logf("3c-egl is ignored while a diagnostic variant is selected");
+			tracef("start: diagnostic gate on");
+		}
+		else if (eglGate) tracef("start: EGL gate on");
 		if (!eglWanted) logf("EGL rotation disabled (no /run/banana/3c-egl); direct presenter");
 		{
-			auto egl = std::make_unique<EglPresenter>(d);
+			auto egl = std::make_unique<EglPresenter>(d, diag);
 			std::string perr;
 			if (eglWanted && egl->start(perr)) im->presenter = std::move(egl);
 			else

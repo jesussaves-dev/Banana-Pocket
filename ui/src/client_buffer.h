@@ -18,6 +18,7 @@ namespace banana
 		uint32_t fb = 0;			// DirectPresenter: the imported DRM framebuffer
 		void* eglImage = nullptr;		// EglPresenter: the EGLImage of this source
 		unsigned tex = 0;			// EglPresenter: the GL texture made from it
+		uint64_t serial = 0;			// trace identity of this wl_buffer
 		int refs = 0;
 	};
 }
