@@ -149,9 +149,13 @@ bottom); `radius` (a number, `"50%"` for a pill or a circle, or `[tl, tr, br, bl
 `text`, `font`, `size`, `color`, `align` (`left`, `center`, `right`, within `w`), `valign` (`top`, `middle`, `bottom`,
 within `h`), `upper`, `spacing` (letter spacing), `wrap`, `maxLines`, `lineHeight`, `ellipsis` (default on: a line
 longer than `w` ends in ...), `shadow: { "x", "y", "color" }`, `outline: { "width", "color" }`.
+`gradient: { "stops": ["#fff6c8", "#ffd21e", "#8a4a10"] }` shades the letters in even bands down the line, one per
+layout unit: the stepped look of 16-bit title text. Each band is a draw of its own, so keep it to titles.
 
 Fonts are named in the theme's `fonts` (`"title": "mine/Title.ttf"`) or are built in: `pixel`, `pixel-medium`
-(Pixelify Sans), `inter`, `inter-medium`, `inter-semibold`, `inter-bold`.
+(Pixelify Sans), `inter`, `inter-medium`, `inter-semibold`, `inter-bold`, and Banana's own pixel faces `banana` and
+`banana-title` (`tools/make-pixel-font.py`, ASCII and Latin-1). Those two are drawn on a grid of 100 font units per art
+pixel, so they come out hard-edged with no grey at `size` 12 and 24 on a `"canvas": { "w": 310 }` theme.
 
 ### image
 

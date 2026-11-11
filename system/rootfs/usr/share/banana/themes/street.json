@@ -6,7 +6,7 @@
   "author": "BananaOS",
   "base": "dark",
   "accent": "#ffd21e",
-  "font": "pixel",
+  "font": "banana",
   "crisp": true,
   "canvas": { "w": 310 },
 
@@ -29,11 +29,11 @@
   "components": {
     // a button and what it does: the key on a paper chip
     "pill": {
-      "type": "group", "layout": "row", "gap": 3, "align": "center", "h": 11,
+      "type": "group", "layout": "row", "gap": 3, "align": "center", "h": 13,
       "children": [
-        { "type": "group", "layout": "row", "padding": 2, "h": 11, "align": "center", "fill": "=paper", "border": 1, "borderColor": "=ink",
-          "children": [ { "type": "text", "text": "{item.key}", "size": 7, "color": "=ink" } ] },
-        { "type": "text", "text": "{item.label}", "size": 8, "color": "=paper" }
+        { "type": "group", "layout": "row", "padding": 2, "h": 13, "align": "center", "fill": "=paper", "border": 1, "borderColor": "=ink",
+          "children": [ { "type": "text", "size": 12, "text": "{item.key}", "color": "=ink" } ] },
+        { "type": "text", "size": 12, "text": "{item.label}", "color": "=paper", "shadow": { "x": 1, "y": 1, "color": "=hudLo" } }
       ]
     },
     // a cobbled band of the road: `with` gives its top, height and speed (units moved per shop)
@@ -53,11 +53,11 @@
 
   "screens": {
     "all": { "top": [
-      // the clock (wide enough for "01:48 PM") and the battery, each on a small panel over the sky
-      { "type": "rect", "x": 4, "y": 4, "w": 46, "h": 13, "fill": "=hud", "border": 1, "borderColor": "=gold" },
-      { "type": "text", "x": 4, "w": 46, "y": 6, "align": "center", "text": "{clock}", "size": 8, "color": "=paper" },
-      { "type": "rect", "right": 4, "y": 4, "w": 34, "h": 13, "fill": "=hud", "border": 1, "borderColor": "=gold", "visible": "=battery >= 0" },
-      { "type": "text", "right": 4, "w": 34, "y": 6, "align": "center", "text": "{battery}%", "size": 8,
+      // the clock (wide enough for "02:06 PM") and the battery, each on a small panel over the sky
+      { "type": "rect", "x": 4, "y": 4, "w": 52, "h": 14, "fill": "=hud", "border": 1, "borderColor": "=gold" },
+      { "type": "text", "size": 12, "x": 4, "w": 52, "y": 5, "align": "center", "text": "{clock}", "color": "=paper" },
+      { "type": "rect", "right": 4, "y": 4, "w": 34, "h": 14, "fill": "=hud", "border": 1, "borderColor": "=gold", "visible": "=battery >= 0" },
+      { "type": "text", "size": 12, "right": 4, "w": 34, "y": 5, "align": "center", "text": "{battery}%",
         "color": "=battery < 20 ? '#ff6a6a' : paper", "visible": "=battery >= 0" }
     ] },
 
@@ -105,9 +105,10 @@
                 "itemH": 6, "gap": 0, "scrollMode": "none", "clip": true,
                 "item": { "type": "rect", "x": 0, "y": 5, "w": 92, "h": 1, "fill": "=mortar" } },
 
-              // the sign: the system's name, gold on the selected shop
-              { "type": "rect", "x": 6, "y": "=pick(mod(i, 4), 74, 58, 82, 66)", "w": 84, "h": 18, "fill": "=sel ? gold : paper", "border": 1, "borderColor": "=ink" },
-              { "type": "text", "x": 8, "w": 80, "y": "=pick(mod(i, 4), 79, 63, 87, 71)", "align": "center", "text": "{item.name}", "size": 8, "color": "=ink" },
+              // the sign: the system's name on up to two lines, gold on the selected shop
+              { "type": "rect", "x": 4, "y": "=pick(mod(i, 4), 74, 58, 82, 66)", "w": 88, "h": 24, "fill": "=sel ? gold : paper", "border": 1, "borderColor": "=ink" },
+              { "type": "text", "size": 12, "x": 6, "w": 84, "y": "=pick(mod(i, 4), 75, 59, 83, 67)", "h": 22, "align": "center", "valign": "middle",
+                "text": "{item.name}", "color": "=ink", "wrap": true, "maxLines": 2, "lineHeight": 10 },
 
               // the awning, striped in the shop's colour
               { "type": "rect", "x": -1, "y": 108, "w": 98, "h": 2, "fill": "=ink" },
@@ -119,8 +120,8 @@
               { "type": "rect", "x": 3, "y": 120, "w": 90, "h": 58, "fill": "=dk", "border": 1, "borderColor": "=ink" },
               { "type": "rect", "x": 6, "y": 126, "w": 46, "h": 46, "fill": "=lit", "border": 1, "borderColor": "=ink", "visible": "=item.games > 0" },
               { "type": "image", "src": "{item.icon}", "fit": "pixel", "x": 13, "y": 132, "w": 32, "h": 32, "visible": "=item.games > 0" },
-              { "type": "rect", "x": 34, "y": 160, "w": 17, "h": 11, "fill": "=paper", "border": 1, "borderColor": "=ink", "visible": "=item.games > 0" },
-              { "type": "text", "x": 34, "w": 17, "y": 162, "align": "center", "text": "{item.games}", "size": 7, "color": "=ink", "visible": "=item.games > 0" },
+              { "type": "rect", "x": 24, "y": 159, "w": 27, "h": 12, "fill": "=paper", "border": 1, "borderColor": "=ink", "visible": "=item.games > 0" },
+              { "type": "text", "size": 12, "x": 24, "w": 27, "y": 159, "align": "center", "text": "{item.games}", "color": "=ink", "visible": "=item.games > 0" },
               { "type": "image", "src": "fav.png", "fit": "pixel", "x": 8, "y": 128, "w": 8, "h": 8, "visible": "=item.fav" },
               { "type": "rect", "x": 58, "y": 126, "w": 32, "h": 52, "fill": "=wallB", "border": 1, "borderColor": "=ink" },
               { "type": "rect", "x": 63, "y": 130, "w": 22, "h": 18, "fill": "=lit", "border": 1, "borderColor": "=ink" },
@@ -130,7 +131,7 @@
                 "itemH": 5, "gap": 0, "scrollMode": "none", "visible": "=item.games == 0",
                 "item": { "type": "rect", "w": 86, "h": 4, "fill": "=mod(i, 2) ? roadHi : road" } },
               { "type": "rect", "x": 24, "y": 140, "w": 48, "h": 13, "fill": "=paper", "border": 1, "borderColor": "=ink", "visible": "=item.games == 0" },
-              { "type": "text", "x": 24, "w": 48, "y": 143, "align": "center", "text": "Closed", "size": 8, "color": "=ink", "visible": "=item.games == 0" },
+              { "type": "text", "size": 12, "x": 24, "w": 48, "y": 141, "align": "center", "text": "Closed", "color": "=ink", "visible": "=item.games == 0" },
 
               // the street lamp between this shop and the next
               { "type": "rect", "x": 99, "y": 96, "w": 2, "h": 82, "fill": "=ink" },
@@ -153,12 +154,13 @@
         // what's selected, on a panel at the bottom
         { "type": "rect", "x": 0, "y": 224, "w": 310, "h": 46, "fill": "=hud", "border": 1, "borderColor": "=gold" },
         { "type": "rect", "x": 1, "y": 225, "w": 308, "h": 1, "fill": "=hudLo" },
-        { "type": "text", "x": 8, "y": 228, "w": 170, "text": "{sys.name}", "size": 16, "color": "=gold" },
-        { "type": "text", "right": 8, "y": 230, "w": 120, "align": "right",
+        { "type": "text", "x": 8, "y": 226, "w": 176, "text": "{sys.name}", "font": "banana-title", "size": 24, "color": "=gold",
+          "gradient": { "stops": ["#fff6c8", "#fff6c8", "#ffe873", "=gold", "=gold", "=goldLo", "#8a4a10", "#8a4a10"] }, "outline": { "width": 1, "color": "=hudLo" } },
+        { "type": "text", "size": 12, "right": 8, "y": 228, "w": 120, "align": "right",
           "text": "=(sys.games == 0 ? 'Closed' : sys.games == 1 ? '1 game' : sys.games + ' games') + '  ' + (cursor + 1) + '/' + count",
-          "size": 8, "color": "=paper" },
-        { "type": "text", "right": 8, "y": 242, "w": 130, "align": "right", "visible": "=sys.hasResume", "text": "Last: {sys.resumeTitle}", "size": 8, "color": "=paperLo" },
-        { "type": "list", "source": "hints", "direction": "row", "x": 8, "y": 256, "w": 294, "h": 11, "gap": 6, "flow": true, "scrollMode": "none",
+          "color": "=paper" },
+        { "type": "text", "size": 12, "right": 8, "y": 240, "w": 124, "align": "right", "visible": "=sys.hasResume", "text": "Last: {sys.resumeTitle}", "color": "=paperLo" },
+        { "type": "list", "source": "hints", "direction": "row", "x": 8, "y": 254, "w": 294, "h": 13, "gap": 6, "flow": true, "scrollMode": "none",
           "justify": "between", "item": { "use": "pill" } }
       ]
     },
@@ -170,21 +172,21 @@
           "item": { "type": "rect", "y": 9, "w": 310, "h": 1, "fill": "=mortar" } },
         { "type": "rect", "x": 0, "y": 0, "w": 310, "h": 21, "fill": "=hud", "border": 1, "borderColor": "=gold" },
         // between the clock and the battery (drawn over every view)
-        { "type": "image", "src": "{sys.icon}", "fit": "pixel", "x": 56, "y": 3, "w": 16, "h": 16 },
-        { "type": "text", "x": 76, "y": 5, "w": 150, "text": "{sys.name}", "size": 10, "color": "=gold" },
-        { "type": "text", "right": 42, "y": 7, "w": 40, "align": "right", "text": "{cursor + 1}/{count}", "size": 8, "color": "=paper" },
+        { "type": "image", "src": "{sys.icon}", "fit": "pixel", "x": 60, "y": 3, "w": 16, "h": 16 },
+        { "type": "text", "size": 12, "x": 80, "y": 5, "w": 146, "text": "{sys.name}", "color": "=gold", "shadow": { "x": 1, "y": 1, "color": "=hudLo" } },
+        { "type": "text", "size": 12, "right": 42, "y": 5, "w": 40, "align": "right", "text": "{cursor + 1}/{count}", "color": "=paper" },
 
         // the box on the counter: the whole picture, whatever its shape (Game Boy boxes are square, Super NES ones
         // wide), centred on the box's dark backing
         { "type": "rect", "x": 10, "y": 30, "w": 86, "h": 108, "fill": "=ink" },
         { "type": "image", "src": "{game.art}", "fallback": "{sys.icon}", "fit": "contain", "x": 12, "y": 32, "w": 82, "h": 104 },
-        { "type": "text", "x": 10, "w": 86, "y": 70, "align": "center", "text": "{empty.title}", "size": 8, "color": "=paper", "visible": "=empty" },
+        { "type": "text", "size": 12, "x": 10, "w": 86, "y": 70, "align": "center", "text": "{empty.title}", "color": "=paper", "visible": "=empty", "wrap": true },
 
         // the receipt: what the shelf knows about the game
         { "type": "rect", "x": 8, "y": 146, "w": 90, "h": 92, "fill": "=paper" },
-        { "type": "text", "x": 14, "y": 152, "text": "Receipt", "size": 8, "color": "=ink" },
+        { "type": "text", "size": 12, "x": 14, "y": 150, "text": "Receipt", "color": "=ink" },
         { "type": "rect", "x": 14, "y": 164, "w": 78, "h": 1, "fill": "=ink" },
-        { "type": "text", "x": 14, "y": 170, "w": 78, "text": "{game.sub}", "size": 7, "color": "=dk", "wrap": true, "maxLines": 6 },
+        { "type": "text", "size": 12, "x": 14, "y": 168, "w": 78, "text": "{game.sub}", "color": "=dk", "wrap": true, "maxLines": 5 },
 
         // the shelf
         { "type": "list", "source": "games", "direction": "column", "x": 106, "y": 27, "w": 198, "h": 220, "itemH": 18, "gap": 2,
@@ -193,12 +195,12 @@
             { "type": "rect", "x": 4, "y": 1, "w": 192, "h": 15, "fill": "=dk", "border": 1, "borderColor": "=ink", "visible": "=!sel" },
             { "type": "rect", "x": 0, "y": 0, "w": 198, "h": 17, "fill": "=gold", "border": 1, "borderColor": "=ink", "visible": "=sel" },
             { "type": "rect", "x": "=sel ? 3 : 6", "y": 3, "w": 5, "h": 11, "fill": "=pick(mod(i, 3), awnA, awnB, awnC)" },
-            { "type": "text", "x": "=sel ? 12 : 15", "y": 5, "w": 176, "text": "{item.title}", "size": 8, "color": "=sel ? ink : paper" },
+            { "type": "text", "size": 12, "x": "=sel ? 12 : 15", "y": 3, "w": 176, "text": "{item.title}", "color": "=sel ? ink : paper" },
             { "type": "image", "src": "fav.png", "fit": "pixel", "right": 4, "y": 5, "w": 8, "h": 8, "visible": "=item.fav" }
           ] } },
 
         { "type": "rect", "x": 0, "y": 250, "w": 310, "h": 20, "fill": "=hud" },
-        { "type": "list", "source": "hints", "direction": "row", "x": 8, "y": 255, "w": 294, "h": 11, "gap": 6, "flow": true, "scrollMode": "none",
+        { "type": "list", "source": "hints", "direction": "row", "x": 8, "y": 254, "w": 294, "h": 13, "gap": 6, "flow": true, "scrollMode": "none",
           "justify": "between", "item": { "use": "pill" } }
       ]
     }

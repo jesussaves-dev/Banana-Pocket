@@ -263,6 +263,10 @@ namespace banana
 			fontFiles["inter-medium"] = interFonts + "/Inter-Medium.ttf";
 			fontFiles["inter-semibold"] = interFonts + "/Inter-SemiBold.ttf";
 			fontFiles["inter-bold"] = interFonts + "/Inter-Bold.ttf";
+			// Banana's own pixel faces (tools/make-pixel-font.py), beside Inter: hard-edged at size 12 and 24 on a
+			// 310-wide canvas
+			fontFiles["banana"] = interFonts + "/BananaPixel.ttf";
+			fontFiles["banana-title"] = interFonts + "/BananaTitle.ttf";
 			std::string why;
 			doc = readJsonFile(path, &why);
 			if (!doc) { err(why); return; }
@@ -776,6 +780,12 @@ namespace banana
 			uint32_t olc = 0;
 			bool outline = color(c, "outline.color", olc) && olc >> 24;
 			float ow = (float)num(c, "outline.width", 1) * f.k;
+			// "gradient": { "stops": ["#top", ..., "#bottom"] } on text: the letters coloured in even bands down the
+			// line, one band per layout unit (an art pixel on a "canvas" theme), the stepped shading of 16-bit title
+			// text. Each band is the line drawn again through a clip, a draw per band: meant for titles, not lists.
+			uint32_t grad[8];
+			int ng = 0;
+			while (ng < 8 && color(c, "gradient.stops." + std::to_string(ng), grad[ng])) ng++;
 			for (size_t i = 0; i < L.lines.size(); i++)
 			{
 				const rnds::TextLine& l = L.lines[i];
@@ -790,7 +800,21 @@ namespace banana
 						drawLine(l, L.st, L.asc, lx + ox[k] * ow, ly + oy[k] * ow, colorFrom(olc, f.opacity));
 					}
 				if (shadow) drawLine(l, L.st, L.asc, lx + sx, ly + sy, colorFrom(shc, f.opacity));
-				drawLine(l, L.st, L.asc, lx, ly, colorFrom(col, f.opacity));
+				if (ng < 2) { drawLine(l, L.st, L.asc, lx, ly, colorFrom(col, f.opacity)); continue; }
+				const float band = std::max(0.25f, f.k);
+				const int n = std::min(64, (int)std::ceil(L.lineH / band));
+				for (int r = 0; r < n; r++)
+				{
+					const float t = (r + 0.5f) / n * (ng - 1);
+					const int a = std::min(ng - 2, (int)t);
+					const float u = t - a;
+					auto ch = [&](int sh) { float p = (grad[a] >> sh) & 255, q = (grad[a + 1] >> sh) & 255; return (uint32_t)(p + (q - p) * u + 0.5f) << sh; };
+					const uint32_t g = ch(24) | ch(16) | ch(8) | ch(0);
+					const float y0 = std::floor((top + i * L.lineH + r * band) * s), y1 = std::floor((top + i * L.lineH + (r + 1) * band) * s);
+					m->be->pushClip(0, y0, W * s, y1 - y0);
+					drawLine(l, L.st, L.asc, lx, ly, colorFrom(g, f.opacity));
+					m->be->popClip();
+				}
 			}
 		}
 

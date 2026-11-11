@@ -158,7 +158,7 @@
     },
     "gradient": {
       "type": "object",
-      "description": "A linear gradient across the box (CSS angles: 180 runs top to bottom).",
+      "description": "A linear gradient across the box (CSS angles: 180 runs top to bottom). On text: the letters shaded in even bands down the line, one per layout unit, from the stops (plain colours; angle and positions are not used).",
       "properties": {
         "angle": { "$ref": "#/$defs/prop", "description": "The gradient's angle in degrees. Default 180." },
         "stops": {
