@@ -193,7 +193,7 @@ The RPC has one 1240x1080 panel; Banana's UI was built for the RG DS's two 640x4
 
 ## QEMU end-to-end test
 
-    tools/qemu-e2e.sh output/retroid-pocket-classic/images/banana-retroid-pocket-classic.img.gz
+    tools/qemu-boot.sh output/retroid-pocket-classic/images/banana-retroid-pocket-classic.img.gz
 
 boots the image (one panel by default), skips the first-time setup, fetches a ROM and the update package from a
 server it runs, applies the update, and boots slot b -- failing on any step. No root needed: files go in with the
@@ -512,6 +512,8 @@ Two audio traps turned up on the way, both of which read as "the sound broke":
   write before it opens.
 
 ## Solved: the whole picture upright -- the games run under cage (2026-10-28)
+
+*History: `cage` was replaced by `banana-ui`'s own compositor in 0.6.0 and removed in 0.6.1 (`docs/PLAN_DRM_COMPOSITOR.md`).*
 
 `video_rotation = "3"` turns the **content** only: RetroArch applies it in the video driver's rotation
 (`gl2_set_rotation`, `gl->rotation`, used for `gl->mvp` and the content blit), which is why the game is upright and

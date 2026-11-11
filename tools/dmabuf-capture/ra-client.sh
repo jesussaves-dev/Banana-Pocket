@@ -1,5 +1,5 @@
 #!/bin/sh
-# Test client for tools/dmabuf-capture: direct RetroArch (no cage) in Vulkan or glcore mode.
+# Test client for tools/dmabuf-capture: direct RetroArch in Vulkan or glcore mode.
 # Device paths (the RPC's PSX/Dreamcast ROMs); this is a test helper, not part of the image.
 #   ra-client.sh vk|gl
 mode=${1:-vk}

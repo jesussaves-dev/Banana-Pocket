@@ -16,7 +16,7 @@ command -v python3 >/dev/null 2>&1 || { echo "failed: no python3" > /run/banana/
 exec python3 - "$BOARD" "$CUR" <<'PY'
 import atexit, json, os, sys, urllib.request
 
-REPO = "jesussaves-ai/Banana-Pocket"
+REPO = "jesussaves-dev/Banana-Pocket"
 board, cur = (sys.argv[1:3] + ["", ""])[:2]
 DEST, STATUS = "/data/banana/updates", "/run/banana/update-status"
 
