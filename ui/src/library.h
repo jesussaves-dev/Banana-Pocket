@@ -3,7 +3,7 @@
 // files, how to start them), their look (icon, colour, maker) from the theme's rnds/systems.cfg, games from the ROM
 // folders, names and art from an EmulationStation gamelist.xml when there is one (a card scraped on ROCKNIX keeps
 // its art) or from media/<kind>/<rom name>.png, and play counts, play time and favourites from Banana's own files.
-#include "../rnds/RndsUI.h"
+#include "frontend.h"
 #include <ctime>
 #include <functional>
 #include <map>
@@ -20,7 +20,7 @@ namespace banana
 	{
 		std::string id, name, maker, folder, run, perf;
 		std::vector<std::string> exts;	// lower case, no dot
-		bool always = false;			// on the shelf with no games (the DS: a fresh card shows where games go)
+		bool always = false;			// on the shelf with no games (a fresh card shows where games go)
 		bool flat = false;				// games only in the folder itself (ports: their own folders hold scripts too)
 		bool app = false;				// an application, not a console: scanned from an app manifest (see scanApps)
 	};

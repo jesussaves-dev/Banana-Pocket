@@ -15,7 +15,7 @@ internal Android is there.
       (if it is turned: add `banana.rotate=0`, `90`, `180` or `270` to the `APPEND` lines in
       `/boot/extlinux/extlinux.conf` -- no rebuild needed)
 - [ ] The first-time setup runs: Wi-Fi lists networks, the time zone changes the clock
-- [ ] The menu's text and art are sharp (the UI draws at 1240x1080, 1.9375x the DS layout)
+- [ ] The menu's text and art are sharp (the UI draws at 1240x1080, 1.9375x the 640-wide layout)
 
 ## Panel and power
 
@@ -38,9 +38,7 @@ internal Android is there.
 
 ## Settings
 
-- [ ] The pages are Display & sound, Sleep & power, RetroArch, Network, System -- **no Nintendo DS page**: this
-      handheld ships without the DS (one screen; there is no two-panel DS emulator here). If a DS page appears, the
-      shelf list on the card has an `[nds]` section in it
+- [ ] The pages are Display & sound, Sleep & power, RetroArch, Network, System, Frames, Shaders
 - [ ] Sleep when idle is off by default here (a slate has no lid to close): the screen dims after two idle minutes and
       stays awake; the power button still sleeps it, and Settings > Sleep & power or `autosleep_minutes` in
       `banana/bananad.conf` asks for the timer back

@@ -1,6 +1,6 @@
 #include "sound.h"
 #include <unistd.h>
-#include "../rnds/RndsUI.h"
+#include "frontend.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdarg>

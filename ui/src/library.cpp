@@ -1,4 +1,5 @@
 #include "library.h"
+#include "util.h"
 #include "theme.h"
 #include "json.h"
 #include <algorithm>
@@ -14,17 +15,11 @@
 #include <glob.h>
 #include <map>
 #include <unordered_map>
-#include "../rnds/RndsRaster.h"
+#include "raster.h"
 #include "../third_party/stb_image_write.h"
 
 namespace banana
 {
-	static std::string trim(const std::string& s)
-	{
-		size_t a = s.find_first_not_of(" \t\r\n"), b = s.find_last_not_of(" \t\r\n");
-		return a == std::string::npos ? "" : s.substr(a, b - a + 1);
-	}
-
 	static std::string lower(std::string s)
 	{
 		for (auto& c : s) c = (char)tolower((unsigned char)c);
@@ -35,14 +30,6 @@ namespace banana
 	{
 		struct stat st;
 		return !p.empty() && stat(p.c_str(), &st) == 0;
-	}
-
-	static std::string readLine(const std::string& path)
-	{
-		std::ifstream f(path);
-		std::string s;
-		std::getline(f, s);
-		return trim(s);
 	}
 
 	// a name as the engine shows it: no file-name leftovers ("(USA, Europe)", "[!]", underscores), as ROCKNIXDS does
@@ -158,53 +145,6 @@ namespace banana
 	}
 
 	// ---- setup ------------------------------------------------------------------------------------------------------
-	// A game with no box art: a DS ROM's own banner icon (the 32x32 it carries) drawn up
-	// with hard pixel edges to the cover's size on this panel (the cover frame is 214 units wide, 1.9375x on the
-	// RPC's 1240x1080), written once to <data>/cache/icons, so the cover and the home screen's
-	// last-played cartridge show the game instead of the system's console. "" when the ROM has no icon.
-	static std::string romIconCover(const std::string& dataDir, const std::string& rom)
-	{
-		static int size = 0;
-		if (!size)
-		{
-			int w = 640;
-			glob_t g;
-			if (!glob("/sys/class/drm/card*-DSI-*/modes", 0, nullptr, &g))
-			{
-				for (size_t i = 0; i < g.gl_pathc && w == 640; i++)
-					if (FILE* f = fopen(g.gl_pathv[i], "r")) { int a, b; if (fscanf(f, "%dx%d", &a, &b) == 2 && a > 0) w = a; fclose(f); }
-				globfree(&g);
-			}
-			size = (int)std::lround(214.0 * w / 640);
-		}
-		std::string base = rom.substr(rom.find_last_of('/') + 1);
-		for (char& c : base) if (c == '/' || c == '\\') c = '_';
-		std::string dir = dataDir + "/cache/icons", out = dir + "/" + base + "." + std::to_string(size) + ".png";
-		struct stat st;
-		if (!stat(out.c_str(), &st)) return st.st_size > 0 ? out : "";
-		rnds::Bitmap ic = rnds::romIcon(rom);
-		if (mkdir((dataDir + "/cache").c_str(), 0755) && errno != EEXIST) return "";
-		if (mkdir(dir.c_str(), 0755) && errno != EEXIST) return "";
-		if (ic.empty() || ic.alpha || ic.px.size() < (size_t)ic.w * ic.h * 4)
-		{
-			if (FILE* f = fopen(out.c_str(), "w")) fclose(f);	// (an empty file: no icon, asked once)
-			return "";
-		}
-		std::vector<uint8_t> big((size_t)size * size * 4);
-		for (int y = 0; y < size; y++)
-			for (int x = 0; x < size; x++)
-				memcpy(&big[((size_t)y * size + x) * 4], &ic.px[((size_t)(y * ic.h / size) * ic.w + x * ic.w / size) * 4], 4);
-		std::string tmp = out + ".tmp";
-		if (!stbi_write_png(tmp.c_str(), size, size, 4, big.data(), size * 4) || rename(tmp.c_str(), out.c_str())) { unlink(tmp.c_str()); return ""; }
-		return out;
-	}
-	static bool isDsRom(const std::string& path, const std::string& system)
-	{
-		std::string ext = path.substr(path.rfind('.') + 1);
-		for (char& c : ext) c = (char)tolower((unsigned char)c);
-		return ext == "nds" || (ext == "zip" && system == "nds");
-	}
-
 	// a system's folder: under the card's roms, or an absolute path (an app shipped with the system, whose one entry
 	// is in /usr/share/banana/apps/<id>)
 	static std::string folderPath(const std::string& romRoot, const std::string& folder)
@@ -517,11 +457,11 @@ namespace banana
 			// a game's own overrides: <system>/<rel> TAB core TAB shader TAB frame (empty follows the system / the global
 			// shader; a line from before frames has three columns, and trailing empty columns do not split at all)
 			std::ifstream f(dataDir + "/pergame.conf");
-			std::string ln;
-			while (std::getline(f, ln))
+			std::string row;
+			while (std::getline(f, row))
 			{
 				std::vector<std::string> c;
-				std::stringstream ls(ln);
+				std::stringstream ls(row);
 				std::string part;
 				while (std::getline(ls, part, '\t')) c.push_back(part);
 				if (c.size() < 2 || c[0].empty()) continue;
@@ -1038,8 +978,6 @@ namespace banana
 			r.resumeEyebrow = g.last > 0 ? "Last played" : "Not played yet";
 			r.resumeTitle = g.title;
 			r.resumeBox = g.box; r.resumeCart = g.cart; r.resumeLabel = g.label;
-			if (g.box.empty() && g.cart.empty() && g.label.empty() && isDsRom(g.path, s.def.id))
-				r.resumeLabel = romIconCover(dataDir, g.path);	// the game's own icon on the chip's cartridge
 		}
 		return r;
 	}
@@ -1060,10 +998,6 @@ namespace banana
 		r.last = relDay(g.last);
 		r.time = fmtTime(g.seconds);
 		r.box = g.box; r.cart = g.cart; r.label = g.label;
-		if (r.box.empty() && isDsRom(g.path, systemOf(i).id)) r.box = romIconCover(dataDir, g.path);	// its own icon
-		std::string ext = lower(g.path.substr(g.path.rfind('.') + 1));
-		// the DS ROM's own icon when there is no art (from inside a .zip too)
-		if (ext == "nds" || (ext == "zip" && systemOf(i).id == "nds")) r.rom = g.path;
 		r.icon = themedIcon(systemOf(i).id, lookOf(systemOf(i).id).icon);
 		// what the emulator last said of its RetroAchievements (the block is left out until a game has said so)
 		if (g.achB > 0)
@@ -1103,7 +1037,7 @@ namespace banana
 		return ts.tv_sec + ts.tv_nsec / 1e9;
 	}
 
-	// read again at most every 2 s: the top screen asks on every frame it draws (a directory and five files a frame
+	// read again at most every 2 s: the screen asks on every frame it draws (a directory and five files a frame
 	// while the shelf scrolls)
 	Library::Power Library::power()
 	{

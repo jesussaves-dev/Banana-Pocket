@@ -150,11 +150,8 @@ namespace banana
 
 	SoftBackend::SoftBackend(int w, int h) : W(w), H(h)
 	{
-		for (int s = 0; s < 2; s++)
-		{
-			scr[s].assign((size_t)W * H, 0xff000000u);
-			dmg[s] = { 0, 0, W, H };
-		}
+		scr.assign((size_t)W * H, 0xff000000u);
+		dmg = { 0, 0, W, H };
 	}
 
 	rnds::TexPtr SoftBackend::upload(const rnds::Bitmap& b, bool smooth)
@@ -184,10 +181,9 @@ namespace banana
 		return t;
 	}
 
-	void SoftBackend::beginScreen(int screen)
+	void SoftBackend::beginScreen()
 	{
-		cur = screen;
-		rec[cur].clear();
+		rec.clear();
 	}
 
 	// pixels whose centres fall in [v, v + len): GL's rasterization rule
@@ -220,7 +216,7 @@ namespace banana
 		items.clear();
 		clips.clear();
 		clips.push_back({ 0, 0, W, H });
-		for (auto& c : rec[cur])
+		for (auto& c : rec)
 		{
 			switch (c.op)
 			{
@@ -265,7 +261,7 @@ namespace banana
 	// every draw that touches it clipped to it
 	void SoftBackend::redraw(const Clip& r)
 	{
-		uint32_t* base = scr[cur].data();
+		uint32_t* base = scr.data();
 		for (int y = r.y0; y < r.y1; y++) std::fill(base + (size_t)y * W + r.x0, base + (size_t)y * W + r.x1, 0xff000000u);
 		touch(r);
 		redrawn += (uint64_t)(r.x1 - r.x0) * (r.y1 - r.y0);
@@ -283,14 +279,14 @@ namespace banana
 
 	void SoftBackend::endScreen()
 	{
-		if (overlay) overlay(cur);
+		if (overlay) overlay();
 		resolve();
-		std::vector<Item>& old = last[cur];
+		std::vector<Item>& old = last;
 		dirty.clear();
-		if (full[cur])
+		if (full)
 		{
 			dirty.push_back({ 0, 0, W, H });
-			full[cur] = false;
+			full = false;
 		}
 		else
 		{
@@ -318,22 +314,22 @@ namespace banana
 
 	void SoftBackend::draw(const rnds::TexPtr& t, float x, float y, float w, float h, const rnds::Color& tint)
 	{
-		rec[cur].push_back({ Cmd::DRAW, t, x, y, w, h, { tint.r, tint.g, tint.b, tint.a } });
+		rec.push_back({ Cmd::DRAW, t, x, y, w, h, { tint.r, tint.g, tint.b, tint.a } });
 	}
 
 	void SoftBackend::fill(float x, float y, float w, float h, const rnds::Color& c)
 	{
-		rec[cur].push_back({ Cmd::FILL, nullptr, x, y, w, h, { c.r, c.g, c.b, c.a } });
+		rec.push_back({ Cmd::FILL, nullptr, x, y, w, h, { c.r, c.g, c.b, c.a } });
 	}
 
 	void SoftBackend::pushClip(float x, float y, float w, float h)
 	{
-		rec[cur].push_back({ Cmd::PUSH, nullptr, x, y, w, h, { 0, 0, 0, 0 } });
+		rec.push_back({ Cmd::PUSH, nullptr, x, y, w, h, { 0, 0, 0, 0 } });
 	}
 
 	void SoftBackend::popClip()
 	{
-		rec[cur].push_back({ Cmd::POP, nullptr, 0, 0, 0, 0, { 0, 0, 0, 0 } });
+		rec.push_back({ Cmd::POP, nullptr, 0, 0, 0, 0, { 0, 0, 0, 0 } });
 	}
 
 	void SoftBackend::doFill(float x, float y, float w, float h, const rnds::Color& c, const Clip& cl)
@@ -344,7 +340,7 @@ namespace banana
 		uint32_t p = premul(c);
 		for (int yy = y0; yy < y1; yy++)
 		{
-			uint32_t* d = &scr[cur][(size_t)yy * W];
+			uint32_t* d = &scr[(size_t)yy * W];
 			if ((p >> 24) == 255)
 				std::fill(d + x0, d + x1, p);
 			else
@@ -476,7 +472,7 @@ namespace banana
 		const uint32_t* runs = t->runs.data();
 		for (int yy = y0; yy < y1; yy++)
 		{
-			uint32_t* d = &scr[cur][(size_t)yy * W + bx0];
+			uint32_t* d = &scr[(size_t)yy * W + bx0];
 			int sy = yy - by0;
 			// the row's source pointer once per row, not per run of it (a row is often many runs)
 			const uint8_t* sa = alpha ? &t->a8[(size_t)sy * t->w] : nullptr;
@@ -563,7 +559,7 @@ namespace banana
 		const uint64_t* vrows = t->smooth && !t->alpha ? vertical(t, y, h, stepY, by0, by1) : nullptr;
 		for (int yy = y0; yy < y1; yy++)
 		{
-			uint32_t* d = &scr[cur][(size_t)yy * W + x0];
+			uint32_t* d = &scr[(size_t)yy * W + x0];
 			int64_t sv = (int64_t)(((yy + 0.5) - y) * stepY) - (t->smooth ? 32768 : 0);
 			if (!t->smooth)
 			{

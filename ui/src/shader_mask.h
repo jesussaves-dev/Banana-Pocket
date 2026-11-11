@@ -140,13 +140,20 @@ namespace banana
 	// the overlay plane's alpha for the slider's percent: DRM's 16-bit range, 0xFFFF opaque
 	constexpr uint32_t maskPlaneAlpha(int pct) { return ((uint32_t)pct * 65535u + 50u) / 100u; }
 
+	// the night light's green and blue gains: 0 off, 1 warm, 2 warmer
+	inline void warmthGains(int warmth, double& kg, double& kb)
+	{
+		kg = warmth >= 2 ? 0.85 : warmth == 1 ? 0.92 : 1.0;
+		kb = warmth >= 2 ? 0.65 : warmth == 1 ? 0.82 : 1.0;
+	}
+
 	// the panel's GAMMA_LUT: the profile's curve (only PVM has one) with the night light's gains, so both share it.
 	// Entry 0 stays 0: a black pixel must stay black.
 	inline void colorLutFill(drm_color_lut* lut, unsigned n, ColorProfile c, int warmth)
 	{
 		if (!lut || n == 0) return;
-		double kg = warmth >= 2 ? 0.85 : warmth == 1 ? 0.92 : 1.0;
-		double kb = warmth >= 2 ? 0.65 : warmth == 1 ? 0.82 : 1.0;
+		double kg, kb;
+		warmthGains(warmth, kg, kb);
 		for (unsigned i = 0; i < n; i++)
 		{
 			double t = n > 1 ? (double)i / (n - 1) : 0.0;

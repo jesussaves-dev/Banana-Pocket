@@ -24,11 +24,11 @@ namespace banana
 			bool emulator = false;		// EMULATOR scope (also true for Type CORE below)
 		};
 
-		const char* const ON_OFF[] = { "on", "off" };
-		const char* const ACCENTS[] = { "yellow", "blue", "red", "green", "purple", "pink" };
-		const char* const BOXART[] = { "libretro", "both", "twilight" };
-		const char* const MSC[] = { "off", "ro", "rw" };
-		const char* const NIGHTLIGHT[] = { "off", "warm", "warmer" };
+		const char* const ON_OFF[] = { "on", "off", nullptr };
+		const char* const ACCENTS[] = { "yellow", "blue", "red", "green", "purple", "pink", nullptr };
+		const char* const BOXART[] = { "libretro", "both", "twilight", nullptr };
+		const char* const MSC[] = { "off", "ro", "rw", nullptr };
+		const char* const NIGHTLIGHT[] = { "off", "warm", "warmer", nullptr };
 		const char* const FRAME_BRIGHTNESS[] = { "100", "85", "70", "50", nullptr };
 		const char* const SHADER_MASKS[] = { "off", "crt240", "aperture", "lcd", nullptr };
 		const char* const SHADER_COLORS[] = { "bypass", "trinitron", "pvm", "handheld", nullptr };

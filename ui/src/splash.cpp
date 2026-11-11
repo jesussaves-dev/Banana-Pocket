@@ -1,5 +1,5 @@
 #include "splash.h"
-#include "../rnds/RndsUI.h"
+#include "frontend.h"
 #include <algorithm>
 #include <cmath>
 

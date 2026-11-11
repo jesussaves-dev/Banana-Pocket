@@ -348,11 +348,11 @@ namespace banana
 			{
 				// by characters (UTF-8), not bytes
 				std::string s = S(0), r;
-				int from = (int)N(1), n = v.size() > 2 ? (int)N(2) : 1 << 30, k = -1;
+				int from = (int)N(1), len = v.size() > 2 ? (int)N(2) : 1 << 30, k = -1;
 				for (size_t b = 0; b < s.size(); b++)
 				{
 					if (((unsigned char)s[b] & 0xc0) != 0x80) k++;
-					if (k >= from && k < from + n) r += s[b];
+					if (k >= from && k < from + len) r += s[b];
 				}
 				return EV(r);
 			}

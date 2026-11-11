@@ -2,7 +2,7 @@
 # A reproducible measurement baseline for banana-ui, headless on this computer (no panel needed). It builds a
 # synthetic library of N games across the shelves, then reports the three start-up numbers the `boot` script
 # command measures -- the library scan, the menu's start-up (its constructor and the first settle) and the first
-# frame's render -- plus the idle/scrolling frame cost from `bench`, at both the 640x480 and 1024x768 canvases.
+# frame's render -- plus the idle/scrolling frame cost from `bench`, at the 640x557 canvas.
 #
 # The numbers are a host baseline (a fast PC), not the handheld's: they tell a change from a regression, and the
 # ratios between the two canvas sizes are the ones to watch. The handheld's own numbers come from `sleep_debug`
@@ -27,7 +27,7 @@ mk() {  # mk <folder> <ext> <count>
     done
     i=$((i + $3))
 }
-mk nds nds $((GAMES / 6))
+mk ngp ngp $((GAMES / 6))
 mk gba gba $((GAMES / 6))
 mk gbc gbc $((GAMES / 6))
 mk gb gb $((GAMES / 12))
@@ -37,7 +37,7 @@ mk nes nes $((GAMES / 12))
 mk psx chd $((GAMES / 12))
 echo "bench: $GAMES games in $WORK/roms"
 
-for size in 640x480 1024x768; do
+for size in 640x557; do
     for run in $(seq "$RUNS"); do
         "$HERE/banana-ui" --headless "$WORK/$size-" --size "$size" --assets "$HERE/assets/rnds" \
             --systems "$HERE/tests/systems.conf" --roms "$WORK/roms" --data "$WORK/data" \

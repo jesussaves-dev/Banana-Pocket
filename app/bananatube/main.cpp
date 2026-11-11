@@ -29,6 +29,7 @@
 #include <curl/curl.h>
 
 #include "json.h"
+#include "util.h"
 
 #include <atomic>
 #include <algorithm>
@@ -145,12 +146,7 @@ namespace
 	int actToKey(int a) { return std::min(COLS - 1, (2 * a + 1) * COLS / 8); }
 	int keyToAct(int c) { return std::min(3, (2 * c + 1) * 4 / (2 * COLS)); }
 
-	std::string shellQuote(const std::string& s)
-	{
-		std::string r = "'";
-		for (char c : s) { if (c == '\'') r += "'\\''"; else r += c; }
-		return r + "'";
-	}
+	using banana::shellQuote;
 
 	// a URL-safe file name for a video id (ids are already [A-Za-z0-9_-], but a JSON field is not trusted)
 	std::string cacheName(const std::string& id)

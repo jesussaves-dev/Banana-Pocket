@@ -1,5 +1,6 @@
 #include <ctime>
 #include "settings.h"
+#include "util.h"
 #include "settings_defaults.h"
 #include "json.h"
 #include "i18n.h"
@@ -34,12 +35,6 @@ namespace banana
 	static constexpr float kGridTile = 148, kGridPitch = 152;
 
 	// ---- key = value files ------------------------------------------------------------------------------------------
-	static std::string trim(const std::string& s)
-	{
-		size_t a = s.find_first_not_of(" \t\r\n"), b = s.find_last_not_of(" \t\r\n");
-		return a == std::string::npos ? "" : s.substr(a, b - a + 1);
-	}
-
 	std::string getConfValue(const std::string& path, const std::string& key, const std::string& def)
 	{
 		std::ifstream f(path);
@@ -82,14 +77,6 @@ namespace banana
 		if (!ok || rename(tmp.c_str(), path.c_str()) != 0) unlink(tmp.c_str());
 	}
 
-	static std::string readLine(const std::string& path)
-	{
-		std::ifstream f(path);
-		std::string s;
-		std::getline(f, s);
-		return trim(s);
-	}
-
 	// a program in the background, not waited for (Wi-Fi coming up takes seconds)
 	static void spawn(const char* path, const char* arg, const char* arg2 = nullptr)
 	{
@@ -115,7 +102,7 @@ namespace banana
 		closedir(d);
 	}
 
-	// ---- palette: ROCKNIXDS Pixel's (RndsUI.cpp darkPal / lightPal), the colours this screen uses ----------------------
+	// ---- palette: the dark and light base colours this screen uses ----------------------
 	struct SPal
 	{
 		Color ink, muted, line, edge, screenBg, screenFrame, screenBand, ditherA, ditherB;
@@ -176,7 +163,7 @@ namespace banana
 		p.pick = Color::hex(rnds::accent.base); p.pickBand = Color::hex(rnds::accent.band); p.pickLow = Color::hex(rnds::accent.low);
 		p.pickEdge = light ? Color::hex(rnds::accent.dark) : Color::hex(0xffffff);
 		p.onPick = Color::hex(0x17161c); p.onPickAccent = Color::hex(0x7a3a00);
-		// a user theme's colours by the same names as the engine's palette (RndsUI.cpp), and two of this screen's own
+		// a user theme's colours by name, and two of this screen's own
 		struct { const char* n; Color SPal::* m; } names[] = {
 			{ "ink", &SPal::ink }, { "muted", &SPal::muted }, { "line", &SPal::line }, { "edge", &SPal::edge },
 			{ "screenBg", &SPal::screenBg }, { "screenFrame", &SPal::screenFrame }, { "screenBand", &SPal::screenBand },
@@ -301,7 +288,7 @@ namespace banana
 			// Banana's three, then the themes in banana/themes on the card and the image's examples (theme.h)
 			std::vector<std::string> names = { "Dark", "Light" }, values = { "dark", "light" };
 			for (auto& t : userThemes()) { names.push_back(t.name); values.push_back(t.value); }
-			add(D, "picture", "Theme", "ROCKNIXDS Pixel's two palettes, dark or light for daylight; or a theme of your own: a .json in banana/themes on the card (banana/themes/README.txt says how).",
+			add(D, "picture", "Theme", "The menu's look: one of the themes here, or your own: a .json in banana/themes on the card (banana/themes/README.txt says how).",
 				menu, "theme", names, values);
 		}
 		add(D, "gear", "Language", "The language of the Settings screen: English, Spanish or German. The other screens follow in a later update.", menu, "lang", { "English", "Español", "Deutsch" }, { "en", "es", "de" });
@@ -312,8 +299,8 @@ namespace banana
 		add(D, "picture", "Night light", "Warmer colours at night: a panel-level tint over the menu and the games; Warmer cuts more blue.", menu, "night_light", { "Off", "Warm", "Warmer" }, { "off", "warm", "warmer" });
 		add(D, "music", "Menu sounds", "The menu's clicks, and the cartridge going into the console.", menu, "sounds", { "On", "Off" }, { "on", "off" });
 		add(D, "music", "Background Music", "An ambient loop under the menu, mixed low so the clicks stay clear. Put a bgm.wav (or music/bgm.wav) on the card to hear one. Off stops it at once.", menu, "bgm", { "On", "Off" }, { "on", "off" });
-		add(D, "picture", "Battery", "The battery on the top screen: its icon, or its icon and how full it is.", menu, "battery", { "Icon", "Icon and %" }, { "icon", "percent" });
-		add(D, "picture", "Clock", "How the time on the top screen is written.", menu, "clock", { "24-hour", "12-hour" }, { "24h", "12h" });
+		add(D, "picture", "Battery", "The battery in the status bar: its icon, or its icon and how full it is.", menu, "battery", { "Icon", "Icon and %" }, { "icon", "percent" });
+		add(D, "picture", "Clock", "How the time in the status bar is written.", menu, "clock", { "24-hour", "12-hour" }, { "24h", "12h" });
 		add(D, "picture", "Boot animation", "The bananas and the cartridge while Banana starts. Off goes straight to the menu once it is ready.", menu, "splash", { "On", "Off" }, { "on", "off" });
 		const char* P = "Sleep & power";
 		add(P, "moon", "Sleep when idle", "In the menu, after this long with no button pressed. Never while a game is running.", power, "autosleep_minutes",
@@ -796,7 +783,7 @@ namespace banana
 		std::string beforeAccent = getConfValue(menu, "accent", "yellow");
 
 		resetSettings(data, emulator ? ResetScope::Emulator : ResetScope::System);
-		if (!emulator) shaderChanged = true;	// the panel goes back to the defaults with the rows
+		if (!emulator) shaderChanged = nightChanged = true;	// the panel goes back to the defaults with the rows
 
 		if (!emulator)
 		{
@@ -987,8 +974,8 @@ namespace banana
 			if (downY >= 418 && downY <= 466) return pressGroups(downX < 320 ? Key::B : Key::A);
 			for (int g = 0; g < (int)groups.size(); g++)
 			{
-				float x = 18 + tileOffset(g) + (g % kGridCols) * kGridPitch, y = 82 + (g / kGridCols) * 166;
-				if (downX < x || downX > x + kGridTile || downY < y || downY > y + 158) continue;
+				float tx = 18 + tileOffset(g) + (g % kGridCols) * kGridPitch, ty = 82 + (g / kGridCols) * 166;
+				if (downX < tx || downX > tx + kGridTile || downY < ty || downY > ty + 158) continue;
 				if (g != gsel) { gsel = g; return MOVED; }
 				return pressGroups(Key::A);
 			}
@@ -1213,7 +1200,7 @@ namespace banana
 		return 15 + 12 + text(key, true, 16, 0, 0, Color(), false, 0, true) + 8 + text(label, true, 19, 0, 0, Color(), false, 0, true) + 18;
 	}
 
-	// the menu's B / A chips (RndsUI's drawFace)
+	// the menu's B / A chips 
 	void Settings::face(const std::string& key, const std::string& label, float x, float w)
 	{
 		SPal p = pal(light);
@@ -1416,7 +1403,7 @@ namespace banana
 		std::string all;
 		for (int i = groupStart(g0); i < groupEnd(g0); i++) all += (all.empty() ? "" : ", ") + tr(items[i].label);
 
-		be->beginScreen(0);
+		be->beginScreen();
 		box("screen", false, 0, 0, 640, 480);
 		box("bubble", false, 18, 14, 604, 54);
 		text(tr("Settings"), true, 22, 38, 28, p.ink);
@@ -1502,7 +1489,7 @@ namespace banana
 		if (cur.key == "scrape" && scraping()) help = "Fetching covers and title screens. The menu shows them as they come, and it carries on if you leave this screen.";
 
 		// ---- the list ----
-		be->beginScreen(0);
+		be->beginScreen();
 		box("screen", false, 0, 0, 640, 480);
 		box("bubble", false, 18, 14, 604, 54);
 		icon(items[gb].icon, 36, 25, 1);
@@ -1577,7 +1564,7 @@ namespace banana
 		be->endScreen();
 	}
 
-	// the one panel's strip under the list (the panel is taller than a DS screen)
+	// the strip under the list
 	void Settings::footer(const std::string& t, const rnds::Color& c)
 	{
 		SPal p = pal(light);
@@ -1899,7 +1886,7 @@ namespace banana
 		}
 	}
 
-	Settings::Result Settings::touchNetworks(float cx, float cy)
+	Settings::Result Settings::touchNetworks(float, float cy)
 	{
 		if (downY >= 418 && downY <= 466)
 		{
@@ -1986,7 +1973,7 @@ namespace banana
 				: "A joins the network chosen, with its password typed on the keyboard (or by touch). X searches again, Y forgets a saved network, and L/R move a saved one up or down the list wpa_supplicant tries. Passwords are kept in banana/wifi.conf on the card.";
 		help = st + ". " + help;
 
-		be->beginScreen(0);
+		be->beginScreen();
 		box("screen", false, 0, 0, 640, 480);
 		box("bubble", false, 18, 14, 604, 54);
 		text("Networks", true, 22, 38, 28, p.ink);
@@ -2035,8 +2022,8 @@ namespace banana
 			: entry == ENTRY_SEARCH ? "A types the key, B deletes, X capitals, Y a space, START searches: the games found open as a shelf of their own, first on the shelf. Part of a name is enough; an empty search takes the shelf away."
 			: entry == ENTRY_WIFI ? "A types the key, B deletes, X capitals, L symbols, Y a space, START joins. Or tap the keys. The password is kept in banana/wifi.conf on the card."
 			: "A types the key, B deletes, X capitals, L symbols, Y a space, START when it is typed. Or tap the keys. Accounts are kept in banana/accounts.conf on the card.";
-		// the DS's top screen: the field and the help; one panel has the field on the keys' screen and the help below
-		be->beginScreen(0);
+		// the field on the keys' screen and the help below
+		be->beginScreen();
 		box("screen", false, 0, 0, 640, 480);
 		// the text being typed, here too, so the keys and what they make are seen together
 		box("key", true, 18, 12, 604, 50);
@@ -2210,8 +2197,8 @@ namespace banana
 		else help = "A on a package writes it to the other slot and checks it; the running version stays until the restart. Packages are in banana/updates on the card.";
 		help = st + ". " + help;
 
-		// the DS's top screen: the state and what an update does; one panel has the strip instead
-		be->beginScreen(0);
+		// the state and what an update does, in the strip
+		be->beginScreen();
 		box("screen", false, 0, 0, 640, 480);
 		box("bubble", false, 18, 14, 604, 54);
 		text("Update packages", true, 22, 38, 28, p.ink);
@@ -2392,7 +2379,7 @@ namespace banana
 				: "A on a state deletes it (press A again to confirm); Y keeps a copy of it beside the others as a backup. RetroArch loads the game's own state when it starts again (Quick resume).";
 		help = gameTitle + " \xc2\xb7 " + help;
 
-		be->beginScreen(0);
+		be->beginScreen();
 		box("screen", false, 0, 0, 640, 480);
 		box("bubble", false, 18, 14, 604, 54);
 		text("Save states", true, 22, 38, 28, p.ink);
@@ -2748,14 +2735,14 @@ namespace banana
 			"" };
 		static const char* helps[5] = {
 			"Your home network: the games' achievements, the clock and the art need it. A picks it from the networks around; the password goes in on the keyboard.",
-			"The clock on the top screen, and the games' own clocks. Left and right change it.",
+			"The clock in the status bar, and the games' own clocks. Left and right change it.",
 			"Your retroachievements.org account: RetroArch unlocks achievements with it. A types the name, then the password. Leave it if you have none.",
 			"Covers, title screens, genres and years for the games on the card, from libretro's free collections: no account. A starts it (Wi-Fi first); it keeps going while you finish the setup, and the menu shows the art as it comes. Settings > System > Box art runs it again for new games.",
 			"Everything here is in the settings too (Start in the menu), and this setup is under System > First-time setup. A finishes." };
 		std::string help = message.empty() ? helps[wsel] : message;
 		help = (status[wsel].empty() ? "" : status[wsel] + ". ") + help;
 
-		be->beginScreen(0);
+		be->beginScreen();
 		box("screen", false, 0, 0, 640, 480);
 		box("bubble", false, 18, 14, 604, 54);
 		text("Welcome to Banana", true, 22, 38, 28, p.ink);

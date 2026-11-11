@@ -60,7 +60,7 @@ any window size is letterboxed and rotated (T2, T4). `cage` and `wlroots` are go
 | launchers `run-retroarch` (454-467), `run-port`, `run-bananatube` | choose direct client (`WAYLAND_DISPLAY=banana-0`) or `cage --` | — |
 
 Runtime switches (all off unless the file exists): `/data/banana/3c-direct` (force DirectPresenter),
-`/run/banana/3c-egl`, `/run/banana/3c-trace`, `/run/banana/3f-trace` (diagnostic traces).
+`/run/banana/3f-trace` (frame timing).
 
 ## 4. Hardware loop (for any task with a hardware gate)
 

@@ -22,7 +22,8 @@ mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null; chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/nul
 : "${SDL_AUDIODRIVER:=alsa}"; export SDL_AUDIODRIVER
 # The RPC's pad, mapped for SDL: one file, shared with run-port (Nintendo order: A is the east button, as banana-ui's
 # menu reads it, not SDL's Xbox order).
-export SDL_GAMECONTROLLERCONFIG="$(cat /etc/banana/sdl-pad.map 2>/dev/null)"
+SDL_GAMECONTROLLERCONFIG="$(cat /etc/banana/sdl-pad.map 2>/dev/null)"
+export SDL_GAMECONTROLLERCONFIG
 
 L=/data/banana/logs/bananatube.log
 [ -s "$L" ] && mv -f "$L" "$L.1"
@@ -37,7 +38,7 @@ while kill -0 $C 2>/dev/null; do wait $C; S=$?; done
 # whatever of it is still running (mpv left behind, the app gone): asked to stop, then stopped
 if kill -0 -$C 2>/dev/null; then
     kill -TERM -$C 2>/dev/null
-    for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 -$C 2>/dev/null || break; sleep 0.2; done
+    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 -$C 2>/dev/null || break; sleep 0.2; done
     kill -KILL -$C 2>/dev/null
 fi
 rm -f /run/banana/bananatube.sock

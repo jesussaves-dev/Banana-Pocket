@@ -152,7 +152,7 @@ boot() {    # boot <name>: start the VM (with the kernel and root the card's ext
 }
 shutdown_from_settings() {  # Start (the groups) > L (wraps to the last, System) > A > Up (wraps to its last row, Shut
     key s pgup ret up ret ret  # down) > A twice; the VM powers off
-    for i in $(seq 120); do kill -0 $QEMU 2>/dev/null || { ok "$1: shut down from the settings, the VM powered off"; wait $QEMU 2>/dev/null; return 0; }; sleep 0.5; done
+    for _ in $(seq 120); do kill -0 $QEMU 2>/dev/null || { ok "$1: shut down from the settings, the VM powered off"; wait $QEMU 2>/dev/null; return 0; }; sleep 0.5; done
     bad "$1: still running 60 s after the shutdown"; kill $QEMU 2>/dev/null; return 1
 }
 # whatever happens, the card is unmounted and the VM stopped on the way out
@@ -238,7 +238,7 @@ vm 'cat /run/banana/update-status 2>/dev/null' || true
 wait_for "written to slot b" 900 "the update was written to slot b and checked"
 sleep 2; shot third-updated
 key ret            # Restart
-for i in $(seq 120); do kill -0 $QEMU 2>/dev/null || break; sleep 0.5; done
+for _ in $(seq 120); do kill -0 $QEMU 2>/dev/null || break; sleep 0.5; done
 kill -0 $QEMU 2>/dev/null && { bad "no restart after the update"; kill $QEMU; } || ok "restarted after the update"
 wait $QEMU 2>/dev/null || true
 boot fourth
@@ -247,7 +247,7 @@ shot fourth-menu
 # Start > System > Previous version (five rows under Time zone: Update, Back up settings, Box art, Box art from,
 # Previous version; checked headless) > A twice: back to slot a from the next boot
 key s pgup ret down down down down down ret ret
-for i in $(seq 120); do kill -0 $QEMU 2>/dev/null || break; sleep 0.5; done
+for _ in $(seq 120); do kill -0 $QEMU 2>/dev/null || break; sleep 0.5; done
 kill -0 $QEMU 2>/dev/null && { bad "no restart from Previous version"; kill $QEMU; } || ok "restarted from Previous version"
 wait $QEMU 2>/dev/null || true
 boot fifth

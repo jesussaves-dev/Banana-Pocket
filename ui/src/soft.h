@@ -4,7 +4,7 @@
 // premultiplied XRGB words (or A8 coverage for text), and a draw at its own size is a straight blend with no
 // sampling. Each screen is composed in ordinary cached memory and only the part that changed is copied to the
 // panel's scanout buffer, which is uncached (reading it back to blend would be many times slower).
-#include "../rnds/RndsUI.h"
+#include "frontend.h"
 #include "kms.h"
 #include <cstdint>
 #include <cstring>
@@ -50,14 +50,14 @@ namespace banana
 		int width() const { return W; }
 		int height() const { return H; }
 		// the composed screen, 0xXXRRGGBB rows of W words
-		const uint32_t* pixels(int screen) const { return scr[screen].data(); }
+		const uint32_t* pixels() const { return scr.data(); }
 		// the part touched since the last call (empty: none); clears the mark
-		Damage takeDamage(int screen) { Damage d = dmg[screen]; dmg[screen] = Damage(); return d; }
+		Damage takeDamage() { Damage d = dmg; dmg = Damage(); return d; }
 		// everything again (new scanout buffers): the next frame is drawn in full
-		void invalidate() { for (int s = 0; s < 2; s++) { dmg[s] = { 0, 0, W, H }; last[s].clear(); full[s] = true; } }
-		// a screen's pixels to draw on directly (the boot animation): all of it counts as changed, and the engine's
+		void invalidate() { dmg = { 0, 0, W, H }; last.clear(); full = true; }
+		// the pixels to draw on directly (the boot animation): all of it counts as changed, and the engine's
 		// next frame is drawn over all of it
-		uint32_t* canvas(int screen) { dmg[screen] = { 0, 0, W, H }; last[screen].clear(); full[screen] = true; return scr[screen].data(); }
+		uint32_t* canvas() { dmg = { 0, 0, W, H }; last.clear(); full = true; return scr.data(); }
 
 		// (touches nothing of the backend's but the new texture: callable from the picture workers)
 		rnds::TexPtr upload(const rnds::Bitmap& b, bool smooth) override;
@@ -65,13 +65,13 @@ namespace banana
 		void fill(float x, float y, float w, float h, const rnds::Color& c) override;
 		void pushClip(float x, float y, float w, float h) override;
 		void popClip() override;
-		void beginScreen(int screen) override;
+		void beginScreen() override;
 		void endScreen() override;
 
-		// drawn over every screen just before it ends (the menu's notices), so it is part of the screen's draw list
-		std::function<void(int screen)> overlay;
+		// drawn over the screen just before it ends (the menu's notices), so it is part of the screen's draw list
+		std::function<void()> overlay;
 
-		// screens drawn this frame whose draw list matched the previous frame's (left as they were)
+		// 1 when this frame's draw list matched the previous frame's (left as they were)
 		int skipped = 0;
 		// pixels redrawn (the changed rectangles' area), for the benchmark
 		uint64_t redrawn = 0;
@@ -99,10 +99,10 @@ namespace banana
 					!memcmp(c.c, o.c.c, sizeof c.c) && box.x0 == o.box.x0 && box.y0 == o.box.y0 && box.x1 == o.box.x1 && box.y1 == o.box.y1;
 			}
 		};
-		std::vector<Cmd> rec[2];
-		std::vector<Item> items, last[2];
+		std::vector<Cmd> rec;
+		std::vector<Item> items, last;
 		std::vector<Clip> dirty;
-		bool full[2] = { true, true };
+		bool full = true;
 		void resolve();
 		Clip bounds(const Cmd& c, const Clip& clip) const;
 		void addDirty(const Clip& r);
@@ -113,12 +113,12 @@ namespace banana
 		void blitRuns(const SoftTex* t, int bx0, int by0, int x0, int y0, int x1, int y1, uint32_t tr, uint32_t tg, uint32_t tb, uint32_t ta, uint32_t tintWord);
 		void doDraw(SoftTex* t, float x, float y, float w, float h, const rnds::Color& tint, const Clip& cl);
 		void doFill(float x, float y, float w, float h, const rnds::Color& c, const Clip& cl);
-		int W, H, cur = 0;
-		std::vector<uint32_t> scr[2];
-		Damage dmg[2];
+		int W, H;
+		std::vector<uint32_t> scr;
+		Damage dmg;
 		std::vector<Clip> clips;
 		std::vector<int> colA, colB;	// a scaled draw's source columns (and their blend) for each pixel of a row
 		std::vector<uint32_t> colF;
-		void touch(const Clip& r) { dmg[cur].add({ r.x0, r.y0, r.x1, r.y1 }); }
+		void touch(const Clip& r) { dmg.add({ r.x0, r.y0, r.x1, r.y1 }); }
 	};
 }

@@ -38,7 +38,7 @@ namespace banana
 	void Display::close() { fd = -1; }
 
 	struct EglPresenter::Impl {};
-	EglPresenter::EglPresenter(Display&, DiagVariant) {}
+	EglPresenter::EglPresenter(Display&) {}
 	EglPresenter::~EglPresenter() {}
 	bool EglPresenter::start(std::string&) { return true; }
 	void EglPresenter::stop() {}
@@ -162,8 +162,7 @@ int main(int argc, char** argv)
 	comp = &c;
 	Display& d = c.display();
 	d.fd = 99;
-	d.count = 1;
-	d.p[0].atomic = true;
+	d.panel.atomic = true;
 	d.SW = 1080; d.SH = 1240;
 	std::string err;
 	if (!c.start(err)) { printf("  FAIL: start: %s\n", err.c_str()); return 1; }

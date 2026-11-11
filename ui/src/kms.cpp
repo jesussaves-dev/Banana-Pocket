@@ -6,6 +6,7 @@
 #include <dirent.h>
 #include <drm_fourcc.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <vector>
@@ -316,49 +317,48 @@ namespace banana
 			drmModeFreeResources(res);
 			if (found.empty()) { ::close(f); continue; }
 			fd = f;
-			count = 1;
 			rot = panelRotation(f, found[0].conn);
 			SW = found[0].mode.hdisplay; SH = found[0].mode.vdisplay;
 			// a panel mounted turned: the menu draws the other way round (1240x1080 on a 1080x1240 panel)
 			W = rot == 90 || rot == 270 ? SH : SW;
 			H = rot == 90 || rot == 270 ? SW : SH;
-			p[0] = Panel();
-			p[0].conn = found[0].conn; p[0].crtc = found[0].crtc;
-			memcpy(p[0].mode, &found[0].mode, sizeof p[0].mode);
+			panel = Panel();
+			panel.conn = found[0].conn; panel.crtc = found[0].crtc;
+			memcpy(panel.mode, &found[0].mode, sizeof panel.mode);
 
 			// The menu belongs on the overlay plane when the driver exposes one and accepts atomic KMS: the primary
 			// stays black, the overlay carries the ARGB menu (alpha 255, premultiplied, zpos top). Discovered by type
 			// and possible_crtcs at runtime; a driver without the pair keeps the old single-plane path.
 			bool atomic = drmSetClientCap(f, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) == 0 &&
 			              drmSetClientCap(f, DRM_CLIENT_CAP_ATOMIC, 1) == 0;
-			if (atomic) atomic = findPlanes(p[0], found[0].crtc_index);
-			p[0].atomic = atomic;
+			if (atomic) atomic = findPlanes(panel, found[0].crtc_index);
+			panel.atomic = atomic;
 			if (atomic)
 			{
 				uint64_t size = 0;
-				p[0].crtc_ctm = propId(p[0].crtc, DRM_MODE_OBJECT_CRTC, "CTM");
-				p[0].crtc_gamma_lut = propId(p[0].crtc, DRM_MODE_OBJECT_CRTC, "GAMMA_LUT");
-				if (p[0].crtc_gamma_lut && propId(p[0].crtc, DRM_MODE_OBJECT_CRTC, "GAMMA_LUT_SIZE", &size) &&
+				panel.crtc_ctm = propId(panel.crtc, DRM_MODE_OBJECT_CRTC, "CTM");
+				panel.crtc_gamma_lut = propId(panel.crtc, DRM_MODE_OBJECT_CRTC, "GAMMA_LUT");
+				if (panel.crtc_gamma_lut && propId(panel.crtc, DRM_MODE_OBJECT_CRTC, "GAMMA_LUT_SIZE", &size) &&
 				    size >= 2 && size <= kMaxLut)
-					p[0].lut_size = (uint32_t)size;
+					panel.lut_size = (uint32_t)size;
 			}
 			if (atomic)
 			{
-				if (drmModeCreatePropertyBlob(f, &p[0].mode, sizeof p[0].mode, &p[0].mode_blob) ||
-				    !makeBuf(p[0].buf[0], DRM_FORMAT_ARGB8888) || !makeBuf(p[0].buf[1], DRM_FORMAT_ARGB8888) ||
-				    !makeBuf(p[0].black, DRM_FORMAT_XRGB8888) || !makeBuf(p[0].card[0], DRM_FORMAT_ARGB8888) ||
-				    !makeBuf(p[0].card[1], DRM_FORMAT_ARGB8888))
+				if (drmModeCreatePropertyBlob(f, &panel.mode, sizeof panel.mode, &panel.mode_blob) ||
+				    !makeBuf(panel.buf[0], DRM_FORMAT_ARGB8888) || !makeBuf(panel.buf[1], DRM_FORMAT_ARGB8888) ||
+				    !makeBuf(panel.black, DRM_FORMAT_XRGB8888) || !makeBuf(panel.card[0], DRM_FORMAT_ARGB8888) ||
+				    !makeBuf(panel.card[1], DRM_FORMAT_ARGB8888))
 				{
-					p[0].atomic = false;
-					if (p[0].mode_blob) { drmModeDestroyPropertyBlob(f, p[0].mode_blob); p[0].mode_blob = 0; }
-					freeBuf(p[0].black);
-					freeBuf(p[0].buf[0]); freeBuf(p[0].buf[1]); freeBuf(p[0].card[0]); freeBuf(p[0].card[1]);
+					panel.atomic = false;
+					if (panel.mode_blob) { drmModeDestroyPropertyBlob(f, panel.mode_blob); panel.mode_blob = 0; }
+					freeBuf(panel.black);
+					freeBuf(panel.buf[0]); freeBuf(panel.buf[1]); freeBuf(panel.card[0]); freeBuf(panel.card[1]);
 				}
 			}
-			if (!p[0].atomic)
+			if (!panel.atomic)
 			{
 				// the old path: one XRGB menu on the primary (QEMU's virtio, a driver without overlay/atomic)
-				if (!makeBuf(p[0].buf[0], DRM_FORMAT_XRGB8888) || !makeBuf(p[0].buf[1], DRM_FORMAT_XRGB8888))
+				if (!makeBuf(panel.buf[0], DRM_FORMAT_XRGB8888) || !makeBuf(panel.buf[1], DRM_FORMAT_XRGB8888))
 				{
 					err = "can't make scanout buffers";
 					close();
@@ -367,14 +367,14 @@ namespace banana
 			}
 			if (!restore())
 			{
-				if (p[0].atomic)
+				if (panel.atomic)
 				{
 					// atomic was advertised but rejected: remake the menu as XRGB and use the primary
-					p[0].atomic = false;
-					if (p[0].mode_blob) { drmModeDestroyPropertyBlob(f, p[0].mode_blob); p[0].mode_blob = 0; }
-					freeBuf(p[0].black);
-					freeBuf(p[0].buf[0]); freeBuf(p[0].buf[1]);
-					if (!makeBuf(p[0].buf[0], DRM_FORMAT_XRGB8888) || !makeBuf(p[0].buf[1], DRM_FORMAT_XRGB8888) || !restore())
+					panel.atomic = false;
+					if (panel.mode_blob) { drmModeDestroyPropertyBlob(f, panel.mode_blob); panel.mode_blob = 0; }
+					freeBuf(panel.black);
+					freeBuf(panel.buf[0]); freeBuf(panel.buf[1]);
+					if (!makeBuf(panel.buf[0], DRM_FORMAT_XRGB8888) || !makeBuf(panel.buf[1], DRM_FORMAT_XRGB8888) || !restore())
 					{
 						err = "can't take the panel (another master?)";
 						close();
@@ -389,7 +389,7 @@ namespace banana
 				}
 			}
 			fprintf(stderr, "kms: panel %dx%d (mode %ux%u, rotation %d), atomic=%d primary=%u overlay=%u\n",
-			        W, H, SW, SH, rot, p[0].atomic, p[0].primary.id, p[0].overlay.id);
+			        W, H, SW, SH, rot, panel.atomic, panel.primary.id, panel.overlay.id);
 			return true;
 		}
 		return false;
@@ -401,13 +401,18 @@ namespace banana
 	{
 		if (fd < 0) return false;
 		bool ok = drmSetMaster(fd) == 0;
-		for (int s = 0; s < count; s++)
+		if (panel.atomic) { if (!atomicModeset(panel)) ok = false; }
+		else if (drmModeSetCrtc(fd, panel.crtc, panel.buf[panel.front].fb, 0, 0, &panel.conn, 1, (drmModeModeInfo*)panel.mode) != 0)
+			ok = false;
+		if (ok)
 		{
-			if (p[s].atomic) { if (!atomicModeset(p[s])) ok = false; }
-			else if (drmModeSetCrtc(fd, p[s].crtc, p[s].buf[p[s].front].fb, 0, 0, &p[s].conn, 1, (drmModeModeInfo*)p[s].mode) != 0)
-				ok = false;
+			// the blocking modeset waited out any flip still in flight, and its event may be queued unread: if it were
+			// read after this, it would count against the next commit and the one after would fail EBUSY
+			pollfd pf = { fd, POLLIN, 0 };
+			while (poll(&pf, 1, 0) > 0 && (pf.revents & POLLIN)) handleEvents();
+			pending = 0;
+			applyGamma();
 		}
-		if (ok) { pending = 0; applyGamma(); }
 		return ok;
 	}
 
@@ -421,8 +426,8 @@ namespace banana
 	{
 		if (c >= COLOR_PROFILE_COUNT) return false;
 		colorProfile = c;
-		if (fd < 0 || !p[0].atomic || !p[0].lut_size) return false;
-		return colorRebuild(p[0]);
+		if (fd < 0 || !panel.atomic || !panel.lut_size) return false;
+		return colorRebuild(panel);
 	}
 
 	// The panel's colour as fresh blobs for the next commit to attach. Always new ids: the kernel only reprograms the
@@ -458,45 +463,40 @@ namespace banana
 	void Display::applyGamma()
 	{
 		if (fd < 0) return;
-		double kg = warmth >= 2 ? 0.85 : warmth == 1 ? 0.92 : 1.0;
-		double kb = warmth >= 2 ? 0.65 : warmth == 1 ? 0.82 : 1.0;
-		for (int s = 0; s < count; s++)
+		double kg, kb;
+		warmthGains(warmth, kg, kb);
+		if (panel.atomic && panel.lut_size) { colorRebuild(panel); return; }
+		drmModeCrtc* c = drmModeGetCrtc(fd, panel.crtc);
+		if (!c) return;
+		unsigned n = c->gamma_size;
+		if (n > 1)
 		{
-			if (p[s].atomic && p[s].lut_size) { colorRebuild(p[s]); continue; }
-			drmModeCrtc* c = drmModeGetCrtc(fd, p[s].crtc);
-			if (!c) continue;
-			unsigned n = c->gamma_size;
-			if (n > 1)
+			std::vector<uint16_t> r(n), g(n), b(n);
+			for (unsigned i = 0; i < n; i++)
 			{
-				std::vector<uint16_t> r(n), g(n), b(n);
-				for (unsigned i = 0; i < n; i++)
-				{
-					uint32_t v = (uint32_t)((uint64_t)i * 65535u / (n - 1));
-					r[i] = (uint16_t)v;
-					g[i] = (uint16_t)(v * kg);
-					b[i] = (uint16_t)(v * kb);
-				}
-				if (drmModeCrtcSetGamma(fd, p[s].crtc, n, r.data(), g.data(), b.data()) != 0)
-					fprintf(stderr, "kms: night light: set gamma failed (%s)\n", strerror(errno));
+				uint32_t v = (uint32_t)((uint64_t)i * 65535u / (n - 1));
+				r[i] = (uint16_t)v;
+				g[i] = (uint16_t)(v * kg);
+				b[i] = (uint16_t)(v * kb);
 			}
-			drmModeFreeCrtc(c);
+			if (drmModeCrtcSetGamma(fd, panel.crtc, n, r.data(), g.data(), b.data()) != 0)
+				fprintf(stderr, "kms: night light: set gamma failed (%s)\n", strerror(errno));
 		}
+		drmModeFreeCrtc(c);
 	}
 
 	void Display::close()
 	{
 		if (fd < 0) return;
-		for (auto& pn : p)
-		{
-			freeBuf(pn.buf[0]); freeBuf(pn.buf[1]); freeBuf(pn.black); freeBuf(pn.card[0]); freeBuf(pn.card[1]);
-			freeBuf(pn.frame[0]); freeBuf(pn.frame[1]);
-			freeBuf(pn.mask[0]); freeBuf(pn.mask[1]);
-			pn.frameOn = false;
-			if (pn.mode_blob) { drmModeDestroyPropertyBlob(fd, pn.mode_blob); pn.mode_blob = 0; }
-			for (uint32_t id : { pn.color.ctm, pn.color.lut, pn.color.retired[0], pn.color.retired[1] })
-				if (id) drmModeDestroyPropertyBlob(fd, id);
-			pn.color = ColorState();
-		}
+		Panel& pn = panel;
+		freeBuf(pn.buf[0]); freeBuf(pn.buf[1]); freeBuf(pn.black); freeBuf(pn.card[0]); freeBuf(pn.card[1]);
+		freeBuf(pn.frame[0]); freeBuf(pn.frame[1]);
+		freeBuf(pn.mask[0]); freeBuf(pn.mask[1]);
+		pn.frameOn = false;
+		if (pn.mode_blob) { drmModeDestroyPropertyBlob(fd, pn.mode_blob); pn.mode_blob = 0; }
+		for (uint32_t id : { pn.color.ctm, pn.color.lut, pn.color.retired[0], pn.color.retired[1] })
+			if (id) drmModeDestroyPropertyBlob(fd, id);
+		pn.color = ColorState();
 		::close(fd);
 		fd = -1;
 		pending = 0;
@@ -508,68 +508,65 @@ namespace banana
 		std::vector<uint8_t>().swap(frameCopy);
 	}
 
-	bool Display::present(const uint32_t* const screens[2], const Damage dmg[2])
+	bool Display::present(const uint32_t* screen, const Damage& dmg)
 	{
 		if (fd < 0 || pending) return false;
 		bool any = false;
-		for (int s = 0; s < count; s++)
+		Panel& pn = panel;
+		// the hidden buffer missed what changed since it was shown: this frame's part and the last frame's
+		int back = pn.front ^ 1;
+		Damage d = dmg;
+		d.add(pn.missed[back]);
+		pn.missed[back] = Damage();
+		d.x0 = std::max(d.x0, 0); d.y0 = std::max(d.y0, 0);
+		d.x1 = std::min(d.x1, W); d.y1 = std::min(d.y1, H);
+		if (d.empty())
 		{
-			Panel& pn = p[s];
-			// the hidden buffer missed what changed since it was shown: this frame's part and the last frame's
-			int back = pn.front ^ 1;
-			Damage d = dmg[s];
-			d.add(pn.missed[back]);
-			pn.missed[back] = Damage();
-			d.x0 = std::max(d.x0, 0); d.y0 = std::max(d.y0, 0);
-			d.x1 = std::min(d.x1, W); d.y1 = std::min(d.y1, H);
-			if (d.empty())
+			// nothing to draw, but new colour blobs still need a commit to reach the panel
+			if (pn.atomic && pn.color.dirty && commitMenu(pn, pn.buf[pn.front].fb)) any = true;
+			return any;
+		}
+		Buf& bf = pn.buf[back];
+		if (rot)
+			turn(screen, bf, d);
+		else if (d.x0 == 0 && d.x1 == W && bf.pitch == (uint32_t)W * 4)
+		{
+			// a full-width change on an unpadded buffer is one contiguous copy, not a row at a time
+			memcpy(bf.map + (size_t)d.y0 * bf.pitch, screen + (size_t)d.y0 * W, (size_t)(d.y1 - d.y0) * W * 4);
+		}
+		else
+		{
+			// only the columns that changed: the scanout buffer is uncached, every byte written costs
+			size_t n = (size_t)(d.x1 - d.x0) * 4;
+			for (int y = d.y0; y < d.y1; y++)
+				memcpy(bf.map + (size_t)y * bf.pitch + (size_t)d.x0 * 4, screen + (size_t)y * W + d.x0, n);
+		}
+		pn.missed[pn.front] = dmg;	// the buffer going hidden misses this frame
+		if (pn.atomic)
+		{
+			if (commitMenu(pn, bf.fb))
 			{
-				// nothing to draw, but new colour blobs still need a commit to reach the panel
-				if (pn.atomic && pn.color.dirty && commitMenu(pn, pn.buf[pn.front].fb)) any = true;
-				continue;
-			}
-			Buf& bf = pn.buf[back];
-			if (rot)
-				turn(screens[s], bf, d);
-			else if (d.x0 == 0 && d.x1 == W && bf.pitch == (uint32_t)W * 4)
-			{
-				// a full-width change on an unpadded buffer is one contiguous copy, not a row at a time
-				memcpy(bf.map + (size_t)d.y0 * bf.pitch, screens[s] + (size_t)d.y0 * W, (size_t)(d.y1 - d.y0) * W * 4);
-			}
-			else
-			{
-				// only the columns that changed: the scanout buffer is uncached, every byte written costs
-				size_t n = (size_t)(d.x1 - d.x0) * 4;
-				for (int y = d.y0; y < d.y1; y++)
-					memcpy(bf.map + (size_t)y * bf.pitch + (size_t)d.x0 * 4, screens[s] + (size_t)y * W + d.x0, n);
-			}
-			pn.missed[pn.front] = dmg[s];	// the buffer going hidden misses this frame
-			if (pn.atomic)
-			{
-				if (commitMenu(pn, bf.fb))
-				{
-					pn.front = back;
-					any = true;
-				}
-				else
-				{
-					fprintf(stderr, "kms: atomic flip failed (%s); showing it directly\n", strerror(errno));
-					drmModeSetCrtc(fd, pn.crtc, bf.fb, 0, 0, &pn.conn, 1, (drmModeModeInfo*)pn.mode);
-					pn.front = back;
-				}
-			}
-			else if (drmModePageFlip(fd, pn.crtc, bf.fb, DRM_MODE_PAGE_FLIP_EVENT, &pending) == 0)
-			{
-				pending++;
 				pn.front = back;
 				any = true;
 			}
 			else
 			{
-				// no flip (lost master, a modeset in the way): put the buffer up directly
+				fprintf(stderr, "kms: atomic flip failed (%s); showing it directly\n", strerror(errno));
 				drmModeSetCrtc(fd, pn.crtc, bf.fb, 0, 0, &pn.conn, 1, (drmModeModeInfo*)pn.mode);
 				pn.front = back;
 			}
+		}
+		else if (drmModePageFlip(fd, pn.crtc, bf.fb, DRM_MODE_PAGE_FLIP_EVENT, &pending) == 0)
+		{
+			pending++;
+			pn.front = back;
+			any = true;
+		}
+		else
+		{
+			// no flip (lost master, a modeset in the way): put the buffer up directly
+			drmModeSetCrtc(fd, pn.crtc, bf.fb, 0, 0, &pn.conn, 1, (drmModeModeInfo*)pn.mode);
+			pn.front = back;
 		}
 		return any;
 	}
@@ -630,19 +627,24 @@ namespace banana
 			return false;
 		}
 		pn.color.dirty = false;
+		for (int i = 0; i < 2; i++)
+		{
+			if (overlayFb && overlayFb == pn.mask[i].fb) pn.maskShown = i;
+			if (overlayFb && overlayFb == pn.frame[i].fb) pn.frameShown = i;
+		}
 		pending++;
 		return true;
 	}
 
 	bool Display::presentGame(uint32_t fb, uint32_t w, uint32_t h, uint32_t overlayFb, int fenceFd)
 	{
-		return commitFrame(p[0], fb, w, h, overlayFb, fenceFd);
+		return commitFrame(panel, fb, w, h, overlayFb, fenceFd);
 	}
 
 	bool Display::overlayCardBegin()
 	{
-		if (count <= 0 || !p[0].atomic) return false;
-		Buf& b = p[0].card[p[0].cardFront ^ 1];	// the hidden buffer, never one the plane may scan
+		if (!panel.atomic) return false;
+		Buf& b = panel.card[panel.cardFront ^ 1];	// the hidden buffer, never one the plane may scan
 		if (!b.map) return false;
 		// the composed base under the card, or transparent: the client on the primary shows through
 		if (baseStale) shaderRecompose();
@@ -653,24 +655,24 @@ namespace banana
 
 	void Display::overlayCardTurn(const uint32_t* canvas, int x0, int y0, int x1, int y1)
 	{
-		if (count <= 0 || !p[0].atomic || !canvas) return;
+		if (!panel.atomic || !canvas) return;
 		x0 = std::max(0, x0); y0 = std::max(0, y0);
 		x1 = std::min(W, x1); y1 = std::min(H, y1);
 		if (x1 <= x0 || y1 <= y0) return;
-		int back = p[0].cardFront ^ 1;
-		turn(canvas, p[0].card[back], Damage{ x0, y0, x1, y1 });
-		p[0].cardFront = back;
+		int back = panel.cardFront ^ 1;
+		turn(canvas, panel.card[back], Damage{ x0, y0, x1, y1 });
+		panel.cardFront = back;
 	}
 
 	uint32_t Display::overlayCardFb() const
 	{
-		return count > 0 && p[0].atomic ? p[0].card[p[0].cardFront].fb : 0;
+		return panel.atomic ? panel.card[panel.cardFront].fb : 0;
 	}
 
 	bool Display::frameSet(const uint32_t* canvas)
 	{
-		if (count <= 0 || !p[0].atomic) return false;
-		Panel& pn = p[0];
+		if (!panel.atomic) return false;
+		Panel& pn = panel;
 		if (!canvas)
 		{
 			pn.frameOn = false;
@@ -678,7 +680,7 @@ namespace banana
 			shaderRecompose();
 			return true;
 		}
-		int back = pn.frameFront ^ 1;	// never the buffer the plane may scan
+		int back = pn.frameFront == pn.frameShown ? pn.frameFront ^ 1 : pn.frameFront;	// never the buffer the plane may scan
 		Buf& b = pn.frame[back];
 		if (!b.map && !makeBuf(b, DRM_FORMAT_ARGB8888)) return false;
 		frameRaw.resize(b.size);
@@ -697,7 +699,7 @@ namespace banana
 	{
 		baseStale = false;
 		bool mask = maskMode != SHADER_MASK_OFF && !maskCopy.empty();
-		bool frame = p[0].frameOn && !frameRaw.empty();
+		bool frame = panel.frameOn && !frameRaw.empty();
 		if (!mask && !frame) { std::vector<uint8_t>().swap(frameCopy); return; }
 		if (!mask) { frameCopy = frameRaw; return; }
 		frameCopy.resize(maskCopy.size());
@@ -709,9 +711,9 @@ namespace banana
 	void Display::shaderRebakeFrame()
 	{
 		shaderRecompose();
-		Panel& pn = p[0];
+		Panel& pn = panel;
 		if (!pn.frameOn || frameCopy.empty()) return;
-		int back = pn.frameFront ^ 1;
+		int back = pn.frameFront == pn.frameShown ? pn.frameFront ^ 1 : pn.frameFront;
 		Buf& b = pn.frame[back];
 		if ((!b.map && !makeBuf(b, DRM_FORMAT_ARGB8888)) || b.size != frameCopy.size()) return;
 		memcpy(b.map, frameCopy.data(), b.size);
@@ -720,8 +722,8 @@ namespace banana
 
 	bool Display::shaderSetMask(ShaderMask m, const MaskGeom& g)
 	{
-		if (fd < 0 || count <= 0 || !p[0].atomic || m >= SHADER_MASK_COUNT) return false;
-		Panel& pn = p[0];
+		if (fd < 0 || !panel.atomic || m >= SHADER_MASK_COUNT) return false;
+		Panel& pn = panel;
 		if (m == SHADER_MASK_OFF)
 		{
 			maskMode = m;
@@ -729,7 +731,7 @@ namespace banana
 			shaderRebakeFrame();
 			return true;
 		}
-		int back = pn.maskFront ^ 1;	// never the buffer the plane may scan
+		int back = pn.maskFront == pn.maskShown ? pn.maskFront ^ 1 : pn.maskFront;	// never the buffer the plane may scan
 		Buf& b = pn.mask[back];
 		if (!b.map && !makeBuf(b, DRM_FORMAT_ARGB8888)) return false;
 		maskCopy.resize(b.size);
@@ -749,12 +751,12 @@ namespace banana
 
 	uint32_t Display::frameFb() const
 	{
-		return count > 0 && p[0].atomic && p[0].frameOn ? p[0].frame[p[0].frameFront].fb : 0;
+		return panel.atomic && panel.frameOn ? panel.frame[panel.frameFront].fb : 0;
 	}
 
 	bool Display::showMenu()
 	{
-		return commitMenu(p[0], p[0].buf[p[0].front].fb);
+		return commitMenu(panel, panel.buf[panel.front].fb);
 	}
 
 	// the menu on the overlay above a black primary, or on the primary under the mask
@@ -766,7 +768,7 @@ namespace banana
 
 	bool Display::blank()
 	{
-		return commitFrame(p[0], p[0].black.fb, SW, SH, 0);
+		return commitFrame(panel, panel.black.fb, SW, SH, 0);
 	}
 
 	void Display::handleEvents()

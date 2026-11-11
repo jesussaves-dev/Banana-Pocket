@@ -7,7 +7,7 @@
 namespace banana
 {
 	// target pixel (px, py) -> source pixel (x, y)
-	inline void rotateSource(uint32_t px, uint32_t py, uint32_t W, uint32_t H, uint32_t& x, uint32_t& y)
+	inline void rotateSource(uint32_t px, uint32_t py, uint32_t, uint32_t H, uint32_t& x, uint32_t& y)
 	{
 		x = py;
 		y = H - 1 - px;
@@ -24,7 +24,7 @@ namespace banana
 	// output, then turned 90 degrees onto the H x W target: the viewport (x, y, vw, vh) in target pixels. The target's
 	// row 0 is the quad's bottom, so the numbers are the same in DRM and GL coordinates. A source of the hole's size
 	// fills it exactly.
-	inline void fitRotatedHole(uint32_t w, uint32_t h, uint32_t W, uint32_t H, uint32_t hx, uint32_t hy, uint32_t hw, uint32_t hh,
+	inline void fitRotatedHole(uint32_t w, uint32_t h, uint32_t, uint32_t H, uint32_t hx, uint32_t hy, uint32_t hw, uint32_t hh,
 	                           uint32_t& x, uint32_t& y, uint32_t& vw, uint32_t& vh)
 	{
 		uint32_t lw = hw, lh = hh;	// logical size of the fitted image

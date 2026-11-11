@@ -7,7 +7,7 @@
 //   /data/banana/bananad.conf      sleep and power (bananad reloads it on SIGHUP)
 //   /data/retroarch/retroarch.cfg  RetroArch's (the panel, achievements, the cores)
 //   /sys/class/backlight + /data/banana/backlight   brightness
-#include "../rnds/RndsUI.h"
+#include "frontend.h"
 #include "input.h"
 #include "wifi.h"
 #include "frame.h"
@@ -235,7 +235,7 @@ namespace banana
 
 		std::shared_ptr<rnds::Font> R, M;
 		float canvasH = 480;		// the panel's height in CSS px (the strip under the list uses the part past 480)
-		// the one panel's strip under the list, where the second DS screen's lines would have been
+		// the strip under the list
 		void footer(const std::string& text, const rnds::Color& c);
 		std::string fontsLoaded;	// the fonts R and M are (setVariant): a user theme's, or the built-in pair
 		void writeOsdStyle();	// /data/banana/osd-style: the card colours the game's pill draws with

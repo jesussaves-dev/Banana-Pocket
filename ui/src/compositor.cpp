@@ -12,7 +12,6 @@
 #include "dmabuf.h"
 #include "egl_presenter.h"
 #include "presenter.h"
-#include "trace.h"
 #include <algorithm>
 #include <cerrno>
 #include <cstdarg>
@@ -123,8 +122,6 @@ namespace banana
 		bool saidSecondary = false;
 		unsigned frames = 0;
 		uint64_t nextBufferSerial = 0;
-		static constexpr unsigned kTraceFrames = 16;	// durable per-frame trace budget
-		static constexpr unsigned kTraceSerials = 16;	// per-buffer lifecycle is bounded by serial, not by frame
 		std::unique_ptr<Presenter> presenter;	// EGL rotate (3C) or the direct 3B fallback
 		dev_t dev = 0;
 		char devName[128] = "";
@@ -159,8 +156,6 @@ namespace banana
 
 		void bufferFree(Buffer* b)
 		{
-			if (b->serial <= kTraceSerials)
-				tracef("buffer free serial=%llu fd=%d", (unsigned long long)b->serial, b->fd);
 			// the presenter owns the imported/EGL objects; it is still alive here (clients are destroyed before
 			// presenter->stop()), so the context and DRM fd are valid
 			if (presenter) presenter->forget(*b);
@@ -199,7 +194,7 @@ namespace banana
 		void reframe()
 		{
 			reframeDue = false;
-			if (!lastShown || !lastFb || !presenter || !presenter->rotated() || presenter->diagnostic() || pending || inflight) return;
+			if (!lastShown || !lastFb || !presenter || !presenter->rotated() || pending || inflight) return;
 			uint32_t fb = 0;
 			std::string err;
 			presenter->setHole(holeX, holeY, holeW, holeH);
@@ -233,7 +228,7 @@ namespace banana
 			pendingCb = cb;
 			if (cb) wl_resource_add_destroy_listener(cb, &pendingCbGone);
 		}
-		void fireCb(wl_resource*& slot, wl_listener& l)
+		void fireCb(wl_resource*& slot, wl_listener&)
 		{
 			if (!slot) return;
 			wl_resource* cb = slot;
@@ -249,9 +244,6 @@ namespace banana
 			Buffer* b = pending;
 			uint32_t fb = 0;
 			std::string err;
-			if ((!presenter || !presenter->diagnostic()) && frames < kTraceFrames)
-				tracef("frame: render begin serial=%llu res=%u %ux%u", (unsigned long long)b->serial,
-				       b->res ? wl_resource_get_id(b->res) : 0, b->w, b->h);
 			// The EGL presenter letterboxes any source size into the logical 1240x1080 output and rotates it
 			// (ui/src/rotate.h fitRotated), so a port or video window that is not 1240x1080 stays upright.
 			// RetroArch picks its first size itself, after the first configure, and only a later one moves it: say it
@@ -272,18 +264,10 @@ namespace banana
 			}
 			double ft1 = f3On ? msNow() : 0;
 			int fenceFd = presenter->takeFenceFd();
-			if (presenter->diagnostic())
-			{
-				if (fenceFd >= 0) close(fenceFd);
-				dropPending();	// the isolation operation and its glFinish are done; no KMS submission
-				return;
-			}
 			// the EGL path produces the panel-sized scanout buffer (1:1); the direct fallback passes the client size
 			uint32_t pw = presenter->rotated() ? (uint32_t)d->panelWidth() : b->w;
 			uint32_t ph = presenter->rotated() ? (uint32_t)d->panelHeight() : b->h;
 			if (frames < 3) logf("commit: fb=%u src=%ux%u", fb, pw, ph);
-			if (frames < kTraceFrames)
-				tracef("frame: commit serial=%llu fb=%u %ux%u", (unsigned long long)b->serial, fb, pw, ph);
 			if (!d->presentGame(fb, pw, ph, shownLayer(), fenceFd))
 			{
 				if (fenceFd >= 0) close(fenceFd);
@@ -336,8 +320,6 @@ namespace banana
 				b->refs++;
 				lastShown = b;
 			}
-			if (frames < kTraceFrames)
-				tracef("frame: presented serial=%llu fb=%u", (unsigned long long)b->serial, fb);
 			pending = nullptr;
 			inflight = b;
 			hidMenu = true;
@@ -465,7 +447,6 @@ namespace banana
 		}
 		void clientDisconnected()
 		{
-			tracef("client disconnected");
 			// a probe (SDL opens and closes a connection to test for Wayland) can still be here when the real
 			// connection arrives, which then counts as the child: it takes the kiosk slot. A kiosk client that really
 			// ran takes its player with it, or the player would hold the screen over the menu.
@@ -643,7 +624,6 @@ namespace banana
 		{
 			// The display has been modeset again (Display::restore), so the menu owns the planes and none of the
 			// client's frames are scanned. Release what the client is waiting on and let its next commit present.
-			tracef("resume");
 			if (inflight)
 			{
 				Buffer* b = inflight;
@@ -962,7 +942,7 @@ namespace banana
 			s->owner = c;
 			s->res = wl_resource_create(c, &wl_surface_interface, wl_resource_get_version(res), id);
 			wl_resource_set_implementation(s->res, &surfaceImpl, s, [](wl_resource* r) {
-				if (auto* s = (Impl::Surface*)wl_resource_get_user_data(r)) s->im->surfaceGone(s);
+				if (auto* gone = (Impl::Surface*)wl_resource_get_user_data(r)) gone->im->surfaceGone(gone);
 			});
 			im->surfaces.push_back(s);
 		}
@@ -1020,7 +1000,7 @@ namespace banana
 			wl_resource* r = wl_resource_create(c, &wl_pointer_interface, wl_resource_get_version(res), id);
 			static const struct wl_pointer_interface ptrImpl = {
 				.set_cursor = [](wl_client*, wl_resource*, uint32_t, wl_resource*, int32_t, int32_t) {},
-				.release = [](wl_client*, wl_resource* r) { wl_resource_destroy(r); },
+				.release = [](wl_client*, wl_resource* self) { wl_resource_destroy(self); },
 			};
 			wl_resource_set_implementation(r, &ptrImpl, im, ptrGone);
 			if (c == im->client) im->ptr = r;	// the seat is the kiosk client's: a player is driven through it, over IPC
@@ -1030,7 +1010,7 @@ namespace banana
 			Impl* im = (Impl*)wl_resource_get_user_data(res);
 			wl_resource* r = wl_resource_create(c, &wl_keyboard_interface, wl_resource_get_version(res), id);
 			static const struct wl_keyboard_interface kbImpl = {
-				.release = [](wl_client*, wl_resource* r) { wl_resource_destroy(r); },
+				.release = [](wl_client*, wl_resource* self) { wl_resource_destroy(self); },
 			};
 			wl_resource_set_implementation(r, &kbImpl, im, kbGone);
 			if (c != im->client) return;
@@ -1043,7 +1023,7 @@ namespace banana
 			Impl* im = (Impl*)wl_resource_get_user_data(res);
 			wl_resource* r = wl_resource_create(c, &wl_touch_interface, wl_resource_get_version(res), id);
 			static const struct wl_touch_interface touchImpl = {
-				.release = [](wl_client*, wl_resource* r) { wl_resource_destroy(r); },
+				.release = [](wl_client*, wl_resource* self) { wl_resource_destroy(self); },
 			};
 			wl_resource_set_implementation(r, &touchImpl, im, touchGone);
 			if (c == im->client) im->touch = r;
@@ -1270,7 +1250,6 @@ namespace banana
 			im->client = c;
 			wl_client_add_destroy_listener(c, &im->clientGone);
 			logf("client connected");
-			tracef("client connected");
 		}
 		void onClientGone(wl_listener* l, void*)
 		{
@@ -1341,60 +1320,12 @@ namespace banana
 		wl_global_create(im->wl, &wp_viewporter_interface, 1, im, viewporterBind);
 		wl_display_set_global_filter(im->wl, viewportVisible, im);
 
-		// Presentation strategy. 3C (the EGL rotate presenter) is the default; if it cannot start, the 3B direct
-		// presenter keeps the client working and logs that the output is not rotated. A persistent
-		// /data/banana/3c-direct forces the direct presenter (the escape hatch); /run/banana/3c-egl and
-		// /run/banana/3c-trace only turn on the diagnostic trace.
-		// Stage 8 isolation variants: one gate each, never combined. They imply the EGL presenter but the compositor
-		// releases the frame instead of submitting it, so the operation is the only thing exercised.
-		const bool diagImport = access("/run/banana/3c-diag-import", F_OK) == 0;
-		const bool diagPbuffer = access("/run/banana/3c-diag-pbuffer", F_OK) == 0;
-		const bool diagClear = access("/run/banana/3c-diag-clear", F_OK) == 0;
-		const bool diagPlainFbo = access("/run/banana/3c-diag-plain-fbo", F_OK) == 0;
-		const bool diagBoRender = access("/run/banana/3c-diag-bo-render", F_OK) == 0;
-		const bool diagBoScanout = access("/run/banana/3c-diag-bo-scanout", F_OK) == 0;
-		const bool diagBoScanoutFb = access("/run/banana/3c-diag-bo-scanout-fb", F_OK) == 0;
-		const bool diagBoPrime = access("/run/banana/3c-diag-bo-prime", F_OK) == 0;
-		const bool diagBoFbAfter = access("/run/banana/3c-diag-bo-fb-after", F_OK) == 0;
-		const int diagCount = (diagImport ? 1 : 0) + (diagPbuffer ? 1 : 0) + (diagClear ? 1 : 0) +
-		                      (diagPlainFbo ? 1 : 0) + (diagBoRender ? 1 : 0) + (diagBoScanout ? 1 : 0) +
-		                      (diagBoScanoutFb ? 1 : 0) + (diagBoPrime ? 1 : 0) + (diagBoFbAfter ? 1 : 0);
-		const bool freshWanted = access("/run/banana/3c-fresh-image", F_OK) == 0;
-		DiagVariant diag = DiagVariant::None;
-		bool diagRefused = false;
-		if (diagCount > 1) { logf("more than one 3c diagnostic gate; diagnostics refused"); diagRefused = true; }
-		else if (diagCount == 1 && freshWanted)
-		{ logf("a 3c diagnostic gate cannot be combined with 3c-fresh-image; diagnostics refused"); diagRefused = true; }
-		else if (diagImport) diag = DiagVariant::Import;
-		else if (diagPbuffer) diag = DiagVariant::Pbuffer;
-		else if (diagClear) diag = DiagVariant::Clear;
-		else if (diagPlainFbo) diag = DiagVariant::PlainFbo;
-		else if (diagBoRender) diag = DiagVariant::BoRender;
-		else if (diagBoScanout) diag = DiagVariant::BoScanout;
-		else if (diagBoScanoutFb) diag = DiagVariant::BoScanoutFb;
-		else if (diagBoPrime) diag = DiagVariant::BoPrime;
-		else if (diagBoFbAfter) diag = DiagVariant::BoFbAfter;
-
-		// 3C is the default presenter. /data/banana/3c-direct is the durable escape hatch back to 3B's direct
-		// path (create it and restart the menu). The EGL gate no longer selects the presenter; it and the trace
-		// gate only turn on the durable diagnostic trace, which stays inert by default.
-		const bool directWanted = access("/data/banana/3c-direct", F_OK) == 0;
-		const bool eglGate = access("/run/banana/3c-egl", F_OK) == 0;
-		bool eglWanted = !diagRefused && (diag != DiagVariant::None || !directWanted);
-		bool traceWanted = eglWanted && (diag != DiagVariant::None || eglGate || access("/run/banana/3c-trace", F_OK) == 0);
-		traceInit(traceWanted ? "/data/banana/logs/3c-trace" : nullptr);
-		if (diag != DiagVariant::None)
+		// The EGL rotate presenter is the default; if it cannot start, the direct presenter keeps the client working
+		// and logs that the output is not rotated. A persistent /data/banana/3c-direct forces the direct one.
+		const bool eglWanted = access("/data/banana/3c-direct", F_OK) != 0;
+		if (!eglWanted) logf("EGL rotation disabled by /data/banana/3c-direct; direct presenter");
 		{
-			if (eglGate) logf("3c-egl is ignored while a diagnostic variant is selected");
-			tracef("start: diagnostic gate on");
-		}
-		else if (eglGate) tracef("start: EGL gate on");
-		if (!eglWanted)
-			logf(directWanted && !diagRefused ? "EGL rotation disabled by /data/banana/3c-direct; direct presenter"
-			                                  : "EGL rotation disabled; direct presenter");
-		else if (diag == DiagVariant::None && !eglGate) logf("EGL rotation enabled by default");
-		{
-			auto egl = std::make_unique<EglPresenter>(d, diag);
+			auto egl = std::make_unique<EglPresenter>(d);
 			std::string perr;
 			if (eglWanted && egl->start(perr)) im->presenter = std::move(egl);
 			else
@@ -1442,7 +1373,6 @@ namespace banana
 		if (!impl) return;
 		Impl* im = impl;
 		im->stopping = true;
-		tracef("stop: begin");
 		bool cleared = false;
 		if (d.isOpen() && im->presenter)
 		{
@@ -1452,7 +1382,6 @@ namespace banana
 				if (poll(&p, 1, 20) > 0) d.handleEvents();
 			}
 			if (!d.flipPending()) cleared = d.blank();
-			tracef("stop: blank=%d", cleared);
 			if (cleared) logf("stop: the primary no longer scans a presenter framebuffer");
 			else logf("stop: the primary could not be cleared; the display close releases the scanout");
 			im->presenter->quiesce(cleared);
@@ -1468,9 +1397,7 @@ namespace banana
 		if (im->xkbState) { xkb_state_unref(im->xkbState); im->xkbState = nullptr; }
 		if (im->xkbMap) { xkb_keymap_unref(im->xkbMap); im->xkbMap = nullptr; }
 		if (im->xkbCtx) { xkb_context_unref(im->xkbCtx); im->xkbCtx = nullptr; }
-		tracef("stop: clients destroyed");
 		if (im->presenter) { im->presenter->stop(); im->presenter.reset(); }
-		tracef("stop: presenter stopped");
 		wl_display_destroy(im->wl);
 		unlink((std::string(kWaylandDir) + "/" + kSocket).c_str());
 		unlink("/run/banana/compositor");

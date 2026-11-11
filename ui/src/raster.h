@@ -1,5 +1,5 @@
 #pragma once
-// ROCKNIXDS rnds engine: CPU rasterizer for the pieces the mockup is drawn from. Boxes are painted the way CSS paints a
+// CPU rasterizer, from ROCKNIXDS's engine. Boxes are painted the way CSS paints a
 // box (outer box-shadows, background colour, hard-stop gradient bands and the dither tile, inset box-shadows, border),
 // text the way Chrome lays out Pixelify Sans on Linux (whole-pixel glyph advances and kerning, light hinting), images
 // are decoded and fitted (cover / contain). Everything here is plain C++ and FreeType, so the same code runs in ES and
@@ -182,20 +182,4 @@ namespace rnds
 	Bitmap cardLabelArt(const Bitmap& scan);
 	// a DS box cover without the case's white NINTENDO DS strip down its left edge
 	Bitmap coverWithoutStrip(const Bitmap& box);
-
-	// ---- a DS ROM's own icon ----------------------------------------------------------------------------------------
-	// The 32x32 icon in a DS ROM's banner (the DS menu's picture of the game), RGBA8 with palette index 0 transparent:
-	// from a .nds, or from a .zip's first .nds (else its first file) through the host's zip reader. Empty when there
-	// is none: no banner, a banner offset inside the header or past the end (or, in a zip, more than 32 MB in), a banner
-	// version other than 1, 2, 3 or 0x103, another kind of file. Remembered per path (the last 512).
-	Bitmap romIcon(const std::string& path);
-	// the icon from a banner's first 0x240 bytes: version, CRCs, the 4x4 tiles of 8x8 4bpp pixels at 0x20 (low nibble
-	// first), the 16 BGR555 colours at 0x220
-	Bitmap ndsBannerIcon(const uint8_t* banner);
-	// the host's zip archives (ES: es-core's Utils::Zip::ZipFile): pick chooses a member from the list (its index, -1
-	// for none), sink takes that member's bytes in order until it returns false; false when the archive can't be read
-	struct ZipMember { std::string name; uint64_t size = 0; };
-	typedef bool (*ZipReader)(const std::string& zip, const std::function<int(const std::vector<ZipMember>&)>& pick,
-		const std::function<bool(const uint8_t*, size_t)>& sink);
-	void setZipReader(ZipReader reader);
 }

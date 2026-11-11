@@ -58,7 +58,7 @@ export PYSDL2_DLL_PATH=/usr/lib
 # 8 / START 9 / MODE 10). The button numbers are evdev code order (SDL_sysjoystick.c: BTN_JOYSTICK..KEY_MAX first):
 # 0 SOUTH, 1 EAST, 2 NORTH, 3 WEST, 4 TL, 5 TR, 6 TL2, 7 TR2, 8 SELECT, 9 START, 10 MODE, 11/12 THUMBL/R, 13..16 D-pad.
 export SDL_GAMECONTROLLERCONFIG="$SDL_MAP"
-cd "$(dirname "$1")"
+cd "$(dirname "$1")" || exit 1
 # banana-ui's compositor has its socket here: a private, 0700 runtime dir on tmpfs.
 export XDG_RUNTIME_DIR=/run/banana/wayland
 mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null; chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null
@@ -80,7 +80,7 @@ while kill -0 $C 2>/dev/null; do wait $C; S=$?; done
 # whatever of it is still running (the script gone, a child left behind): asked to stop, then stopped
 if kill -0 -$C 2>/dev/null; then
     kill -TERM -$C 2>/dev/null
-    for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 -$C 2>/dev/null || break; sleep 0.2; done
+    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 -$C 2>/dev/null || break; sleep 0.2; done
     kill -KILL -$C 2>/dev/null
 fi
 exit $S

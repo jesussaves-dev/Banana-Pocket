@@ -445,7 +445,7 @@ mkdir -p /data/banana/logs 2>/dev/null
 rm -f $RL
 # A core that dies by signal is worth a core dump: the log stops where the log stops, while a dump says where. The
 # kernel's pattern is "core", so this is RetroArch's own directory on the card (the root is read-only).
-ulimit -c unlimited 2>/dev/null; cd /data 2>/dev/null
+ulimit -c unlimited 2>/dev/null; cd /data 2>/dev/null || true
 tries=0
 while :; do
     export WAYLAND_DISPLAY=banana-0	# the in-process compositor's socket

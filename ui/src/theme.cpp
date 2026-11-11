@@ -1,5 +1,5 @@
 #include "theme.h"
-#include "../rnds/RndsUI.h"
+#include "frontend.h"
 #include "../third_party/stb_image.h"
 #include <algorithm>
 #include <cctype>
@@ -230,7 +230,6 @@ namespace banana
 		f.fontMedium = themeFile(dir, kv["fonts.medium"]);
 		f.logo = themeImage(dir, kv["logo"]);
 		f.wallTop = themeImage(dir, kv["background.top"]);
-		f.wallBottom = themeImage(dir, kv["background.bottom"]);
 		f.dither = kv["background.dither"] != "false";
 		for (auto& e : kv)
 		{

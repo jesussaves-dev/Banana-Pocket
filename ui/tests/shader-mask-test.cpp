@@ -129,7 +129,7 @@ static void testGeom()
 	g = maskGeomFor("psx", 140, 180, 960, true);
 	CHECK(g.rowPeriod == 3 && g.originX == 140 && g.originY == 180, "320-wide 3x geom");
 	// not integer scaled (a frame's hole): period 4 at the hole's own origin
-	g = maskGeomFor("nds", 100, 90, 1000, false);
+	g = maskGeomFor("n64", 100, 90, 1000, false);
 	CHECK(g.rowPeriod == 4 && g.originX == 100 && g.originY == 90, "unknown geom");
 	g = maskGeomFor(nullptr, 7, 8, 9, true);
 	CHECK(g.rowPeriod == 4 && g.originX == 7 && g.originY == 8, "null id geom");

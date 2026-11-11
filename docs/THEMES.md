@@ -27,8 +27,8 @@ ui/banana-ui --headless /tmp/shot- --size 640x480 --assets ui/assets/rnds --bana
     --theme my-theme.json --script "home 0; wait 1000; shot home; press a; wait 1000; shot lib"
 ```
 
-Each `shot` writes `<prefix><name>-top.png` and `-bot.png`. Theme errors are printed as `banana-ui: theme: ...`. With
-`"debug": true` in the theme they are also shown in red on the top screen.
+Each `shot` writes `<prefix><name>.png`. Theme errors are printed as `banana-ui: theme: ...`. With
+`"debug": true` in the theme they are also shown in red on the screen.
 
 The bundled themes are also checked against `docs/theme.schema.json` by `make test` (and CI):
 `tools/check-themes.py` reads them the way the menu does (comments and trailing commas are fine), validates the
@@ -65,8 +65,7 @@ script.
 `crisp: true` draws axis-aligned boxes and their borders hard-edged -- integer pixels, no coverage anti-aliasing, the border as solid rows/columns -- for a retro (SNES/Genesis menu) look; the Pocket themes use it. Boxes with a gradient, shadow or rounded corner still take the smooth path, and text keeps the glyph rasterizer's edges. Settings and the search keyboard follow the same flag: their panels lose the rounding, the bands and the dither and take a single 2px border, so a retro theme is hard-edged on every screen and not only in the menu.
 
 The Retroid Pocket Classic has **one** screen: the canvas is 640 units wide and as tall as the panel allows
-(about 557), and a theme draws every view on `top`. The engine keeps the two-screen `top`/`bottom` schema it was
-imported with, so a theme may carry a `bottom` block; it is unused on this handheld.
+(about 557), and a theme draws every view on `top`. A `bottom` block is ignored.
 
 ## Values: literals, expressions, templates
 
@@ -98,7 +97,7 @@ Colours are `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, `rgb(...)`, `rgba(...)`, `t
 | `time` | ms since the menu started. Using it redraws continuously at `behavior.fps`, so use it only for things that really move all the time |
 | `clock`, `date` | `"13:01"` / `"01:01 PM"` (Settings' clock), `"10/02"` |
 | `battery`, `charging`, `batteryMode` | percent (-1 unknown), 1 on the charger, `"icon"` / `"text"` (Settings) |
-| `online`, `motion`, `brand` | Wi-Fi up, the top screen's bob (always on), the version string |
+| `online`, `motion`, `brand` | Wi-Fi up, the screen's bob (always on), the version string |
 | `accent`, `accent.light/.dark/.band/.low` | the accent colours (the theme's `accent`, or the built-in palette) |
 | `palette.<name>` | a colour of the palette (`palette.ink`, ...) |
 | `cursor`, `count`, `scroll` | the selection's index and the count in the current list (systems at home, games in a library); `scroll` is the selection's eased position, a fraction while it moves |
@@ -107,12 +106,11 @@ Colours are `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, `rgb(...)`, `rgba(...)`, `t
 | `empty`, `empty.title`, `empty.hint` | a library with no games, and what to say about it |
 | `systems.count`, `games.count` | |
 | `sys.*` | the selected system: `id name maker color icon games played time achA achB achLabel achProgress fav app hasResume resumeTitle resumeEyebrow resumeArt resumeBox resumeCart resumeLabel index` |
-| `game.*` | the selected game (library and launch): `title sub plays last time art box cart label icon rom romIcon achA achB achLabel achProgress fav index systemId systemName` |
+| `game.*` | the selected game (library and launch): `title sub plays last time art box cart label icon achA achB achLabel achProgress fav index systemId systemName` |
 | `item.*`, `i`, `n`, `sel`, `rel`, `pos`, `first`, `last`, `ix`, `iy` | inside a list item: its own system's or game's fields (as above; `key label` for hints), its index, the count, whether it is selected, its distance from the selection (`rel` whole, `pos` eased), and where the list put it |
 | your `vars`, a component's `with` | |
 
 Pictures from hooks (`sys.icon`, `game.art`...) are full paths. A theme's own files are relative to its JSON file.
-`game.romIcon` is a game ROM's own icon (the engine can read one from a DS ROM; nothing here ships DS).
 
 ## Elements
 

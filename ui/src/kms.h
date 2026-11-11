@@ -62,8 +62,6 @@ namespace banana
 		bool openSingle(const std::string& top, std::string& err);
 		void close();
 		bool isOpen() const { return fd >= 0; }
-		// how many panels present() drives: 1 on this handheld
-		int panels() const { return count; }
 		// how the panel is mounted, in degrees (the connector's "panel orientation": the RPC's panel is 1080x1240
 		// portrait, its 90 in the device tree): present() turns the composed screen by it into the scanout buffers
 		int rotation() const { return rot; }
@@ -74,8 +72,8 @@ namespace banana
 		int height() const { return H; }
 		int pollFd() const { return fd; }
 		bool flipPending() const { return pending > 0; }
-		// the composed screens (rows of width() words) and what changed on each since the last present
-		bool present(const uint32_t* const screens[2], const Damage dmg[2]);
+		// the composed screen (rows of width() words) and what changed since the last present
+		bool present(const uint32_t* screen, const Damage& dmg);
 		void handleEvents();	// the flip events from pollFd()
 		// after a resume or a lost master: show the current buffers again. False when another master still holds the
 		// panel (a game's compositor letting go): the caller retries
@@ -91,16 +89,16 @@ namespace banana
 		bool shaderSetMask(ShaderMask m, const MaskGeom& g);
 		void shaderSetIntensity(int pct);
 		// the mask's framebuffer, 0 when it is off
-		uint32_t maskFb() const { return count > 0 && p[0].atomic && maskMode != SHADER_MASK_OFF ? p[0].mask[p[0].maskFront].fb : 0; }
+		uint32_t maskFb() const { return panel.atomic && maskMode != SHADER_MASK_OFF ? panel.mask[panel.maskFront].fb : 0; }
 		// Phase 3B: the DRM fd (the compositor imports a client's DMA-BUF on it), whether the atomic overlay path
 		// is in use, and the two compositor frames. presentGame() puts a client's framebuffer on the primary and
 		// hides the menu overlay; showMenu() puts the menu back. Both honor the one-flip-in-flight rule.
 		int drmFd() const { return fd; }
-		bool atomic() const { return count > 0 && p[0].atomic; }
+		bool atomic() const { return panel.atomic; }
 		// overlayFb is the panel-sized ARGB card to show above the primary, 0 to hide the overlay
 		bool presentGame(uint32_t fb, uint32_t w, uint32_t h, uint32_t overlayFb = 0, int fenceFd = -1);
 		// 3F: the primary plane accepts IN_FENCE_FD (the EGL presenter may skip glFinish only when it does)
-		bool fenceSupported() const { return count > 0 && p[0].primary.in_fence_fd != 0; }
+		bool fenceSupported() const { return panel.primary.in_fence_fd != 0; }
 		// the 3D card buffer: clear it, fill a panel-space rectangle (premultiplied ARGB), hand its FB to the
 		// compositor. False when the atomic overlay path is not in use.
 		bool overlayCardBegin();
@@ -140,10 +138,10 @@ namespace banana
 			Buf card[2];	// the 3D card layer, ARGB8888 over a client on the primary (atomic only)
 			int cardFront = 0;
 			Buf frame[2];	// a game's screen frame, made the first time one is shown
-			int frameFront = 0;
+			int frameFront = 0, frameShown = -1;	// Shown: the one a commit last put on the plane
 			bool frameOn = false;
 			Buf mask[2];	// the CRT/LCD mask, made the first time one is set
-			int maskFront = 0;
+			int maskFront = 0, maskShown = -1;
 			Buf black;		// XRGB8888, the primary when the menu is on the overlay
 			int front = 0;
 			Damage missed[2];
@@ -151,13 +149,13 @@ namespace banana
 			bool atomic = false;
 			uint32_t mode_blob = 0;
 		};
-		int fd = -1, W = 0, H = 0, pending = 0, count = 1;
+		int fd = -1, W = 0, H = 0, pending = 0;
 		AtomicBuf atomicBuf;	// the flip path's request, reused every frame
 		static constexpr unsigned kMaxLut = 1024;
 		drm_color_lut lutScratch[kMaxLut];	// colorRebuild's staging, so a rebuild allocates only the kernel's blobs
 		ColorProfile colorProfile = COLOR_PROFILE_BYPASS;
 		int rot = 0, SW = 0, SH = 0;	// the panel's rotation, and its size in its own rows (the scanout buffers')
-		Panel p[2];
+		Panel panel;
 		// all in cached memory, since reading the uncached dumb buffers per card is slow. frameCopy is what a card is
 		// drawn on: the frame over the mask, or either one alone, and empty with neither.
 		std::vector<uint8_t> frameCopy, frameRaw, maskCopy;

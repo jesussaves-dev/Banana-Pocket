@@ -241,7 +241,7 @@ namespace
 	// ---- the card ---------------------------------------------------------------------------------------------------
 	struct System { std::string id, name, folder; std::vector<std::string> exts; };
 	const std::map<std::string, std::string> LIBRETRO = {
-		{ "nds", "Nintendo - Nintendo DS" }, { "gba", "Nintendo - Game Boy Advance" }, { "gbc", "Nintendo - Game Boy Color" },
+		{ "gba", "Nintendo - Game Boy Advance" }, { "gbc", "Nintendo - Game Boy Color" },
 		{ "gb", "Nintendo - Game Boy" }, { "nes", "Nintendo - Nintendo Entertainment System" },
 		{ "snes", "Nintendo - Super Nintendo Entertainment System" }, { "megadrive", "Sega - Mega Drive - Genesis" },
 		{ "psx", "Sony - PlayStation" }, { "n64", "Nintendo - Nintendo 64" } };
@@ -371,7 +371,7 @@ int main(int argc, char** argv)
 	while (!twilight.empty() && twilight.back() == '/') twilight.pop_back();
 	if (source != "both" && source != "twilight") twilight.clear();
 	// (the systems TwilightBoxart knows: Nintendo's handhelds and consoles, Sega's 8 and 16-bit)
-	const std::set<std::string> TWILIGHT = { "nds", "gba", "gbc", "gb", "nes", "snes", "megadrive", "n64" };
+	const std::set<std::string> TWILIGHT = { "gba", "gbc", "gb", "nes", "snes", "megadrive", "n64" };
 	std::set<std::string> misses;
 	std::mutex missMu;
 	const std::string MISSES = "/data/banana/cache/twilight-miss.txt";

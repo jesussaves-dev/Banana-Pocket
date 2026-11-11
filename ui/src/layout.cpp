@@ -62,7 +62,7 @@ namespace banana
 		JPtr doc;
 		std::map<std::string, JPtr> components;
 		std::vector<std::pair<std::string, Prop>> vars;
-		std::map<std::string, std::vector<NodePtr>> screens;	// "home.top", "library.bottom", "all.top", ...
+		std::map<std::string, std::vector<NodePtr>> screens;	// "home.top", "library.top", "all.top", ...
 		std::map<std::string, std::map<std::string, std::string>> input;	// view -> button -> action
 		std::map<std::string, std::vector<std::pair<std::string, std::string>>> hintSets;
 		bool extraHints = true;
@@ -97,7 +97,7 @@ namespace banana
 		bool smoothMoving = false;
 
 		// what a tap can hit (device px), from the last frame
-		struct Hit { int screen; float x0, y0, x1, y1; std::string source; int index; std::string action; };
+		struct Hit { float x0, y0, x1, y1; std::string source; int index; std::string action; };
 		std::vector<Hit> hits;
 
 		// textures
@@ -288,7 +288,7 @@ namespace banana
 				wrap = b->flag("wrap", wrap);
 				extraHints = b->flag("extraHints", extraHints);
 				if (const JVal* c = b->get("cues")) for (auto& e : c->obj) if (e.second->isNum()) cues.emplace_back(e.first, e.second->n);
-				std::sort(cues.begin(), cues.end(), [](const std::pair<std::string, double>& a, const std::pair<std::string, double>& b) { return a.second < b.second; });
+				std::sort(cues.begin(), cues.end(), [](const std::pair<std::string, double>& l, const std::pair<std::string, double>& r) { return l.second < r.second; });
 			}
 			else cues.emplace_back("insert", 560);
 			debug = doc->flag("debug");
@@ -296,9 +296,8 @@ namespace banana
 			const JVal* sc = doc->get("screens");
 			for (auto& e : sc->obj)
 			{
-				if (!e.second->isObj()) { err("screens." + e.first + ": { \"top\": ..., \"bottom\": ... }"); continue; }
-				for (const char* side : { "top", "bottom" })
-					screens[e.first + "." + side] = compileScreen(e.second->get(side), "screens." + e.first + "." + side);
+				if (!e.second->isObj()) { err("screens." + e.first + ": { \"top\": ... }"); continue; }
+				screens[e.first + ".top"] = compileScreen(e.second->get("top"), "screens." + e.first + ".top");
 			}
 			// the buttons: the defaults
 			input["home"] = { { "left", "prev" }, { "up", "prev" }, { "l", "prev" }, { "right", "next" }, { "down", "next" }, { "r", "next" },
@@ -332,16 +331,16 @@ namespace banana
 			int n = m->src->systemCount();
 			for (int i = 0; i < n; i++) systems.push_back(m->src->system(i));
 			m->mSys = std::min(std::max(0, m->mSys), std::max(0, n - 1));
-			if (m->mView != rnds::UI::HOME)
+			if (m->mView != Menu::HOME)
 			{
 				int g = m->src->gameCount();
 				for (int i = 0; i < g; i++) games.push_back(m->src->game(i));
 				m->mGame = std::min(std::max(0, m->mGame), std::max(0, g - 1));
 			}
 		}
-		int count() const { return m->mView == rnds::UI::HOME ? (int)systems.size() : (int)games.size(); }
-		int cursor() const { return m->mView == rnds::UI::HOME ? m->mSys : m->mGame; }
-		std::string viewName() const { return m->mView == rnds::UI::HOME ? "home" : m->mView == rnds::UI::LIBRARY ? "library" : "launch"; }
+		int count() const { return m->mView == Menu::HOME ? (int)systems.size() : (int)games.size(); }
+		int cursor() const { return m->mView == Menu::HOME ? m->mSys : m->mGame; }
+		std::string viewName() const { return m->mView == Menu::HOME ? "home" : m->mView == Menu::LIBRARY ? "library" : "launch"; }
 
 		bool sysField(const rnds::SysInfo& si, int index, const std::string& f, EV& out) const
 		{
@@ -381,8 +380,6 @@ namespace banana
 			else if (f == "cart") out = EV(g.cart);
 			else if (f == "label") out = EV(g.label);
 			else if (f == "art") out = EV(!g.box.empty() ? g.box : !g.label.empty() ? g.label : g.cart);
-			else if (f == "rom") out = EV(g.rom);
-			else if (f == "romIcon") out = EV(g.rom.empty() ? std::string() : "romicon:" + g.rom);
 			else if (f == "icon") out = EV(g.icon);
 			else if (f == "achA" || f == "achievements") out = EV((double)g.achA);
 			else if (f == "achB" || f == "achievementsTotal") out = EV((double)g.achB);
@@ -438,13 +435,13 @@ namespace banana
 			if (n == "games.count" || n == "gameCount") { out = EV((double)games.size()); return true; }
 			if (n == "launch.t") { out = EV(launchAt < 0 ? 0.0 : now - launchAt); return true; }
 			if (n == "launch.progress") { out = EV(launchAt < 0 ? 0.0 : std::min(1.0, (now - launchAt) / std::max(1.0, launchMs))); return true; }
-			if (n == "empty") { out = EV(m->mView != rnds::UI::HOME && games.empty() ? 1.0 : 0.0); return true; }
+			if (n == "empty") { out = EV(m->mView != Menu::HOME && games.empty() ? 1.0 : 0.0); return true; }
 			if (n == "empty.title") { out = EV(m->src->emptyTitle()); return true; }
 			if (n == "empty.hint") { out = EV(m->src->emptyHint()); return true; }
 			if (pre("sys.", rest)) { if (m->mSys < (int)systems.size()) { if (sysField(systems[m->mSys], m->mSys, rest, out)) return true; } out = EV(""); return true; }
 			if (pre("game.", rest))
 			{
-				if (m->mView != rnds::UI::HOME && m->mGame < (int)games.size() && gameField(games[m->mGame], m->mGame, rest, out)) return true;
+				if (m->mView != Menu::HOME && m->mGame < (int)games.size() && gameField(games[m->mGame], m->mGame, rest, out)) return true;
 				out = EV("");
 				return true;
 			}
@@ -518,7 +515,7 @@ namespace banana
 		bool flag(const Ctx& c, const std::string& k, bool def = false) const { const Prop* p = find(c, k); return p ? p->eval(*c.sc).truthy() : def; }
 
 		// ---- drawing ---------------------------------------------------------------------------------------------
-		struct Frame { float x, y, k; float opacity; int screen; };	// the parent's origin (layout px), scale, opacity
+		struct Frame { float x, y, k; float opacity; };	// the parent's origin (layout px), scale, opacity
 
 		std::shared_ptr<rnds::Font> font(const std::string& name)
 		{
@@ -944,8 +941,8 @@ namespace banana
 			Box b = boxOf(c, pw, ph, nw, nh);
 			float ax0 = f.x + b.x * f.k, ay0 = f.y + b.y * f.k, aw = b.w * f.k, ah = b.h * f.k;	// absolute layout px
 			if (has(c, "onTap") || has(c, "tap"))
-				hits.push_back(Hit{ f.screen, ax0 * s, ay0 * s, (ax0 + aw) * s, (ay0 + ah) * s, "", -1, str(c, has(c, "onTap") ? "onTap" : "tap") });
-			Frame cf{ ax0, ay0, f.k * (float)num(c, "scale", 1), opacity, f.screen };
+				hits.push_back(Hit{ ax0 * s, ay0 * s, (ax0 + aw) * s, (ay0 + ah) * s, "", -1, str(c, has(c, "onTap") ? "onTap" : "tap") });
+			Frame cf{ ax0, ay0, f.k * (float)num(c, "scale", 1), opacity };
 			if (n->type == "rect") drawRect(c, ax0, ay0, aw, ah, cf);
 			else if (n->type == "text")
 			{
@@ -1017,7 +1014,7 @@ namespace banana
 			int n = 0, cur = -1;
 			std::vector<std::pair<std::string, std::string>> hl;
 			if (source == "systems") { n = (int)systems.size(); cur = m->mSys; }
-			else if (source == "games") { n = (int)games.size(); cur = m->mView == rnds::UI::HOME ? -1 : m->mGame; }
+			else if (source == "games") { n = (int)games.size(); cur = m->mView == Menu::HOME ? -1 : m->mGame; }
 			else if (source == "hints") { hl = hintsNow(); n = (int)hl.size(); }
 			else if (source == "range") n = (int)num(c, "count", 0);
 			else { err("list source \"" + source + "\": systems, games, hints or range"); return; }
@@ -1029,7 +1026,7 @@ namespace banana
 			std::string mode = str(c, "scrollMode", "center");
 			bool loop = flag(c, "loop") && n > 0;
 			// the list the cursor is on scrolls with its eased position; another one stands at its selection
-			bool active = (source == "systems" && m->mView == rnds::UI::HOME) || (source == "games" && m->mView != rnds::UI::HOME);
+			bool active = (source == "systems" && m->mView == Menu::HOME) || (source == "games" && m->mView != Menu::HOME);
 			float pos0 = active ? scroll : (float)std::max(0, cur);
 			// the scroll along the list (items, or rows of a grid): "center" keeps the selection in the middle,
 			// "edge" scrolls only when it would leave the box, "none" doesn't
@@ -1115,7 +1112,7 @@ namespace banana
 					at += e + gap;
 				}
 				// "justify": "between" spreads the items across the list by their own widths (the button pills
-				// along the bottom of the DS-shaped themes), instead of packing them from the left
+				// along the bottom of the themes), instead of packing them from the left
 				if (dirn == "row" && n > 1 && str(c, "justify", "start") == "between")
 				{
 					float extra = (w - (at - gap)) / (n - 1);
@@ -1151,7 +1148,7 @@ namespace banana
 					natural(tc, iw, ih, f.k, nw, nh);
 					Box tb = boxOf(tc, iw, ih, nw, nh);
 					float x0 = itf.x + tb.x * f.k, y0 = itf.y + tb.y * f.k;
-					hits.push_back(Hit{ f.screen, x0 * s, y0 * s, (x0 + tb.w * f.k) * s, (y0 + tb.h * f.k) * s, source, i,
+					hits.push_back(Hit{ x0 * s, y0 * s, (x0 + tb.w * f.k) * s, (y0 + tb.h * f.k) * s, source, i,
 						source == "hints" ? "key:" + hl[i].first : "" });
 				}
 			}
@@ -1159,10 +1156,10 @@ namespace banana
 
 		std::vector<std::pair<std::string, std::string>> hintsNow()
 		{
-			std::string v = m->mView == rnds::UI::HOME ? "home" : "library";
+			std::string v = m->mView == Menu::HOME ? "home" : "library";
 			auto r = hintSets[v];
 			if (extraHints)
-				for (auto& h : m->src->hints(m->mView != rnds::UI::HOME, m->mSys, m->mGame))
+				for (auto& h : m->src->hints(m->mView != Menu::HOME, m->mSys, m->mGame))
 					if (std::none_of(r.begin(), r.end(), [&](const std::pair<std::string, std::string>& e) { return e.first == h.first; })) r.push_back(h);
 			return r;
 		}
@@ -1187,22 +1184,19 @@ namespace banana
 			Scope vs;
 			vs.parent = &root;
 			for (auto& v : vars) vs.set(v.first, v.second.eval(vs));
-			for (int screen = 0; screen < 2; screen++)
-			{
-				const char* side = screen == 0 ? "top" : "bottom";
-				m->be->beginScreen(screen);
-				Scope ss;
-				ss.parent = &vs;
-				ss.set("screen", EV((double)screen));
-				Frame f{ 0, 0, 1, 1, screen };
-				if (const auto* nodes = screenFor(viewName(), side))
-					for (size_t i = 0; i < nodes->size(); i++) renderNode((*nodes)[i].get(), ss, f, W, H, std::string(side) + std::to_string(i));
-				auto all = screens.find(std::string("all.") + side);
-				if (all != screens.end())
-					for (size_t i = 0; i < all->second.size(); i++) renderNode(all->second[i].get(), ss, f, W, H, std::string("all.") + side + std::to_string(i));
-				if (debug && screen == 0 && !m->mErrors.empty()) drawErrors();
-				m->be->endScreen();
-			}
+			const char* side = "top";	// (a theme's screen is still its "top" key)
+			m->be->beginScreen();
+			Scope ss;
+			ss.parent = &vs;
+			ss.set("screen", EV(0.0));
+			Frame f{ 0, 0, 1, 1 };
+			if (const auto* nodes = screenFor(viewName(), side))
+				for (size_t i = 0; i < nodes->size(); i++) renderNode((*nodes)[i].get(), ss, f, W, H, std::string(side) + std::to_string(i));
+			auto all = screens.find(std::string("all.") + side);
+			if (all != screens.end())
+				for (size_t i = 0; i < all->second.size(); i++) renderNode(all->second[i].get(), ss, f, W, H, std::string("all.") + side + std::to_string(i));
+			if (debug && !m->mErrors.empty()) drawErrors();
+			m->be->endScreen();
 			lastFrame = monoMs();
 		}
 
@@ -1233,7 +1227,7 @@ namespace banana
 				j = jobs.back();	// the newest first: what the cursor is on now
 				jobs.pop_back();
 			}
-			rnds::Bitmap src = j.src.compare(0, 8, "romicon:") == 0 ? rnds::romIcon(j.src.substr(8)) : rnds::decodeFile(j.src);
+			rnds::Bitmap src = rnds::decodeFile(j.src);
 			ImgTex it;
 			if (!src.empty())
 			{
@@ -1322,7 +1316,7 @@ namespace banana
 
 	void LayoutMenu::setHome(int sys)
 	{
-		mView = rnds::UI::HOME;
+		mView = Menu::HOME;
 		mSys = sys;
 		d->rebuild();
 		d->scroll = (float)mSys;
@@ -1332,7 +1326,7 @@ namespace banana
 
 	void LayoutMenu::setLibrary(int sys, int game)
 	{
-		mView = rnds::UI::LIBRARY;
+		mView = Menu::LIBRARY;
 		mSys = sys;
 		mGame = game;
 		d->rebuild();
@@ -1345,7 +1339,7 @@ namespace banana
 	// land, not glide through the list)
 	void LayoutMenu::jumpTo(int game)
 	{
-		if (mView != rnds::UI::LIBRARY) return;
+		if (mView != Menu::LIBRARY) return;
 		int n = src->gameCount();
 		if (n <= 0) return;
 		game = std::min(std::max(0, game), n - 1);
@@ -1363,20 +1357,20 @@ namespace banana
 
 	namespace
 	{
-		const char* buttonName(rnds::UI::Button b)
+		const char* buttonName(Menu::Button b)
 		{
 			switch (b)
 			{
-			case rnds::UI::LEFT: return "left";
-			case rnds::UI::RIGHT: return "right";
-			case rnds::UI::UP: return "up";
-			case rnds::UI::DOWN: return "down";
-			case rnds::UI::A: return "a";
-			case rnds::UI::B: return "b";
-			case rnds::UI::X: return "x";
-			case rnds::UI::Y: return "y";
-			case rnds::UI::L: return "l";
-			case rnds::UI::R: return "r";
+			case Menu::LEFT: return "left";
+			case Menu::RIGHT: return "right";
+			case Menu::UP: return "up";
+			case Menu::DOWN: return "down";
+			case Menu::A: return "a";
+			case Menu::B: return "b";
+			case Menu::X: return "x";
+			case Menu::Y: return "y";
+			case Menu::L: return "l";
+			case Menu::R: return "r";
 			}
 			return "";
 		}
@@ -1385,7 +1379,7 @@ namespace banana
 	bool LayoutMenu::press(Button b)
 	{
 		if (d->launchAt >= 0) return false;
-		std::string v = mView == rnds::UI::HOME ? "home" : "library";
+		std::string v = mView == Menu::HOME ? "home" : "library";
 		auto& map = d->input[v];
 		auto it = map.find(buttonName(b));
 		if (it == map.end()) return false;
@@ -1401,7 +1395,7 @@ namespace banana
 			if (to == c) return false;
 			d->moveDir = to > c ? 1 : -1;
 			if (d->wrap && std::abs(to - c) > n / 2) d->moveDir = -d->moveDir;
-			if (mView == rnds::UI::HOME) { mSys = to; src->selectSystem(to); }
+			if (mView == Menu::HOME) { mSys = to; src->selectSystem(to); }
 			else { mGame = to; src->selectGame(to); }
 			// (a wrap's jump: the eased scroll goes the short way, as if it came from beside)
 			if (d->wrap && std::abs(to - c) > n / 2) d->scroll += to > c ? n : -n;
@@ -1413,7 +1407,7 @@ namespace banana
 			d->launchGame = game;
 			d->launchAt = d->now;
 			d->cuesDone = 0;
-			mView = rnds::UI::LAUNCH;
+			mView = Menu::LAUNCH;
 			d->enteredAt = d->now;
 		};
 		int k = arg.empty() ? 1 : std::max(1, atoi(arg.c_str()));
@@ -1422,14 +1416,14 @@ namespace banana
 		if (act == "next") return move(c + k);
 		if (act == "first") return move(0);
 		if (act == "last") return move(n - 1);
-		if (mView == rnds::UI::HOME)
+		if (mView == Menu::HOME)
 		{
 			if (n == 0) return false;
 			if (act == "open")
 			{
 				if (d->systems[c].app) { int g = src->openLibrary(c); mGame = g; d->rebuild(); launch(g); return true; }
 				mGame = src->openLibrary(c);
-				mView = rnds::UI::LIBRARY;
+				mView = Menu::LIBRARY;
 				d->rebuild();
 				d->scroll = (float)mGame;
 				d->enteredAt = d->now; d->moveDir = 1;
@@ -1439,7 +1433,7 @@ namespace banana
 			{
 				int g = src->resumeGame(c);
 				if (g < 0) return false;
-				mView = rnds::UI::LIBRARY;
+				mView = Menu::LIBRARY;
 				mGame = g;
 				d->rebuild();
 				d->scroll = (float)g;
@@ -1453,7 +1447,7 @@ namespace banana
 		if (act == "back")
 		{
 			src->backToHome();
-			mView = rnds::UI::HOME;
+			mView = Menu::HOME;
 			d->rebuild();
 			d->scroll = (float)mSys;
 			d->enteredAt = d->now; d->moveDir = -1;
@@ -1477,34 +1471,34 @@ namespace banana
 		return false;
 	}
 
-	bool LayoutMenu::touch(int screen, float x, float y, bool down)
+	bool LayoutMenu::touch(float x, float y, bool down)
 	{
 		if (d->launchAt >= 0) return false;
-		if (down) { mDown = true; downX = x; downY = y; downScreen = screen; return false; }
+		if (down) { mDown = true; downX = x; downY = y; return false; }
 		if (!mDown) return false;
 		mDown = false;
-		if (screen != downScreen || std::fabs(x - downX) > 24 * d->s || std::fabs(y - downY) > 24 * d->s) return false;
+		if (std::fabs(x - downX) > 24 * d->s || std::fabs(y - downY) > 24 * d->s) return false;
 		// the topmost thing under the finger: the last drawn
 		for (auto it = d->hits.rbegin(); it != d->hits.rend(); ++it)
 		{
 			const Impl::Hit& h = *it;
-			if (h.screen != screen || x < h.x0 || x >= h.x1 || y < h.y0 || y >= h.y1) continue;
+			if (x < h.x0 || x >= h.x1 || y < h.y0 || y >= h.y1) continue;
 			std::string act = h.action;
 			if (act.compare(0, 4, "key:") == 0) act = act.substr(4);
 			if (!act.empty())
 			{
 				std::string a = act;
 				for (auto& ch : a) ch = (char)tolower((unsigned char)ch);
-				static const std::map<std::string, Button> btn = { { "a", rnds::UI::A }, { "b", rnds::UI::B }, { "x", rnds::UI::X }, { "y", rnds::UI::Y },
-					{ "l", rnds::UI::L }, { "r", rnds::UI::R }, { "left", rnds::UI::LEFT }, { "right", rnds::UI::RIGHT }, { "up", rnds::UI::UP }, { "down", rnds::UI::DOWN } };
+				static const std::map<std::string, Button> btn = { { "a", Menu::A }, { "b", Menu::B }, { "x", Menu::X }, { "y", Menu::Y },
+					{ "l", Menu::L }, { "r", Menu::R }, { "left", Menu::LEFT }, { "right", Menu::RIGHT }, { "up", Menu::UP }, { "down", Menu::DOWN } };
 				auto b = btn.find(a);
 				if (b != btn.end()) return press(b->second);
 				continue;
 			}
-			bool homeList = h.source == "systems" && mView == rnds::UI::HOME, gameList = h.source == "games" && mView == rnds::UI::LIBRARY;
+			bool homeList = h.source == "systems" && mView == Menu::HOME, gameList = h.source == "games" && mView == Menu::LIBRARY;
 			if (!homeList && !gameList) continue;
 			int c = d->cursor();
-			if (h.index == c) return press(rnds::UI::A);
+			if (h.index == c) return press(Menu::A);
 			if (homeList) { mSys = h.index; src->selectSystem(h.index); }
 			else { mGame = h.index; src->selectGame(h.index); }
 			d->moveDir = h.index > c ? 1 : -1;
@@ -1514,7 +1508,7 @@ namespace banana
 		return false;
 	}
 
-	bool LayoutMenu::touchMove(int, float, float) { return false; }
+	bool LayoutMenu::touchMove(float, float) { return false; }
 
 	void LayoutMenu::update(double t)
 	{
@@ -1524,7 +1518,7 @@ namespace banana
 		if (d->start < 0) d->start = t;
 		d->take();
 		// the clock and the date change once a minute, but update() runs every pass (60/s while the menu animates):
-		// build the top screen's text only when the minute turns
+		// build the status text only when the minute turns
 		long minute = (long)(time(nullptr) / 60);
 		if (minute != d->clockMinute) { d->clockMinute = minute; d->clock = src->clockText(); d->date = src->dateText(); }
 		float to = (float)d->cursor();
@@ -1537,7 +1531,7 @@ namespace banana
 			if (t - d->launchAt >= d->launchMs)
 			{
 				d->launchAt = -1;
-				mView = rnds::UI::LIBRARY;
+				mView = Menu::LIBRARY;
 				src->launch(d->launchGame);	// the main loop starts it (the library's pending launch)
 			}
 		}

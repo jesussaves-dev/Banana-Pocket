@@ -36,7 +36,7 @@ What the numbers say:
   a decode. It scales with the *number of files*, not their size. It is not a boot bottleneck on this library size;
   a card with tens of thousands of ROMs (or a large `gamelist.xml`) is the case to re-measure.
 - **The first frame is the expensive part** (~10 ms at 640, ~45 ms at 768): the glyph and box rasterization, and it
-  scales with the canvas area (2.56× more pixels ≈ 4.7× the time, so it is not linear — the RndsRaster glyph cache
+  scales with the canvas area (2.56× more pixels ≈ 4.7× the time, so it is not linear — the raster glyph cache
   is per-size and rebuilt at the larger scale). This is why the boot animation is played *while* the menu is built
   and the first frame is drawn under the iris, not on the panel: `irisToMenu()` in `src/main.cpp`.
 - **Idle frames cost nothing** (~0.07 ms, 598 of 600 screens unchanged): the draw-list diff holds, as
@@ -63,7 +63,7 @@ the rotation is only exercised on the handheld (QEMU's panel reports no orientat
 device, not here.
 
 > **Verifying pixel-exactness across a rebuild:** the renderer is *not* byte-reproducible between two binaries of
-> different layout — GCC contracts some of RndsRaster's float math into FMA at `-O2`, and the pattern of contraction
+> different layout — GCC contracts some of the rasterizer's float math into FMA at `-O2`, and the pattern of contraction
 > shifts a glyph by a pixel. Two builds of the *same* source can render differently for that reason. To compare a
 > build against another, build both with `CXXFLAGS="-O2 -ffp-contract=off"`; then the same screens come out
 > identical. (`make test` does not compare against golden images, so this only matters when verifying a change.)

@@ -1,50 +1,34 @@
 #!/bin/sh
-# A small library for headless runs: DS games (with box art for some, a ROM banner icon for one), a few other
+# A small library for headless runs: Neo Geo Pocket games (with box art for some, a zipped ROM for one), a few other
 # systems, play stats and a favourite. Art is drawn here (no game art is shipped).
 #   tests/fixture.sh <dir>     then: banana-ui --roms <dir>/roms --data <dir>/data --systems ../system/rootfs/etc/banana/systems.conf ...
 set -e
 D=${1:?usage: fixture.sh <dir>}
-rm -rf "$D"; mkdir -p "$D/roms/nds/media/box" "$D/roms/gba" "$D/roms/snes/media/box" "$D/roms/gb" "$D/data"
+rm -rf "$D"; mkdir -p "$D/roms/ngp/media/box" "$D/roms/gba" "$D/roms/snes/media/box" "$D/roms/gb" "$D/data"
 box() {   # box <file> <colour> <text>
     convert -size 420x380 "gradient:$2-black" -gravity center -fill white -pointsize 34 -annotate 0 "$3" "$1"
 }
-for g in "Banana Kart DS" "Peel Quest" "Split Racers (USA)" "Monkey Puzzle League" "Yellow Planet [!]"; do
-    head -c 4096 /dev/zero > "$D/roms/nds/$g.nds"
+for g in "Banana Kart" "Peel Quest" "Split Racers (USA)" "Monkey Puzzle League" "Yellow Planet [!]"; do
+    head -c 4096 /dev/zero > "$D/roms/ngp/$g.ngp"
 done
-# Yellow Planet: a ROM with a banner (a yellow disc icon) 3 MB in, kept zipped, so its cartridge shows the ROM's
-# own icon through banana-ui's zip reader
-rm "$D/roms/nds/Yellow Planet [!].nds"
-python3 - "$D/roms/nds/Yellow Planet [!].zip" <<'PY'
-import os, random, struct, sys, zipfile
-at = 3 << 20
-rom = bytearray(at + 0x840)
-rom[0x68:0x6c] = struct.pack('<I', at)
-random.seed(7)
-rom[0x200:at] = bytes(random.getrandbits(8) for _ in range(at - 0x200))   # code: deflate can't shrink it much
-b = bytearray(0x840)
-b[0:2] = struct.pack('<H', 1)
-for t in range(16):                         # 4x4 tiles of 8x8, 4 bits a pixel: a yellow disc on transparent
-    for y in range(8):
-        for x in range(0, 8, 2):
-            px = [((t % 4) * 8 + x + i - 15.5) ** 2 + ((t // 4) * 8 + y - 15.5) ** 2 < 14 ** 2 for i in (0, 1)]
-            b[0x20 + t * 32 + y * 4 + x // 2] = (1 if px[0] else 0) | ((1 if px[1] else 0) << 4)
-b[0x222:0x224] = struct.pack('<H', 31 | (28 << 5) | (4 << 10))   # colour 1: yellow (BGR555)
-rom[at:at + 0x840] = b
-with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
-    z.writestr('readme.txt', 'not the game')
-    z.writestr('Yellow Planet (Europe).nds', bytes(rom))
+# Yellow Planet is kept zipped
+rm "$D/roms/ngp/Yellow Planet [!].ngp"
+python3 - "$D/roms/ngp/Yellow Planet [!].zip" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'w') as z:
+    z.writestr('Yellow Planet (Europe).ngp', b'\0' * 4096)
 PY
-box "$D/roms/nds/media/box/Banana Kart DS.png" '#d8b020' 'Banana Kart'
-box "$D/roms/nds/media/box/Peel Quest.png" '#3d9e9a' 'Peel Quest'
-box "$D/roms/nds/media/box/Split Racers (USA).png" '#c84040' 'Split Racers'
+box "$D/roms/ngp/media/box/Banana Kart.png" '#d8b020' 'Banana Kart'
+box "$D/roms/ngp/media/box/Peel Quest.png" '#3d9e9a' 'Peel Quest'
+box "$D/roms/ngp/media/box/Split Racers (USA).png" '#c84040' 'Split Racers'
 for g in "Orchard Tactics" "Tiny Fruit Advance"; do head -c 1024 /dev/zero > "$D/roms/gba/$g.gba"; done
 for g in "Super Smoothie World"; do head -c 1024 /dev/zero > "$D/roms/snes/$g.sfc"; done
 box "$D/roms/snes/media/box/Super Smoothie World.png" '#8060c0' 'Smoothie World'
 head -c 1024 /dev/zero > "$D/roms/gb/Pocket Peel.gb"
 now=$(date +%s)
-printf 'nds/Banana Kart DS.nds\t14\t79920\t%s\t12\t40\nnds/Peel Quest.nds\t3\t5400\t%s\t5\t40\ngba/Orchard Tactics.gba\t1\t900\t%s\n' \
+printf 'ngp/Banana Kart.ngp\t14\t79920\t%s\t12\t40\nngp/Peel Quest.ngp\t3\t5400\t%s\t5\t40\ngba/Orchard Tactics.gba\t1\t900\t%s\n' \
     $((now - 3600)) $((now - 90000)) $((now - 900000)) > "$D/data/playstats.tsv"
-echo "nds/Peel Quest.nds" > "$D/data/favorites.txt"
+echo "ngp/Peel Quest.ngp" > "$D/data/favorites.txt"
 # an app for the Apps shelf: a manifest the registry scans (Library::scanApps) and the marker file it lists as the
 # app's one entry. Nothing here is executed -- the harness only checks the tile is on the shelf (the `apps` op).
 mkdir -p "$D/data/apps/hello"
@@ -52,7 +36,7 @@ cat > "$D/data/apps/hello/app.json" <<'JSON'
 { "id": "hello", "name": "Hello App", "maker": "Banana", "run": "/usr/libexec/banana/run-bananatube %ROM%", "ext": "app", "perf": "balanced", "accent": "#12ab34" }
 JSON
 touch "$D/data/apps/hello/Hello.app"
-# a save state for one nds game (RetroArch keeps them sorted per core), so the states page has something to list
-mkdir -p "$D/states/DeSmuME"
-head -c 4096 /dev/zero > "$D/states/DeSmuME/Banana Kart DS.state"
+# a save state for one ngp game (RetroArch keeps them sorted per core), so the states page has something to list
+mkdir -p "$D/states/Mednafen"
+head -c 4096 /dev/zero > "$D/states/Mednafen/Banana Kart.state"
 echo "fixture in $D"

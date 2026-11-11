@@ -3,7 +3,7 @@
 CXX ?= g++
 PKG_CONFIG ?= pkg-config
 CXXFLAGS ?= -O2
-override CXXFLAGS += -std=c++17 -Wall -Wno-unused-function
+override CXXFLAGS += -std=c++17 -Wall -Wextra -Wno-missing-field-initializers -Wno-unused-function -Werror
 override LDLIBS += -lpthread
 
 # the JSON reader is banana-ui's (ui/src/json.cpp): one parser, not a copy per app. The cross build's source dir is

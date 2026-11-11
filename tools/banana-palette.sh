@@ -1,14 +1,13 @@
 #!/bin/sh
 # Banana's palette over ROCKNIXDS Pixel's: the theme's blue-grey neutrals turned warm, and its blue accents (the
 # selected cartridge's plate, the shelf's scroll thumb, a held icon, the default system tint) turned banana yellow.
-# A colour map, applied to the engine (ui/rnds/RndsUI.cpp, imported unchanged by tools/import-rnds.sh, which runs
-# this last), to banana-ui's own copies of the palette (settings.cpp, splash.cpp) and to the splash's still layers
+# A colour map, applied to banana-ui's own copies of the palette (settings.cpp, splash.cpp) and to the splash's still layers
 # (tools/make-splash.mjs: run it again afterwards). Every value is a 6-digit hex; the same value means the same
 # thing wherever ROCKNIXDS uses it, so one map covers all the files.
 #   tools/banana-palette.sh            rewrite the files in place
 set -e
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-FILES="$HERE/ui/rnds/RndsUI.cpp $HERE/ui/src/settings.cpp $HERE/ui/src/splash.cpp $HERE/tools/make-splash.mjs"
+FILES="$HERE/ui/src/settings.cpp $HERE/ui/src/splash.cpp $HERE/tools/make-splash.mjs"
 MAP='
 # dark theme: blue-grey -> warm charcoal
 e7eef6 f1ede2

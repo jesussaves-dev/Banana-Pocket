@@ -23,7 +23,7 @@ namespace banana
 	{
 	public:
 		// path: the theme's .json; fontDirs: where the built-in fonts are (rnds' Pixelify Sans, Banana's Inter).
-		// canvasW/canvasH: the screen's size in layout px (640x480; a single 1240x1080
+		// canvasW/canvasH: the screen's size in layout px (a 1240x1080
 		// panel at the same scale is 640x557, which is what its theme is written for)
 		LayoutMenu(rnds::Source* src, rnds::Backend* be, const std::string& path, float scale,
 			const std::string& pixelFonts, const std::string& interFonts, float canvasW = 640, float canvasH = 480);
@@ -36,8 +36,8 @@ namespace banana
 		int gameIndex() const override { return mGame; }
 		bool press(Button b) override;
 		void jumpTo(int game) override;
-		bool touch(int screen, float x, float y, bool down) override;
-		bool touchMove(int screen, float x, float y) override;
+		bool touch(float x, float y, bool down) override;
+		bool touchMove(float x, float y) override;
 		void touchCancel() override { mDown = false; }
 		void update(double nowMs) override;
 		void render() override;
@@ -55,11 +55,10 @@ namespace banana
 		std::unique_ptr<Impl> d;
 		rnds::Source* src;
 		rnds::Backend* be;
-		View mView = rnds::UI::HOME;
+		View mView = Menu::HOME;
 		int mSys = 0, mGame = 0;
 		bool mDown = false;
 		float downX = 0, downY = 0;
-		int downScreen = 0;
 		std::function<void()> mQueued, mFinished;
 		std::function<void(const std::string&)> mLog;
 		std::vector<std::string> mErrors;

@@ -93,7 +93,7 @@ flowchart LR
 
 | Part | What it does |
 |---|---|
-| `banana-ui` | the menu: the ROCKNIXDS Pixel layout engine on a software backend, KMS dumb buffers, `inotify`-watched ROM folders |
+| `banana-ui` | the menu: a JSON layout engine on a software backend, in ROCKNIXDS Pixel's look, KMS dumb buffers, `inotify`-watched ROM folders |
 | `banana-ui` (compositor) | the screen's owner while you play: a single-client Wayland server on atomic KMS, the EGL rotate pass, the overlay cards and the pause menu |
 | `bananad` | the quiet one: input, sleep, battery, the mixer/volume and jack, the clock and Wi-Fi |
 | PipeWire + WirePlumber | the sound server: ACP brings the AudioReach card up from its UCM profile, and the menu and every game/app mix through it |
@@ -211,7 +211,7 @@ The full trail — the plane probes, the rotation that the hardware refused, eve
 
 ## 📜 License
 
-See [`LICENSE`](LICENSE). The `ui/rnds` engine is imported unchanged from ROCKNIXDS.
+See [`LICENSE`](LICENSE). Banana's drawing code (`ui/src/raster.cpp`) and theme assets come from ROCKNIXDS.
 
 ## 🎨 Credits
 

@@ -43,7 +43,7 @@ list)
         # banana-<board>-<version>: this handheld's own name
         case $n in
         "$BOARD"-*) b=$BOARD; v=${n#$BOARD-} ;;
-        *) b=?; v=$n ;;
+        *) b='?'; v=$n ;;
         esac
         printf '%s\t%s\t%s\n' "$p" "$v" "$b"
     done

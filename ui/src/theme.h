@@ -11,6 +11,8 @@ namespace banana
 
 	// a theme's .json: "user:<name>" from the card or the image, "file:<path>" any file (headless runs); else ""
 	std::string themePath(const std::string& value);
+	// Pocket, the layout a colour theme is drawn in
+	inline std::string pocketTheme() { return "file:" + themePath("user:pocket"); }
 
 	struct UserTheme { std::string value, name; };	// "user:ocean", the theme's own name ("Ocean")
 	std::vector<UserTheme> userThemes();				// the card's first, then the image's (a card file of the same name wins)

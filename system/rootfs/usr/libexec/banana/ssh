@@ -9,7 +9,7 @@ D=/data/banana/ssh
 R=/run/banana/ssh
 case $1 in
 up)
-    [ -f /run/banana/dropbear.pid ] && kill -0 $(cat /run/banana/dropbear.pid) 2>/dev/null && exit 0
+    [ -f /run/banana/dropbear.pid ] && kill -0 "$(cat /run/banana/dropbear.pid)" 2>/dev/null && exit 0
     mkdir -p $D $R
     chmod 700 $R
     [ -f $D/authorized_keys ] || printf '# public keys (one per line) that may log in as root over SSH\n' > $D/authorized_keys
@@ -20,7 +20,7 @@ up)
     dropbear -s -r $D/host_key_ed25519 -P /run/banana/dropbear.pid
     ;;
 down)
-    [ -f /run/banana/dropbear.pid ] && kill $(cat /run/banana/dropbear.pid) 2>/dev/null
+    [ -f /run/banana/dropbear.pid ] && kill "$(cat /run/banana/dropbear.pid)" 2>/dev/null
     rm -f /run/banana/dropbear.pid
     ;;
 *) echo "usage: ssh up|down" >&2; exit 1 ;;

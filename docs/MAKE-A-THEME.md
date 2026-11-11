@@ -173,7 +173,7 @@ not in a folder inside it.
 `banana/logs/banana-ui.log` on the card.
 
 **One part of it is wrong.** Add `"debug": true` near the top of the theme and the menu paints each problem in red
-on the top screen, saying where it is. Take it out when you are done.
+on the screen, saying where it is. Take it out when you are done.
 
 **Text is hard to read, or something is off the screen.** Check the two colours you are putting together (a grey
 on a grey) and the position you typed (280 is fine, 680 is off the 640-wide screen).

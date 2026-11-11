@@ -29,7 +29,7 @@ example's file name replaces that example.
         "regular": "mine/MyFont-Regular.ttf",
         "medium": "mine/MyFont-Medium.ttf"
       },
-      "logo": "mine/logo.png",     the logo at the top of the bottom screen (fitted into its box)
+      "logo": "mine/logo.png",     the logo at the top of the screen (fitted into its box)
       "icons": {                   a system's icon (PNG, about 128 x 128), by the system's id: gba, gbc,
         "gba": "mine/gba.png",     gb, snes, nes, megadrive, n64, psx, ports, ... (the folder names
         "psx": "mine/psx.png"      in roms/, and banana/systems.conf.default lists them all)
@@ -60,7 +60,7 @@ The shelf       sheetBase, sheetHi, sheetLo (the shelf's sheet), trackBg, trackH
                 track), railBg (the rail), slotOn (the selected slot), faceMuted (unselected face buttons),
                 floor (shadows under the art), glint (the art's shine)
 Box art         frameBorder, frameBg (the frame around the art), slotDark, slotLip (the console's slot),
-                cartLabel (the label under a DS game's icon)
+                cartLabel (the label under a game's icon)
 Favourites      favBorder, favBand, favBody, favInk
 Other           meterBg (the battery and progress meters), brandBg (behind the logo), kbdBg, kbdInk (the
                 on-screen keyboard's keys and letters), blackish, shade35, shade40, shade45 (shadows)
@@ -77,5 +77,5 @@ looks and how it moves, from the menu's data (the systems, the games, the select
 pocket.json (the handheld's own) is one. In Banana's source (github.com/jesussaves-dev/Banana-Pocket): docs/MAKE-A-THEME.md starts from the
 beginning, with the theme editor, and docs/THEMES.md describes the format exactly.
 
-Themes apply to the Dark/Light style (ROCKNIXDS Pixel) and to Settings (its colours and fonts). theme-builder.html, next to this file, makes a theme in a web browser with a live
+Themes apply to the menu and to Settings (its colours and fonts). theme-builder.html, next to this file, makes a theme in a web browser with a live
 preview.

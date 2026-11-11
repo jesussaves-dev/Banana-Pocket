@@ -9,11 +9,11 @@ amplifier, a fan, and no lid. **Version:** 0.5.10. No submodules; the hardware l
 
 | Path | Subsystem | Role |
 |---|---|---|
-| `ui/` | **Frontend / home menu** | `banana-ui` (C++17): KMS host (`src/`), imported render engine (`rnds/`), assets, headless test |
+| `ui/` | **Frontend / home menu** | `banana-ui` (C++17): KMS host (`src/`), rasterizer (`src/raster.cpp`), assets, headless test |
 | `system/bananad/` | **Power daemon** | Sleep/power/sound-routing/brightness/battery (`bananad.c`) and its namespaced test |
 | `system/rootfs/` | **Init + rootfs overlay** | `init.d/rcS`, `inittab`, `banana-perf`, the launchers (`usr/libexec/banana/*`), default configs/themes |
 | `buildroot/` | **Buildroot external tree** | the defconfig, Banana packages (`package/*`), the SM4450 board support (`board/retroid-pocket-classic/*`) |
-| `tools/` | **Dev tooling** | `qemu-boot.sh`, `import-rnds.sh`, the art generators |
+| `tools/` | **Dev tooling** | `qemu-boot.sh`, the art generators |
 | `docs/` | **Docs** | `ARCHITECTURE.md`, `RPC-PORT.md`, `RPC-TEST.md`, `ROADMAP.md`, `PERFORMANCE.md` |
 
 Runtime architecture (from `docs/ARCHITECTURE.md`): **no systemd, no EmulationStation, no desktop, no initramfs, no
@@ -71,7 +71,7 @@ verifies, writes the *inactive* slot, reads back, then rewrites `DEFAULT` (`Prev
 | Boot/init | `system/rootfs/etc/init.d/rcS`, `etc/inittab` |
 | Power daemon | `system/bananad/bananad.c` |
 | Menu core | `ui/src/main.cpp` (main loop, launch/handover, iris), `library.cpp` (Source), `soft.cpp` (Backend), `kms.cpp` (Display), `turn.h` (rotation), `input.cpp`, `sound.cpp`, `settings.cpp`, `splash.cpp`, `wifi.cpp` |
-| Imported engine | `ui/rnds/RndsUI.cpp`, `ui/rnds/RndsRaster.cpp` |
+| Rasterizer | `ui/src/raster.cpp` |
 | Game contract | `system/rootfs/etc/banana/systems.conf` + `usr/libexec/banana/run-*` |
 | Tests | `ui/tests/run.sh` (+ `fixture.sh`, `bench.sh`, `turn-test.cpp`, golden baselines in `ui/tests/golden/`), `tools/check-systems.py`, `system/tests/run-retroarch-test.sh`, `system/tests/rpc-thermals-test.sh`, `system/bananad/tests/sleep-test.sh`, `tools/qemu-boot.sh` |
 
