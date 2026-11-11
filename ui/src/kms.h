@@ -85,6 +85,12 @@ namespace banana
 		// the panel's colour matrix and curve. Outside the flip path: it builds the blobs and the next commit carries
 		// them. False when this driver has no colour management or a blob could not be made.
 		bool shaderSetColor(ColorProfile c);
+		// the CRT/LCD mask on the overlay plane. Both run outside the flip path and the next commit carries the result:
+		// shaderSetMask fills the hidden buffer and bakes a game's frame over it, shaderSetIntensity stores one integer.
+		bool shaderSetMask(ShaderMask m, const MaskGeom& g);
+		void shaderSetIntensity(int pct);
+		// the mask's framebuffer, 0 when it is off
+		uint32_t maskFb() const { return count > 0 && p[0].atomic && maskMode != SHADER_MASK_OFF ? p[0].mask[p[0].maskFront].fb : 0; }
 		// Phase 3B: the DRM fd (the compositor imports a client's DMA-BUF on it), whether the atomic overlay path
 		// is in use, and the two compositor frames. presentGame() puts a client's framebuffer on the primary and
 		// hides the menu overlay; showMenu() puts the menu back. Both honor the one-flip-in-flight rule.
@@ -135,6 +141,8 @@ namespace banana
 			Buf frame[2];	// a game's screen frame, made the first time one is shown
 			int frameFront = 0;
 			bool frameOn = false;
+			Buf mask[2];	// the CRT/LCD mask, made the first time one is set
+			int maskFront = 0;
 			Buf black;		// XRGB8888, the primary when the menu is on the overlay
 			int front = 0;
 			Damage missed[2];
@@ -149,7 +157,15 @@ namespace banana
 		ColorProfile colorProfile = COLOR_PROFILE_BYPASS;
 		int rot = 0, SW = 0, SH = 0;	// the panel's rotation, and its size in its own rows (the scanout buffers')
 		Panel p[2];
-		std::vector<uint8_t> frameCopy;	// the turned frame in cached memory: reading the uncached dumb buffer per card is slow
+		// all in cached memory, since reading the uncached dumb buffers per card is slow. frameCopy is what a card is
+		// drawn on: the frame over the mask, or either one alone, and empty with neither.
+		std::vector<uint8_t> frameCopy, frameRaw, maskCopy;
+		ShaderMask maskMode = SHADER_MASK_OFF;
+		int maskPct = 50;
+		bool baseStale = false;	// the intensity moved since frameCopy was composed
+		void shaderRecompose();
+		void shaderRebakeFrame();
+		bool commitMenu(Panel& pn, uint32_t menuFb);
 		void turn(const uint32_t* src, Buf& bf, const Damage& d);
 		void applyGamma();
 		bool colorRebuild(Panel& pn);

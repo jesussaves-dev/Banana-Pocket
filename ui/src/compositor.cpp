@@ -116,7 +116,7 @@ namespace banana
 		Buffer* lastShown = nullptr;	// the newest frame presented, to re-place a frozen game in a new hole
 		bool reframeDue = false;	// a new hole arrived during a flip
 		bool touchOutside = false;	// this touch began on the frame: the client never hears of it
-		uint32_t shownLayer() const { return overlayFb ? overlayFb : frameFb; }
+		uint32_t shownLayer() const { return overlayFb ? overlayFb : frameFb ? frameFb : d->maskFb(); }
 		bool restoreMenu = false;		// show the menu as soon as the current flip completes
 		bool stopping = false;
 		bool saidShm = false;

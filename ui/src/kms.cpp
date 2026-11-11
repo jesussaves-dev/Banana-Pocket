@@ -221,7 +221,7 @@ namespace banana
 			if (pl.zpos_mutable) addp(pl.id, pl.zpos, over ? pl.zpos_max : 0);
 			if (over)
 			{
-				if (pl.has_alpha) addp(pl.id, pl.alpha, 0xffff);	// the menu pixels are opaque
+				if (pl.has_alpha) addp(pl.id, pl.alpha, fb == maskFb() ? maskPlaneAlpha(maskPct) : 0xffff);	// the menu pixels are opaque
 				if (pl.has_blend) addp(pl.id, pl.blend, 0);	// premultiplied
 			}
 		};
@@ -234,8 +234,9 @@ namespace banana
 			addp(pn.crtc, pn.crtc_ctm, pn.color.ctm);
 			addp(pn.crtc, pn.crtc_gamma_lut, pn.color.lut);
 		}
-		addPlane(pn.primary, pn.black.fb, false);
-		addPlane(pn.overlay, pn.buf[pn.front].fb, true);
+		// with a mask up the menu moves to the primary, since there is only the one overlay
+		addPlane(pn.primary, maskFb() ? pn.buf[pn.front].fb : pn.black.fb, false);
+		addPlane(pn.overlay, maskFb() ? maskFb() : pn.buf[pn.front].fb, true);
 		int ret = drmModeAtomicCommit(fd, r, DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
 		if (ret)
 		{
@@ -489,6 +490,7 @@ namespace banana
 		{
 			freeBuf(pn.buf[0]); freeBuf(pn.buf[1]); freeBuf(pn.black); freeBuf(pn.card[0]); freeBuf(pn.card[1]);
 			freeBuf(pn.frame[0]); freeBuf(pn.frame[1]);
+			freeBuf(pn.mask[0]); freeBuf(pn.mask[1]);
 			pn.frameOn = false;
 			if (pn.mode_blob) { drmModeDestroyPropertyBlob(fd, pn.mode_blob); pn.mode_blob = 0; }
 			for (uint32_t id : { pn.color.ctm, pn.color.lut, pn.color.retired[0], pn.color.retired[1] })
@@ -499,6 +501,11 @@ namespace banana
 		fd = -1;
 		pending = 0;
 		rot = 0; SW = SH = 0;
+		maskMode = SHADER_MASK_OFF;
+		baseStale = false;
+		std::vector<uint8_t>().swap(maskCopy);
+		std::vector<uint8_t>().swap(frameRaw);
+		std::vector<uint8_t>().swap(frameCopy);
 	}
 
 	bool Display::present(const uint32_t* const screens[2], const Damage dmg[2])
@@ -518,7 +525,7 @@ namespace banana
 			if (d.empty())
 			{
 				// nothing to draw, but new colour blobs still need a commit to reach the panel
-				if (pn.atomic && pn.color.dirty && commitFrame(pn, pn.black.fb, SW, SH, pn.buf[pn.front].fb)) any = true;
+				if (pn.atomic && pn.color.dirty && commitMenu(pn, pn.buf[pn.front].fb)) any = true;
 				continue;
 			}
 			Buf& bf = pn.buf[back];
@@ -539,7 +546,7 @@ namespace banana
 			pn.missed[pn.front] = dmg[s];	// the buffer going hidden misses this frame
 			if (pn.atomic)
 			{
-				if (commitFrame(pn, pn.black.fb, SW, SH, bf.fb))
+				if (commitMenu(pn, bf.fb))
 				{
 					pn.front = back;
 					any = true;
@@ -589,6 +596,7 @@ namespace banana
 			addp(pl.id, pl.crt_y, 0);
 			addp(pl.id, pl.crt_w, SW);
 			addp(pl.id, pl.crt_h, SH);
+			if (pl.id == pn.overlay.id && pl.has_alpha) addp(pl.id, pl.alpha, fb == maskFb() ? maskPlaneAlpha(maskPct) : 0xffff);
 			// 3F: the display waits on the GPU's own writes to this scanout buffer, so the compositor does not
 			// have to glFinish. The kernel takes its own reference; the caller closes the fd after the commit.
 			if (ff >= 0) addp(pl.id, pl.in_fence_fd, (uint64_t)(int64_t)ff);
@@ -636,8 +644,9 @@ namespace banana
 		if (count <= 0 || !p[0].atomic) return false;
 		Buf& b = p[0].card[p[0].cardFront ^ 1];	// the hidden buffer, never one the plane may scan
 		if (!b.map) return false;
-		// a game's frame under the card, or transparent: the client on the primary shows through
-		if (p[0].frameOn && frameCopy.size() == b.size) memcpy(b.map, frameCopy.data(), b.size);
+		// the composed base under the card, or transparent: the client on the primary shows through
+		if (baseStale) shaderRecompose();
+		if (frameCopy.size() == b.size) memcpy(b.map, frameCopy.data(), b.size);
 		else memset(b.map, 0, b.size);
 		return true;
 	}
@@ -665,20 +674,77 @@ namespace banana
 		if (!canvas)
 		{
 			pn.frameOn = false;
-			std::vector<uint8_t>().swap(frameCopy);
+			std::vector<uint8_t>().swap(frameRaw);
+			shaderRecompose();
 			return true;
 		}
 		int back = pn.frameFront ^ 1;	// never the buffer the plane may scan
 		Buf& b = pn.frame[back];
 		if (!b.map && !makeBuf(b, DRM_FORMAT_ARGB8888)) return false;
-		frameCopy.resize(b.size);
+		frameRaw.resize(b.size);
 		Buf cached = b;
-		cached.map = frameCopy.data();
+		cached.map = frameRaw.data();
 		turn(canvas, cached, Damage{ 0, 0, W, H });
+		pn.frameOn = true;
+		shaderRecompose();
 		memcpy(b.map, frameCopy.data(), b.size);
 		pn.frameFront = back;
-		pn.frameOn = true;
 		return true;
+	}
+
+	// frameCopy from what is set now. The frame goes over the mask, so the mask only shows through the frame's hole.
+	void Display::shaderRecompose()
+	{
+		baseStale = false;
+		bool mask = maskMode != SHADER_MASK_OFF && !maskCopy.empty();
+		bool frame = p[0].frameOn && !frameRaw.empty();
+		if (!mask && !frame) { std::vector<uint8_t>().swap(frameCopy); return; }
+		if (!mask) { frameCopy = frameRaw; return; }
+		frameCopy.resize(maskCopy.size());
+		maskCompose((uint32_t*)frameCopy.data(), frame ? (const uint32_t*)frameRaw.data() : nullptr,
+		            (const uint32_t*)maskCopy.data(), maskCopy.size() / 4, maskPct);
+	}
+
+	// the mask changed under a frame on screen: bake it into the hidden frame buffer, for frameFb() to name
+	void Display::shaderRebakeFrame()
+	{
+		shaderRecompose();
+		Panel& pn = p[0];
+		if (!pn.frameOn || frameCopy.empty()) return;
+		int back = pn.frameFront ^ 1;
+		Buf& b = pn.frame[back];
+		if ((!b.map && !makeBuf(b, DRM_FORMAT_ARGB8888)) || b.size != frameCopy.size()) return;
+		memcpy(b.map, frameCopy.data(), b.size);
+		pn.frameFront = back;
+	}
+
+	bool Display::shaderSetMask(ShaderMask m, const MaskGeom& g)
+	{
+		if (fd < 0 || count <= 0 || !p[0].atomic || m >= SHADER_MASK_COUNT) return false;
+		Panel& pn = p[0];
+		if (m == SHADER_MASK_OFF)
+		{
+			maskMode = m;
+			std::vector<uint8_t>().swap(maskCopy);
+			shaderRebakeFrame();
+			return true;
+		}
+		int back = pn.maskFront ^ 1;	// never the buffer the plane may scan
+		Buf& b = pn.mask[back];
+		if (!b.map && !makeBuf(b, DRM_FORMAT_ARGB8888)) return false;
+		maskCopy.resize(b.size);
+		maskFill((uint32_t*)maskCopy.data(), b.pitch / 4, W, H, rot, m, g);
+		memcpy(b.map, maskCopy.data(), b.size);
+		pn.maskFront = back;
+		maskMode = m;
+		shaderRebakeFrame();
+		return true;
+	}
+
+	void Display::shaderSetIntensity(int pct)
+	{
+		maskPct = std::min(100, std::max(0, pct));
+		baseStale = true;
 	}
 
 	uint32_t Display::frameFb() const
@@ -688,7 +754,14 @@ namespace banana
 
 	bool Display::showMenu()
 	{
-		return commitFrame(p[0], p[0].black.fb, SW, SH, p[0].buf[p[0].front].fb);
+		return commitMenu(p[0], p[0].buf[p[0].front].fb);
+	}
+
+	// the menu on the overlay above a black primary, or on the primary under the mask
+	bool Display::commitMenu(Panel& pn, uint32_t menuFb)
+	{
+		uint32_t m = maskFb();
+		return m ? commitFrame(pn, menuFb, SW, SH, m) : commitFrame(pn, pn.black.fb, SW, SH, menuFb);
 	}
 
 	bool Display::blank()

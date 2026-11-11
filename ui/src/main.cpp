@@ -1498,6 +1498,19 @@ int main(int argc, char** argv)
 		disp.setWarmth(v == "warmer" ? 2 : v == "warm" ? 1 : 0);
 	};
 	nightLight();
+	// the system shader's saved mask and colour, set before the first flip like the night light
+	std::function<void()> shaderApply = [&]() {
+		auto conf = [&](const char* k, const char* d) {
+			return getConfValue(o.data + "/settings.conf", k, getConfValue("/etc/banana/settings.conf", k, d));
+		};
+		std::string m = conf("shader_mask", "off"), c = conf("shader_color", "bypass");
+		disp.shaderSetIntensity(atoi(conf("shader_mask_intensity", "50").c_str()));
+		disp.shaderSetMask(m == "crt240" ? SHADER_MASK_CRT_240P : m == "aperture" ? SHADER_MASK_APERTURE_GRILLE :
+		                   m == "lcd" ? SHADER_MASK_LCD_GRID : SHADER_MASK_OFF, MaskGeom());
+		disp.shaderSetColor(c == "trinitron" ? COLOR_PROFILE_TRINITRON_9300K : c == "pvm" ? COLOR_PROFILE_PVM_6500K :
+		                    c == "handheld" ? COLOR_PROFILE_HANDHELD_LCD : COLOR_PROFILE_BYPASS);
+	};
+	shaderApply();
 	settingsView.setPanelHeight(canvasH);
 	settingsView.searchCount = [&](const std::string& q) { return lib.countMatches(q); };
 	settingsView.setVariant(menuTheme());
@@ -2532,6 +2545,7 @@ int main(int argc, char** argv)
 							comp.stop();
 							disp.close();
 							for (int tries = 0; !disp.openSingle(o.top, err) && tries < 50; tries++) sleepUs(20000);
+							shaderApply();	// close() let go of the mask's buffers
 							if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
 						}
 						std::lock_guard<std::mutex> l(worker.uiLock);
