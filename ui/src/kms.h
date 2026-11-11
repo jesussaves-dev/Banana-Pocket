@@ -7,6 +7,7 @@
 // 1080x1240 while the menu draws 1240x1080: the rotation happens once, in software, in turn() (90 degrees
 // clockwise). The Wayland output of a future game client is the logical 1240x1080; its game frame would be
 // rotated by the same 90 degrees. Without an overlay/atomic KMS the old single-plane path is kept.
+#include "shader_mask.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -81,6 +82,9 @@ namespace banana
 		// the night light: 0 off, 1 warm, 2 warmer. A gamma LUT on the panel, so it covers a game too (set from the
 		// menu, which holds the master; the kernel keeps the LUT across the compositor hand-over)
 		void setWarmth(int level);
+		// the panel's colour matrix and curve. Outside the flip path: it builds the blobs and the next commit carries
+		// them. False when this driver has no colour management or a blob could not be made.
+		bool shaderSetColor(ColorProfile c);
 		// Phase 3B: the DRM fd (the compositor imports a client's DMA-BUF on it), whether the atomic overlay path
 		// is in use, and the two compositor frames. presentGame() puts a client's framebuffer on the primary and
 		// hides the menu overlay; showMenu() puts the menu back. Both honor the one-flip-in-flight rule.
@@ -117,9 +121,13 @@ namespace banana
 			uint64_t zpos_max = 0;
 			bool zpos_mutable = false, has_alpha = false, has_blend = false;
 		};
+		// the blobs the next commit attaches. Old ids wait in retired until the next rebuild, never freed mid-commit.
+		struct ColorState { uint32_t ctm = 0, lut = 0, retired[2] = {}; bool dirty = false; };
 		struct Panel
 		{
 			uint32_t conn = 0, crtc = 0;
+			uint32_t crtc_ctm = 0, crtc_gamma_lut = 0, lut_size = 0;	// lut_size 0: no atomic colour on this CRTC
+			ColorState color;
 			uint8_t mode[68] = { 0 };
 			Buf buf[2];		// the menu, ARGB8888 (atomic overlay) or XRGB8888 (legacy primary)
 			Buf card[2];	// the 3D card layer, ARGB8888 over a client on the primary (atomic only)
@@ -136,11 +144,15 @@ namespace banana
 		};
 		int fd = -1, W = 0, H = 0, pending = 0, count = 1;
 		AtomicBuf atomicBuf;	// the flip path's request, reused every frame
+		static constexpr unsigned kMaxLut = 1024;
+		drm_color_lut lutScratch[kMaxLut];	// colorRebuild's staging, so a rebuild allocates only the kernel's blobs
+		ColorProfile colorProfile = COLOR_PROFILE_BYPASS;
 		int rot = 0, SW = 0, SH = 0;	// the panel's rotation, and its size in its own rows (the scanout buffers')
 		Panel p[2];
 		std::vector<uint8_t> frameCopy;	// the turned frame in cached memory: reading the uncached dumb buffer per card is slow
 		void turn(const uint32_t* src, Buf& bf, const Damage& d);
 		void applyGamma();
+		bool colorRebuild(Panel& pn);
 		int warmth = 0;
 		bool makeBuf(Buf& b, uint32_t fourcc);
 		void freeBuf(Buf& b);

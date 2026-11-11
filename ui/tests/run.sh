@@ -23,7 +23,7 @@ ${CXX:-c++} -O2 -std=c++17 -Wno-unused-function $(pkg-config --cflags libdrm 2>/
     { echo "FAIL: can't build shader-mask-test (see $OUT/shader-mask-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/shader-mask-test" > "$OUT/shader-mask.log" 2>&1 || { echo "FAIL: shader-mask-test"; cat "$OUT/shader-mask.log"; fail=1; }
 # the zero-heap atomic request (src/kms.h): the kernel's object groups and counts must come out as it reads them
-${CXX:-c++} -O2 -std=c++17 -I"$HERE/src" -o "$OUT/atomic-buf-test" "$HERE/tests/atomic-buf-test.cpp" 2> "$OUT/atomic-buf-build.log" ||
+${CXX:-c++} -O2 -std=c++17 -I"$HERE/src" $(pkg-config --cflags libdrm 2>/dev/null) -o "$OUT/atomic-buf-test" "$HERE/tests/atomic-buf-test.cpp" 2> "$OUT/atomic-buf-build.log" ||
     { echo "FAIL: can't build atomic-buf-test (see $OUT/atomic-buf-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/atomic-buf-test" > "$OUT/atomic-buf.log" 2>&1 || { echo "FAIL: atomic-buf-test"; cat "$OUT/atomic-buf.log"; fail=1; }
 # the Phase 3B buffer rules: the one format/modifier/plane pair the compositor accepts (linear, one plane)

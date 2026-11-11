@@ -228,6 +228,12 @@ namespace banana
 		addp(pn.conn, propId(pn.conn, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID"), pn.crtc);
 		addp(pn.crtc, propId(pn.crtc, DRM_MODE_OBJECT_CRTC, "MODE_ID"), pn.mode_blob);
 		addp(pn.crtc, propId(pn.crtc, DRM_MODE_OBJECT_CRTC, "ACTIVE"), 1);
+		// the LUT is always attached: it keeps the DSPP reserved, so the CTM can come and go without a modeset
+		if (pn.lut_size && colorRebuild(pn))
+		{
+			addp(pn.crtc, pn.crtc_ctm, pn.color.ctm);
+			addp(pn.crtc, pn.crtc_gamma_lut, pn.color.lut);
+		}
 		addPlane(pn.primary, pn.black.fb, false);
 		addPlane(pn.overlay, pn.buf[pn.front].fb, true);
 		int ret = drmModeAtomicCommit(fd, r, DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
@@ -328,6 +334,15 @@ namespace banana
 			p[0].atomic = atomic;
 			if (atomic)
 			{
+				uint64_t size = 0;
+				p[0].crtc_ctm = propId(p[0].crtc, DRM_MODE_OBJECT_CRTC, "CTM");
+				p[0].crtc_gamma_lut = propId(p[0].crtc, DRM_MODE_OBJECT_CRTC, "GAMMA_LUT");
+				if (p[0].crtc_gamma_lut && propId(p[0].crtc, DRM_MODE_OBJECT_CRTC, "GAMMA_LUT_SIZE", &size) &&
+				    size >= 2 && size <= kMaxLut)
+					p[0].lut_size = (uint32_t)size;
+			}
+			if (atomic)
+			{
 				if (drmModeCreatePropertyBlob(f, &p[0].mode, sizeof p[0].mode, &p[0].mode_blob) ||
 				    !makeBuf(p[0].buf[0], DRM_FORMAT_ARGB8888) || !makeBuf(p[0].buf[1], DRM_FORMAT_ARGB8888) ||
 				    !makeBuf(p[0].black, DRM_FORMAT_XRGB8888) || !makeBuf(p[0].card[0], DRM_FORMAT_ARGB8888) ||
@@ -401,8 +416,44 @@ namespace banana
 		applyGamma();
 	}
 
+	bool Display::shaderSetColor(ColorProfile c)
+	{
+		if (c >= COLOR_PROFILE_COUNT) return false;
+		colorProfile = c;
+		if (fd < 0 || !p[0].atomic || !p[0].lut_size) return false;
+		return colorRebuild(p[0]);
+	}
+
+	// The panel's colour as fresh blobs for the next commit to attach. Always new ids: the kernel only reprograms the
+	// DSPP when the blob id changes, and neither the modeset after a wake nor the flip after it may be skipped.
+	bool Display::colorRebuild(Panel& pn)
+	{
+		if (fd < 0 || !pn.lut_size) return false;
+		ColorState& c = pn.color;
+		for (uint32_t& id : c.retired)
+		{
+			if (id) drmModeDestroyPropertyBlob(fd, id);
+			id = 0;
+		}
+		c.retired[0] = c.ctm;
+		c.retired[1] = c.lut;
+		c.ctm = c.lut = 0;
+		colorLutFill(lutScratch, pn.lut_size, colorProfile, warmth);
+		bool ok = drmModeCreatePropertyBlob(fd, lutScratch, pn.lut_size * sizeof(drm_color_lut), &c.lut) == 0;
+		if (ok && colorProfile != COLOR_PROFILE_BYPASS && pn.crtc_ctm)
+		{
+			drm_color_ctm m;
+			memcpy(m.matrix, kColorCtm[colorProfile], sizeof m.matrix);
+			ok = drmModeCreatePropertyBlob(fd, &m, sizeof m, &c.ctm) == 0;
+		}
+		if (!ok) fprintf(stderr, "kms: colour: can't make a blob (%s)\n", strerror(errno));
+		c.dirty = true;
+		return ok;
+	}
+
 	// the night light: a linear ramp with green and blue pulled down, on every CRTC. Level 0 is the plain ramp, so
 	// turning it off restores the panel's own look; the LUT is after the planes, so a game's frame is tinted too.
+	// An atomic panel takes it as a GAMMA_LUT blob on the next commit: the legacy call below would clear the CTM.
 	void Display::applyGamma()
 	{
 		if (fd < 0) return;
@@ -410,6 +461,7 @@ namespace banana
 		double kb = warmth >= 2 ? 0.65 : warmth == 1 ? 0.82 : 1.0;
 		for (int s = 0; s < count; s++)
 		{
+			if (p[s].atomic && p[s].lut_size) { colorRebuild(p[s]); continue; }
 			drmModeCrtc* c = drmModeGetCrtc(fd, p[s].crtc);
 			if (!c) continue;
 			unsigned n = c->gamma_size;
@@ -439,6 +491,9 @@ namespace banana
 			freeBuf(pn.frame[0]); freeBuf(pn.frame[1]);
 			pn.frameOn = false;
 			if (pn.mode_blob) { drmModeDestroyPropertyBlob(fd, pn.mode_blob); pn.mode_blob = 0; }
+			for (uint32_t id : { pn.color.ctm, pn.color.lut, pn.color.retired[0], pn.color.retired[1] })
+				if (id) drmModeDestroyPropertyBlob(fd, id);
+			pn.color = ColorState();
 		}
 		::close(fd);
 		fd = -1;
@@ -460,7 +515,12 @@ namespace banana
 			pn.missed[back] = Damage();
 			d.x0 = std::max(d.x0, 0); d.y0 = std::max(d.y0, 0);
 			d.x1 = std::min(d.x1, W); d.y1 = std::min(d.y1, H);
-			if (d.empty()) continue;
+			if (d.empty())
+			{
+				// nothing to draw, but new colour blobs still need a commit to reach the panel
+				if (pn.atomic && pn.color.dirty && commitFrame(pn, pn.black.fb, SW, SH, pn.buf[pn.front].fb)) any = true;
+				continue;
+			}
 			Buf& bf = pn.buf[back];
 			if (rot)
 				turn(screens[s], bf, d);
@@ -535,6 +595,11 @@ namespace banana
 		};
 		addPlane(pn.primary, primaryFb, srcW, srcH, primaryFb != 0, fenceFd);
 		addPlane(pn.overlay, overlayFb, SW, SH, overlayFb != 0, -1);
+		if (pn.color.dirty)
+		{
+			addp(pn.crtc, pn.crtc_ctm, pn.color.ctm);
+			addp(pn.crtc, pn.crtc_gamma_lut, pn.color.lut);
+		}
 		if (r.overflow)
 		{
 			fprintf(stderr, "kms: atomic request did not fit (%d properties in %d objects)\n", r.n, r.groups);
@@ -556,6 +621,7 @@ namespace banana
 			fprintf(stderr, "kms: atomic commit failed: ret=%d errno=%s\n", ret, strerror(errno));
 			return false;
 		}
+		pn.color.dirty = false;
 		pending++;
 		return true;
 	}
