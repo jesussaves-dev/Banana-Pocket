@@ -2,6 +2,7 @@
 // the patterns, the rotation and the composed base are unit-tested without a display (ui/tests/shader-mask-test.cpp)
 // and `Display` only has to hand the result to KMS. See docs/PLAN: the system-wide shader plan.
 #pragma once
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -104,13 +105,36 @@ namespace banana
 		g.originY = holeY;
 		int scale = 0;
 		const char* id = systemId ? systemId : "";
-		if (!strcmp(id, "gb") || !strcmp(id, "gbc")) scale = 7;
-		else if (!strcmp(id, "gba")) scale = 5;
-		else if (!strcmp(id, "pico8")) scale = 8;
-		else if (integerScaled && holeW > 0 && holeW % 320 == 0) scale = holeW / 320;
-		else if (integerScaled && holeW > 0 && holeW % 256 == 0) scale = holeW / 256;
+		if (integerScaled)
+		{
+			if (!strcmp(id, "gb") || !strcmp(id, "gbc")) scale = 7;
+			else if (!strcmp(id, "gba")) scale = 5;
+			else if (!strcmp(id, "pico8")) scale = 8;
+			else if (holeW > 0 && holeW % 320 == 0) scale = holeW / 320;
+			else if (holeW > 0 && holeW % 256 == 0) scale = holeW / 256;
+		}
 		g.rowPeriod = g.gridPeriod = scale > 0 ? scale : 4;	// unknown content: 4x, the pattern will not line up
 		return g;
+	}
+
+	// where an integer-scaled game with no frame sits: its native size at the largest whole scale, centred. Only the
+	// systems whose picture has one fixed size; false for the rest, whose mask cannot line up.
+	inline bool maskIntegerHole(const char* systemId, int W, int H, int& x, int& y, int& w)
+	{
+		static const struct { const char* id; int w, h; } kNative[] = {
+			{ "gb", 160, 144 }, { "gbc", 160, 144 }, { "gba", 240, 160 }, { "pico8", 128, 128 }, { "snes", 256, 224 },
+		};
+		for (const auto& n : kNative)
+		{
+			if (!systemId || strcmp(systemId, n.id)) continue;
+			int scale = std::min(W / n.w, H / n.h);
+			if (scale < 1) return false;
+			w = n.w * scale;
+			x = (W - w) / 2;
+			y = (H - n.h * scale) / 2;
+			return true;
+		}
+		return false;
 	}
 
 	// the overlay plane's alpha for the slider's percent, in 16.16

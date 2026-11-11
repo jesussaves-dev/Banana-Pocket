@@ -133,6 +133,19 @@ static void testGeom()
 	CHECK(g.rowPeriod == 4 && g.originX == 100 && g.originY == 90, "unknown geom");
 	g = maskGeomFor(nullptr, 7, 8, 9, true);
 	CHECK(g.rowPeriod == 4 && g.originX == 7 && g.originY == 8, "null id geom");
+	// a known system that is not integer scaled (the Banana frame turns it off): its source pixels are not 7 wide
+	g = maskGeomFor("gb", 40, 30, 1000, false);
+	CHECK(g.rowPeriod == 4 && g.gridPeriod == 4 && g.originX == 40 && g.originY == 30, "gb not integer scaled");
+
+	// no frame and integer scaling: where the game sits on the 1240x1080 panel
+	int x = -1, y = -1, w = -1;
+	CHECK(maskIntegerHole("gb", 1240, 1080, x, y, w) && x == 60 && y == 36 && w == 1120, "gb hole %d,%d %d", x, y, w);
+	CHECK(maskIntegerHole("gbc", 1240, 1080, x, y, w) && x == 60 && y == 36 && w == 1120, "gbc hole %d,%d %d", x, y, w);
+	CHECK(maskIntegerHole("gba", 1240, 1080, x, y, w) && x == 20 && y == 140 && w == 1200, "gba hole %d,%d %d", x, y, w);
+	CHECK(maskIntegerHole("pico8", 1240, 1080, x, y, w) && x == 108 && y == 28 && w == 1024, "pico8 hole %d,%d %d", x, y, w);
+	CHECK(maskIntegerHole("snes", 1240, 1080, x, y, w) && x == 108 && y == 92 && w == 1024, "snes hole %d,%d %d", x, y, w);
+	CHECK(!maskIntegerHole("psx", 1240, 1080, x, y, w), "psx's size depends on its core and the game");
+	CHECK(!maskIntegerHole("", 1240, 1080, x, y, w), "no system, no hole");
 }
 
 static void testColor()
