@@ -2318,6 +2318,12 @@
 };
 
 &soc {
+	/* AOP's sleep counters: how often AOSS, CX and DDR really slept, and each subsystem's own (debugfs qcom_stats) */
+	sram@c3f0000 {
+		compatible = "qcom,rpmh-stats";
+		reg = <0x0 0x0c3f0000 0x0 0x400>;
+	};
+
 	usb_1_qmpphy: phy@88e8000 {
 		compatible = "qcom,sm4450-qmp-usb3-dp-phy",
 			     "qcom,sm8350-qmp-usb3-dp-phy";
