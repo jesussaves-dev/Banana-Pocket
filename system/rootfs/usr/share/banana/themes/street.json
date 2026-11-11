@@ -174,9 +174,10 @@
         { "type": "text", "x": 76, "y": 5, "w": 150, "text": "{sys.name}", "size": 10, "color": "=gold" },
         { "type": "text", "right": 42, "y": 7, "w": 40, "align": "right", "text": "{cursor + 1}/{count}", "size": 8, "color": "=paper" },
 
-        // the box on the counter
+        // the box on the counter: the whole picture, whatever its shape (Game Boy boxes are square, Super NES ones
+        // wide), centred on the box's dark backing
         { "type": "rect", "x": 10, "y": 30, "w": 86, "h": 108, "fill": "=ink" },
-        { "type": "image", "src": "{game.art}", "fallback": "{sys.icon}", "fit": "cover", "x": 12, "y": 32, "w": 82, "h": 104, "placeholder": "=awnC" },
+        { "type": "image", "src": "{game.art}", "fallback": "{sys.icon}", "fit": "contain", "x": 12, "y": 32, "w": 82, "h": 104 },
         { "type": "text", "x": 10, "w": 86, "y": 70, "align": "center", "text": "{empty.title}", "size": 8, "color": "=paper", "visible": "=empty" },
 
         // the receipt: what the shelf knows about the game
