@@ -19,7 +19,7 @@ int main()
 	CHECK(r.groups == 2, "groups %d", r.groups);
 	CHECK(r.n == 3, "n %d", r.n);
 	CHECK(r.counts[0] == 2 && r.counts[1] == 1, "counts %u,%u", r.counts[0], r.counts[1]);
-	CHECK(r.objs[0] == 38 && r.objs[1] == 38 && r.objs[2] == 44, "objs");
+	CHECK(r.objs[0] == 38 && r.objs[1] == 44, "objs is one id per group, the kernel's layout: %u,%u", r.objs[0], r.objs[1]);
 	CHECK(r.props[0] == 10 && r.props[1] == 11 && r.props[2] == 20, "props");
 	CHECK(r.vals[0] == 0xAAAA && r.vals[2] == 0xCCCC, "values");
 	CHECK(!r.overflow, "unexpected overflow");

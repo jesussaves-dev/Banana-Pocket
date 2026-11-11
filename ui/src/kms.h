@@ -33,7 +33,7 @@ namespace banana
 	struct AtomicBuf
 	{
 		static constexpr int kMaxProps = 32, kMaxGroups = 8;
-		uint32_t objs[kMaxProps] = {}, counts[kMaxGroups] = {}, props[kMaxProps] = {};
+		uint32_t objs[kMaxGroups] = {}, counts[kMaxGroups] = {}, props[kMaxProps] = {};
 		uint64_t vals[kMaxProps] = {};
 		int n = 0, groups = 0;
 		uint32_t last = 0;
@@ -44,9 +44,9 @@ namespace banana
 			if (!prop) return;	// the plane has no such property: nothing to set
 			if (n >= kMaxProps) { overflow = true; return; }
 			if (groups && obj == last) counts[groups - 1]++;
-			else if (groups < kMaxGroups) counts[groups++] = 1;
+			else if (groups < kMaxGroups) { objs[groups] = obj; counts[groups++] = 1; }
 			else { overflow = true; return; }
-			objs[n] = obj; props[n] = prop; vals[n] = v; n++;
+			props[n] = prop; vals[n] = v; n++;
 			last = obj;
 		}
 	};
