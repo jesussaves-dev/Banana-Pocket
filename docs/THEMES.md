@@ -71,6 +71,12 @@ The Retroid Pocket Classic has **one** screen: the canvas is 640 units wide and 
 (the 1240 px panel at 310 is exactly 4), so with `crisp` every art pixel is the same size, and the height is what the
 panel leaves (270). `W` and `H` read the real size. `street.json` (Banana Street) uses it.
 
+`"style": "snes"` puts a theme under SNES in Settings > Style (the default is `classic`). An SNES theme's Settings,
+search keyboard and pause menu are drawn by the menu's own SNES painter on the same 310 grid, over the panels in its
+`"workshop"` folder (next to the .json): `workshop.png`, `drawer.png`, `drawer-on.png` and `sheet.png` for Settings,
+`book.png` for the keyboard and `ticket.png` for the pause menu. `tools/gen-street.py` makes Banana Street's; its
+colours come from the theme's `vars` (`ink`, `paper`, `paperLo`, `gold`, `dk`, `awnA`).
+
 ## Values: literals, expressions, templates
 
 Any property can be:

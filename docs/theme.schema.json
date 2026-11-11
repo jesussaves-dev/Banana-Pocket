@@ -12,7 +12,7 @@
     },
     "workshop": {
       "type": "string",
-      "description": "An SNES-style theme's Settings art: a folder (next to the .json) with workshop.png, drawer.png, drawer-on.png and sheet.png, drawn on a 310-wide grid (tools/gen-street.py makes them)."
+      "description": "An SNES-style theme's Settings art: a folder (next to the .json) with workshop.png, drawer.png, drawer-on.png and sheet.png (Settings), book.png (the keyboard: search, passwords) and ticket.png (the pause menu), drawn on a 310-wide grid (tools/gen-street.py makes them)."
     },
     "style": {
       "type": "string",

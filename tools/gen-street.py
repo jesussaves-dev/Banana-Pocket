@@ -406,6 +406,42 @@ def sheet(p):
     return c
 
 
+def book(p):
+    """Search and typing in the SNES style: the phone book, open on the pegboard; a red cover round a ruled page."""
+    w, h = 302, 224
+    c = Canvas(w + 3, h + 3, p)
+    c.R(3, 3, w, h, "shadow", .5)
+    c.R(0, 0, w, h, "ink")
+    for r in range(h - 2): c.R(1, 1 + r, w - 2, 1, "awnA" + ("1" if r < 2 else "2" if r < h - 6 else "3"))
+    c.R(1, 1, w - 2, 1, "awnA0")
+    c.vgrad(5, 4, w - 10, h - 9, "paper0", "paper2")
+    c.R(5, h - 5, w - 10, 1, "paper3")
+    for y in range(32, h - 8, 26): c.R(8, y, w - 16, 1, "paper2")
+    for i in range(8, w - 8, 3): c.R(i, 27, 2, 1, "ink")
+    return c
+
+
+def ticket(p):
+    """The pause menu in the SNES style: a ticket. The stub's rows on the left, a perforation, the picture on the right;
+    a red band with the game across the top and a dark one for the buttons along the bottom."""
+    w, h, cut = 302, 262, 184
+    c = Canvas(w, h, p)
+    c.R(0, 0, w, h, "ink")
+    c.vgrad(1, 1, w - 2, h - 2, "paper0", "paper2")
+    for r in range(22): c.R(1, 1 + r, w - 2, 1, "awnA" + ("0" if r < 1 else "1" if r < 3 else "2" if r < 19 else "3"))
+    c.R(1, 23, w - 2, 1, "ink")
+    c.R(1, h - 22, w - 2, 1, "ink")
+    c.vgrad(1, h - 21, w - 2, 20, "dk2", "dk4")
+    for i in range(4, w - 4, 4): c.R(i, 26, 2, 1, "awnA2"); c.R(i, h - 25, 2, 1, "awnA2")
+    for y in range(30, h - 28, 4): c.R(cut, y, 1, 2, "dk2")
+    for k in range(4):	# the punched notches where the perforation meets the edges
+        hw = (4, 4, 3, 2)[k]
+        c.R(cut - hw + 1, k, hw * 2 - 1, 1, "ink"); c.R(cut - hw + 1, h - 1 - k, hw * 2 - 1, 1, "ink")
+    # the picture's frame
+    c.R(191, 31, 104, 80, "ink"); c.R(192, 32, 102, 78, "dk3")
+    return c
+
+
 def row(p, sel):
     w, h = (198, 17) if sel else (192, 15)
     c = Canvas(w, h, p)
@@ -432,6 +468,7 @@ def main():
             for k, c in files.items(): c.save(os.path.join(d, k + ".png")); n += 1
         p = palette(base, "day")
         for k, c in {"workshop": workshop(p), "drawer": drawer(p, False), "drawer-on": drawer(p, True), "sheet": sheet(p),
+                     "book": book(p), "ticket": ticket(p),
                      "hud": panel(p, 310, 46), "chip52": panel(p, 52, 14), "chip34": panel(p, 34, 14), "interior": interior(p),
                      "row": row(p, False), "rowsel": row(p, True)}.items():
             c.save(os.path.join(out, k + ".png")); n += 1

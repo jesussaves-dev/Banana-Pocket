@@ -381,6 +381,19 @@ for size in 640x557; do
     grep -q '^night_light = warm' "$FX/data/settings.conf" || { echo "FAIL $size: the workshop's Night light didn't save: $(grep '^night_light' "$FX/data/settings.conf")"; fail=1; }
     sed -i '/^night_light *=/d' "$FX/data/settings.conf"
     golden "street-workshop" "$OUT/$size-street-workshop.png"
+    # its keyboard is the phone book and its pause menu the ticket. Type q, w, then Shift and S; a tap on the page's E
+    # key (row 1, col 2: 84,97 on the 310 grid, 173,200 in layout px) types it, so the page's keys are where taps land.
+    # Then B deletes the E: "qwS" is left, and START looks it up.
+    sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/street.json|" "$FX/data/settings.conf"
+    BANANA_PHASE=dusk "$HERE/banana-ui" --headless "$OUT/$size-street-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+        --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "home 0; wait 600; search; wait 200; press a; press right; press a; press x; press down; press a; touch 173 200; wait 100; shot phonebook; press b; press start; wait 300; pause ticket 1" \
+        2>> "$stlog" || { echo "FAIL $size: banana-ui (phone book) exited $?"; fail=1; }
+    sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    grep -q 'search "qwS":' "$stlog" || { echo "FAIL $size: the phone book's search: $(grep 'search' "$stlog" | tail -2)"; fail=1; }
+    grep -q 'pause ticket: card 16,16 1208x1048' "$stlog" || { echo "FAIL $size: the ticket's card: $(grep 'pause ticket' "$stlog")"; fail=1; }
+    golden "street-phonebook" "$OUT/$size-street-phonebook.png"
+    golden "street-ticket" "$OUT/$size-street-ticket.png"
     # The one panel offers the layout themes only: a colour theme (Dark/Light) is forced to the Pocket layout there,
     # so they were rows that changed nothing. From a stored dark the Theme row reads Pocket, and stepping right
     # picks the next layout (not Light) -- which the value it writes proves.

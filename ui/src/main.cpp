@@ -612,6 +612,9 @@ int main(int argc, char** argv)
 			osdLabel = kind == "brightness" ? "Brightness" : "Volume";
 			osdPercent = atoi(body.c_str());
 			osdUntil = nowMs() + ms;
+			// in the menu this record is the pill's own news: the SIGUSR2 that follows it only reaches a process named
+			// banana-ui, and without a redraw here the pill waited for the next frame something else asked for
+			dirty = true;
 		}
 		else
 			settingsView.notify(title, body, 0, badge);

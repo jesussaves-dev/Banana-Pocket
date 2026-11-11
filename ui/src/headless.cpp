@@ -286,6 +286,37 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 			if (!save(o.headless + name + ".png")) return 1;
 			logf("splash %s at %.0f ms (frame %.2f ms)", name.c_str(), t, s1 - s0);
 		}
+		else if (op == "pause")
+		{
+			// pause <name> <sel> [armed]: the pause menu as a RetroArch game's, over a cleared screen (the overlay
+			// card), the game's box art in the picture
+			std::string name; int sel = 0, armed = -1;
+			cs >> name >> sel >> armed;
+			Settings::PauseView v;
+			v.title = lib.gameCount() ? lib.gameAt(0).title : "Game";
+			v.status = "85%   4:37 PM   12m";
+			for (const char* r : { "Resume", "Save state", "Load state", "Fast-forward", "Shader", "Frame", "Achievements", "Restart game", "RetroArch menu", "Quit game" })
+			{
+				Settings::PauseRow pr;
+				pr.label = r;
+				if (!strcmp(r, "Save state") || !strcmp(r, "Load state")) { pr.value = "Slot 1"; pr.arrows = true; }
+				else if (!strcmp(r, "Fast-forward")) pr.value = "Off";
+				else if (!strcmp(r, "Frame")) { pr.value = "Console"; pr.arrows = true; }
+				else if (!strcmp(r, "Achievements")) pr.value = "3/24";
+				v.rows.push_back(pr);
+			}
+			v.sel = sel; v.armed = armed;
+			v.picture = lib.gameCount() ? lib.gameAt(0).box : "";
+			v.caption = "Slot 1   Empty";
+			v.lines = { "First Steps", "Coin Collector" };
+			be.beginScreen();
+			settings.pauseMenu(v);
+			be.endScreen();
+			if (!save(o.headless + name + ".png")) return 1;
+			int cx = 0, cy = 0, cw = 0, ch = 0;
+			settings.cardRect(cx, cy, cw, ch);
+			logf("pause %s: card %d,%d %dx%d", name.c_str(), cx, cy, cw, ch);
+		}
 		else if (op == "boot")
 		{
 			logf("boot-metrics: scan %.1f ms, menu %.1f ms, first-frame %.1f ms (canvas %dx%d)", bootScan, bootMenu, bootFrame, o.w, o.h);

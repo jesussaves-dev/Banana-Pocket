@@ -128,8 +128,13 @@ namespace banana
 		float u = 4;
 		std::string bananaDir, snesArt;
 		std::shared_ptr<rnds::Font> B;
-		rnds::Color sInk, sPaper, sGold, sDim, sMuted;
+		rnds::Color sInk, sPaper, sGold, sDim, sMuted, sRed;
 		void renderWorkshop();
+		void renderPhoneBook();					// the keyboard (search, passwords) as the phone book, book.png
+		void renderTicket(const PauseView& v);	// the pause menu as a ticket, ticket.png
+		bool phoneBookTouch(float x, float y, int& row, int& col, int& button);	// x, y in the 640 space
+		void sWrap(const std::string& t, float x, float y, float width, int lines, const rnds::Color& c);
+		void sArrows(float right, float y, float valueW, const rnds::Color& c);
 		std::string rowHelp();			// the selected row's help (some say where things are now)
 		std::string rowValue(int i);	// what row i shows on its right, untranslated
 		float sText(const std::string& t, float x, float y, const rnds::Color& c, bool measureOnly = false);

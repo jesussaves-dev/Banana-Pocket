@@ -247,7 +247,7 @@ namespace banana
 				return Color(((x >> 16) & 255) / 255.0f, ((x >> 8) & 255) / 255.0f, (x & 255) / 255.0f, 1);
 			};
 			sInk = col("ink", 0x2b1a33); sPaper = col("paper", 0xfff3cf); sGold = col("gold", 0xffd21e);
-			sDim = col("dk", 0x5a3a4a); sMuted = col("paperLo", 0xd8c49a);
+			sDim = col("dk", 0x5a3a4a); sMuted = col("paperLo", 0xd8c49a); sRed = col("awnA", 0xc8382d);
 		}
 	}
 
@@ -1315,6 +1315,7 @@ namespace banana
 
 	void Settings::pauseMenu(const PauseView& v)
 	{
+		if (snes) { renderTicket(v); return; }
 		SPal p = pal(light);
 		const float x0 = 12, y0 = 12, w = 616, h = 533;
 		rememberCard(x0, y0, w, h);
@@ -1564,7 +1565,7 @@ namespace banana
 	void Settings::render()
 	{
 		if (page == NETWORKS) { renderNetworks(); return; }
-		if (page == KEYBOARD) { renderKeyboard(); return; }
+		if (page == KEYBOARD) { if (snes) renderPhoneBook(); else renderKeyboard(); return; }
 		if (page == UPDATES) { renderUpdates(); return; }
 		if (page == SETUP) { renderSetup(); return; }
 		if (page == STATES) { renderStates(); return; }
@@ -1916,6 +1917,10 @@ namespace banana
 		for (int i = 0; i < 5; i++) if (col >= FKEYS[i].c0 && col < FKEYS[i].c0 + FKEYS[i].span) return i;
 		return 0;
 	}
+	// for the SNES phone book's painter (settings_snes.cpp): the same keys
+	const char* keyboardRow(int layer, int row) { return KEYS[layer][row]; }
+	void keyboardFkey(int i, const char*& name, int& c0, int& span) { name = FKEYS[i].name; c0 = FKEYS[i].c0; span = FKEYS[i].span; }
+	int keyboardFkeyAt(int col) { return fkeyAt(col); }
 	// the keyboard: the text being typed in a field at the top, the keys under it, the button chips at the bottom
 	static const float KX = 18, KPITCH = 60.4f, KY = 80, KROW = 66, KH = 50;
 
@@ -1993,6 +1998,15 @@ namespace banana
 	Settings::Result Settings::touchKeyboard(float cx, float cy)
 	{
 		(void)cx; (void)cy;
+		if (snes)
+		{
+			int row = -1, col = -1, button = 0;
+			if (!phoneBookTouch(downX, downY, row, col, button)) return NONE;
+			if (button) return pressKeyboard(button < 0 ? Key::B : Key::START);
+			krow = row;
+			kcol = row == 4 ? FKEYS[fkeyAt(col)].c0 : col;
+			return keyboardKey(row, col);
+		}
 		if (downY >= 418 && downY <= 466)
 		{
 			if (downX < 320) return pressKeyboard(Key::B);
