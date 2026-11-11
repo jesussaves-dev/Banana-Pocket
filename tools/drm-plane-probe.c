@@ -2,7 +2,7 @@
 // z-order, alpha, and which atomic combinations the driver accepts.
 //
 // It is a diagnostic for the "native DRM plane compositor" plan (docs/PLAN_DRM_COMPOSITOR.md). It never changes
-// the display: the only atomic commits it makes are DRM_MODE_ATOMIC_TEST_ONLY, which run the driver's check
+// the display unless asked to with --color: its other atomic commits are DRM_MODE_ATOMIC_TEST_ONLY, which run the driver's check
 // without touching hardware. Enumeration is safe with the menu up; the atomic matrix needs DRM master, which the
 // kernel requires for DRM_IOCTL_MODE_ATOMIC even when the commit is TEST_ONLY (drivers/gpu/drm/drm_ioctl.c:
 // DRM_IOCTL_MODE_ATOMIC is registered DRM_MASTER). The exclusive window is tools/drm-probe-window.sh.
@@ -20,6 +20,7 @@
 // run:
 //   drm-plane-probe                       enumerate (read-only; works while banana-ui runs)
 //   drm-plane-probe --take-master         also run the TEST_ONLY matrix (exclusive display only)
+//   drm-plane-probe --take-master --color real CTM and plane-alpha commits to watch (exclusive display only)
 //   drm-plane-probe --connector DSI-1 --card /dev/dri/card0
 //
 // Exit: 0 = the matrix reached a decision (GO or NO-GO); 2 = HOLD/incomplete (skipped rows, no master, no mode);
@@ -30,18 +31,21 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/utsname.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <drm_fourcc.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
-#define PROBE_VERSION "2"
+#define PROBE_VERSION "3"
 #define MAX_PLANES 64
 #define MAX_FORMATS 128
 #define MAX_ENUMS 16
@@ -121,6 +125,7 @@ static const char *conn_name(uint32_t type, uint32_t id, char out[32])
 static int fd = -1;
 static bool opt_take_master;
 static bool opt_no_atomic;
+static bool opt_color;
 static const char *opt_card;
 static const char *opt_connector;
 
@@ -745,7 +750,7 @@ static void plane_req(drmModeAtomicReq *r, const Plane *p, uint32_t fb, uint32_t
 	if (p->rot_id) addp(r, p->id, p->rot_id, rotation);
 }
 
-// the only commit in this program: TEST_ONLY. No page flip, no event, no hardware change.
+// the matrix's only commit: TEST_ONLY. No page flip, no event, no hardware change.
 static int commit_test(drmModeAtomicReq *r)
 {
 	if (!r) return ENOMEM;
@@ -952,14 +957,170 @@ static void run_atomic_tests(void)
 	printf("  matrix: %d ok, %d rejected, %d skipped\n", ok_count, reject_count, skip_count);
 }
 
+// ---- the colour gate (--color): the one part of this program that changes the display -------------------------------
+//
+// Phase 0 of the system shader plan. TEST_ONLY cannot show that a matrix reaches the panel, so this makes real commits
+// and holds each for a few seconds for someone to watch: colour bars, the bars with their colours rotated by an
+// asymmetric CTM, the bars again, then half the panel dimmed and blacked by the overlay's plane alpha. The CTM is
+// switched without ALLOW_MODESET, with a GAMMA_LUT attached as the shader will always attach one. It clears the CTM and
+// LUT before it exits, signal or not: the menu's modeset does not touch them.
+
+#define COLOR_HOLD_S 6
+
+static volatile sig_atomic_t color_stop;
+static uint32_t color_ctm_prop, color_lut_prop;
+
+static void color_signal(int s) { (void)s; color_stop = 1; }
+
+static void color_hold(void)
+{
+	struct timespec t = { COLOR_HOLD_S, 0 }, left;
+	fflush(stdout);
+	while (!color_stop && nanosleep(&t, &left) && errno == EINTR) t = left;
+}
+
+// paint: `bars` is red, green, blue across the buffer's width; otherwise the top half is opaque black over a clear rest
+static bool color_paint(const Buf *b, uint32_t w, uint32_t h, bool bars)
+{
+	struct drm_mode_map_dumb m = { 0 };
+	m.handle = b->handle;
+	if (drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &m)) return false;
+	uint8_t *px = mmap(NULL, b->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off_t)m.offset);
+	if (px == MAP_FAILED) return false;
+	for (uint32_t y = 0; y < h; y++)
+	{
+		uint32_t *row = (uint32_t *)(px + (size_t)y * b->pitch);
+		for (uint32_t x = 0; x < w; x++)
+			row[x] = bars ? (x < w / 3 ? 0xFFFF0000u : x < 2 * w / 3 ? 0xFF00FF00u : 0xFF0000FFu)
+			              : (y < h / 2 ? 0xFF000000u : 0x00000000u);
+	}
+	return munmap(px, b->size) == 0;
+}
+
+static int color_commit(uint32_t flags, const Buf *bars, const Buf *mask, uint32_t w, uint32_t h,
+                        uint64_t ctm, uint64_t lut, uint64_t alpha)
+{
+	drmModeAtomicReq *r = drmModeAtomicAlloc();
+	if (!r) return ENOMEM;
+	if (flags & DRM_MODE_ATOMIC_ALLOW_MODESET) base_req(r);
+	addp(r, target_crtc, color_ctm_prop, ctm);
+	addp(r, target_crtc, color_lut_prop, lut);
+	plane_req(r, primary, bars->fb, w, h, 0, 0, w, h, DRM_MODE_ROTATE_0);
+	set_plane_zpos(r, primary, primary_zpos);
+	if (mask)
+	{
+		plane_req(r, overlay, mask->fb, w, h, 0, 0, w, h, DRM_MODE_ROTATE_0);
+		set_plane_zpos(r, overlay, overlay_zpos);
+		addp(r, overlay->id, overlay->alpha_id, alpha);
+		addp(r, overlay->id, overlay->blend_id, BLEND_PREMULTI);
+	}
+	else
+	{
+		addp(r, overlay->id, overlay->crtc_id, 0);
+		addp(r, overlay->id, overlay->fb_id, 0);
+	}
+	errno = 0;
+	int ret = drmModeAtomicCommit(fd, r, flags, NULL);
+	int err = errno;
+	drmModeAtomicFree(r);
+	return ret ? (err ? err : EINVAL) : 0;
+}
+
+// 0 = the gate reached a decision, 2 = interrupted or could not start
+static int run_color_gate(void)
+{
+	static struct drm_color_lut lut[4096];
+	// S31.32, row-major: R' = G, G' = B, B' = R. Non-negative, since the driver drops the sign bit.
+	static const struct drm_color_ctm rotate = { { 0, 1ull << 32, 0, 0, 0, 1ull << 32, 1ull << 32, 0, 0 } };
+	const uint32_t modeset = DRM_MODE_ATOMIC_ALLOW_MODESET;
+	uint32_t w = target_mode.hdisplay, h = target_mode.vdisplay, ctm = 0, lutb = 0;
+	uint64_t lut_size = 0, half = 0x8000, full = 0xFFFF;
+	Buf bars = { 0 }, mask = { 0 };
+	bool go = true;
+	int rc = 2;
+
+	printf("\ncolour gate (real commits, %d s per step)\n", COLOR_HOLD_S);
+	color_ctm_prop = prop_id(target_crtc, DRM_MODE_OBJECT_CRTC, "CTM");
+	color_lut_prop = prop_id(target_crtc, DRM_MODE_OBJECT_CRTC, "GAMMA_LUT");
+	drmModePropertyPtr p = get_prop(target_crtc, DRM_MODE_OBJECT_CRTC, "GAMMA_LUT_SIZE", &lut_size);
+	if (p) drmModeFreeProperty(p);
+	printf("  CTM prop %u, GAMMA_LUT prop %u, GAMMA_LUT_SIZE %" PRIu64 "\n", color_ctm_prop, color_lut_prop, lut_size);
+	if (!color_ctm_prop || !color_lut_prop || lut_size < 2 || lut_size > 4096)
+	{
+		printf("COLOR GATE: NO-GO -- this CRTC has no usable CTM or GAMMA_LUT\n");
+		return 0;
+	}
+	if (!overlay || !overlay_ar24 || !overlay->alpha_id || !overlay->blend_id)
+	{
+		printf("COLOR GATE: NO-GO -- no ARGB overlay with plane alpha and blend mode\n");
+		return 0;
+	}
+
+	for (uint64_t i = 0; i < lut_size; i++)
+		lut[i].red = lut[i].green = lut[i].blue = (uint16_t)(i * 65535u / (lut_size - 1));
+	if (!buf_new(w, h, panel_fmt, &bars) || !buf_new(w, h, DRM_FORMAT_ARGB8888, &mask) ||
+	    !color_paint(&bars, w, h, true) || !color_paint(&mask, w, h, false) ||
+	    drmModeCreatePropertyBlob(fd, &rotate, sizeof rotate, &ctm) ||
+	    drmModeCreatePropertyBlob(fd, lut, (size_t)lut_size * sizeof lut[0], &lutb))
+	{
+		printf("COLOR GATE: HOLD -- cannot make the buffers or blobs: %s\n", strerror(errno));
+		goto out;
+	}
+
+	struct sigaction sa;
+	memset(&sa, 0, sizeof sa);
+	sa.sa_handler = color_signal;
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGINT, &sa, NULL);
+
+	// without a LUT the DSPP may not be reserved: what a CTM needs from cold, for the record. Not a gate.
+	if (!ok_result("modeset, no CTM, no LUT", color_commit(modeset, &bars, NULL, w, h, 0, 0, 0))) { go = false; goto clear; }
+	int cold = color_commit(DRM_MODE_ATOMIC_TEST_ONLY, &bars, NULL, w, h, ctm, 0, 0);
+	printf("  [info]   TEST_ONLY CTM from cold, no LUT, no modeset: %s\n", cold ? strerror(cold) : "accepted");
+
+	printf("  -- WATCH: red, green, blue bars\n");
+	if (!ok_result("modeset, identity LUT attached", color_commit(modeset, &bars, NULL, w, h, 0, lutb, 0))) { go = false; goto clear; }
+	color_hold();
+	printf("  -- WATCH: bars change to blue, red, green\n");
+	if (!ok_result("CTM on, no modeset", color_commit(0, &bars, NULL, w, h, ctm, lutb, 0))) { go = false; goto clear; }
+	color_hold();
+	printf("  -- WATCH: bars back to red, green, blue\n");
+	if (!ok_result("CTM off, no modeset", color_commit(0, &bars, NULL, w, h, 0, lutb, 0))) { go = false; goto clear; }
+	color_hold();
+	printf("  -- WATCH: one half of the panel at half brightness, the other unchanged\n");
+	if (!ok_result("overlay at plane alpha 50%", color_commit(0, &bars, &mask, w, h, 0, lutb, half))) go = false;
+	color_hold();
+	printf("  -- WATCH: that half black, the other unchanged\n");
+	if (!ok_result("overlay at plane alpha 100%", color_commit(0, &bars, &mask, w, h, 0, lutb, full))) go = false;
+	color_hold();
+
+clear:;
+	int cleared = color_commit(modeset, &bars, NULL, w, h, 0, 0, 0);
+	if (cleared) printf("  WARNING: could not clear the CTM and LUT (%s): reboot before trusting the colours\n", strerror(cleared));
+	if (color_stop) printf("COLOR GATE: HOLD -- interrupted\n");
+	else
+	{
+		rc = 0;
+		printf("COLOR GATE: %s\n", go ? "COMMITS ACCEPTED -- the panel must still be confirmed by eye"
+		                              : "NO-GO -- a required commit was rejected");
+	}
+out:
+	if (ctm) drmModeDestroyPropertyBlob(fd, ctm);
+	if (lutb) drmModeDestroyPropertyBlob(fd, lutb);
+	buf_free(&mask);
+	buf_free(&bars);
+	return rc;
+}
+
 // ---- main ---------------------------------------------------------------------------------------------------------
 
 static void usage(void)
 {
 	fprintf(stderr,
-	        "usage: drm-plane-probe [--card /dev/dri/cardN] [--connector DSI-1] [--take-master] [--no-atomic]\n"
+	        "usage: drm-plane-probe [--card /dev/dri/cardN] [--connector DSI-1] [--take-master] [--no-atomic] [--color]\n"
 	        "  enumeration is read-only; the matrix uses TEST_ONLY commits and needs DRM master\n"
-	        "  --take-master only with the menu stopped (tools/drm-probe-window.sh does that safely)\n");
+	        "  --take-master only with the menu stopped (tools/drm-probe-window.sh does that safely)\n"
+	        "  --color replaces the matrix with real CTM and plane-alpha commits to watch; needs --take-master\n");
 }
 
 int main(int argc, char **argv)
@@ -970,6 +1131,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--connector") && i + 1 < argc) opt_connector = argv[++i];
 		else if (!strcmp(argv[i], "--take-master")) opt_take_master = true;
 		else if (!strcmp(argv[i], "--no-atomic")) opt_no_atomic = true;
+		else if (!strcmp(argv[i], "--color")) opt_color = true;
 		else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage(); return 0; }
 		else { usage(); return 1; }
 	}
@@ -1076,6 +1238,17 @@ int main(int argc, char **argv)
 			took = true;
 			printf("\n  took DRM master (TEST_ONLY commits only; the display is not changed).\n");
 		}
+	}
+	if (opt_color)
+	{
+		int rc = 2;
+		if (can_test && master) rc = run_color_gate();
+		else printf("COLOR GATE: HOLD -- needs a mode, a primary plane and DRM master\n");
+		if (took) drmDropMaster(fd);
+		if (mode_blob) drmModeDestroyPropertyBlob(fd, mode_blob);
+		drmModeFreeResources(res);
+		close(fd);
+		return rc;
 	}
 	if (can_test && master) run_atomic_tests();
 	else if (!opt_no_atomic)
