@@ -27,6 +27,30 @@ namespace banana
 		}
 	};
 
+	// One atomic request, filled by hand: drmModeAtomicAlloc allocates a request per commit, and commitFrame runs every
+	// frame. The kernel reads count_objs object groups, each counts[i] properties taken in order from props and vals,
+	// so properties are added object by object. Too many of either is an overflow: the frame is refused, never truncated.
+	struct AtomicBuf
+	{
+		static constexpr int kMaxProps = 32, kMaxGroups = 8;
+		uint32_t objs[kMaxProps] = {}, counts[kMaxGroups] = {}, props[kMaxProps] = {};
+		uint64_t vals[kMaxProps] = {};
+		int n = 0, groups = 0;
+		uint32_t last = 0;
+		bool overflow = false;
+		void clear() { n = groups = 0; last = 0; overflow = false; }
+		void add(uint32_t obj, uint32_t prop, uint64_t v)
+		{
+			if (!prop) return;	// the plane has no such property: nothing to set
+			if (n >= kMaxProps) { overflow = true; return; }
+			if (groups && obj == last) counts[groups - 1]++;
+			else if (groups < kMaxGroups) counts[groups++] = 1;
+			else { overflow = true; return; }
+			objs[n] = obj; props[n] = prop; vals[n] = v; n++;
+			last = obj;
+		}
+	};
+
 	class Display
 	{
 	public:
@@ -111,6 +135,7 @@ namespace banana
 			uint32_t mode_blob = 0;
 		};
 		int fd = -1, W = 0, H = 0, pending = 0, count = 1;
+		AtomicBuf atomicBuf;	// the flip path's request, reused every frame
 		int rot = 0, SW = 0, SH = 0;	// the panel's rotation, and its size in its own rows (the scanout buffers')
 		Panel p[2];
 		std::vector<uint8_t> frameCopy;	// the turned frame in cached memory: reading the uncached dumb buffer per card is slow

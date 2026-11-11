@@ -514,9 +514,9 @@ namespace banana
 	bool Display::commitFrame(Panel& pn, uint32_t primaryFb, uint32_t srcW, uint32_t srcH, uint32_t overlayFb, int fenceFd)
 	{
 		if (fd < 0 || pending || !pn.atomic) return false;
-		drmModeAtomicReq* r = drmModeAtomicAlloc();
-		if (!r) return false;
-		auto addp = [&](uint32_t obj, uint32_t prop, uint64_t v) { if (prop) drmModeAtomicAddProperty(r, obj, prop, v); };
+		AtomicBuf& r = atomicBuf;
+		r.clear();
+		auto addp = [&](uint32_t obj, uint32_t prop, uint64_t v) { r.add(obj, prop, v); };
 		auto addPlane = [&](const Plane& pl, uint32_t fb, uint32_t sw, uint32_t sh, bool on, int ff) {
 			addp(pl.id, pl.crtc_id, on ? pn.crtc : 0);
 			addp(pl.id, pl.fb_id, fb);
@@ -535,8 +535,22 @@ namespace banana
 		};
 		addPlane(pn.primary, primaryFb, srcW, srcH, primaryFb != 0, fenceFd);
 		addPlane(pn.overlay, overlayFb, SW, SH, overlayFb != 0, -1);
-		int ret = drmModeAtomicCommit(fd, r, DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK, &pending);
-		drmModeAtomicFree(r);
+		if (r.overflow)
+		{
+			fprintf(stderr, "kms: atomic request did not fit (%d properties in %d objects)\n", r.n, r.groups);
+			return false;
+		}
+		// the same request drmModeAtomicCommit builds, without its allocation: count_objs is the number of object
+		// groups, and props/vals are read through them in counts[] order
+		drm_mode_atomic req = {};
+		req.flags = DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK;
+		req.count_objs = (uint32_t)r.groups;
+		req.objs_ptr = (uint64_t)(uintptr_t)r.objs;
+		req.count_props_ptr = (uint64_t)(uintptr_t)r.counts;
+		req.props_ptr = (uint64_t)(uintptr_t)r.props;
+		req.prop_values_ptr = (uint64_t)(uintptr_t)r.vals;
+		req.user_data = (uint64_t)(uintptr_t)&pending;
+		int ret = drmIoctl(fd, DRM_IOCTL_MODE_ATOMIC, &req);
 		if (ret)
 		{
 			fprintf(stderr, "kms: atomic commit failed: ret=%d errno=%s\n", ret, strerror(errno));
