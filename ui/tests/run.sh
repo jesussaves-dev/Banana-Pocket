@@ -369,6 +369,18 @@ for size in 640x557; do
         [ "$(compare -metric AE "$OUT/mos-a.png" "$OUT/mos-b.png" null: 2>&1 | cut -d' ' -f1)" = 0 ] && { mos=$n; break; }
     done
     [ "$mos" != 0 ] || { echo "FAIL $size: the street's launch isn't a mosaic"; fail=1; }
+    # its Settings are the workshop (the SNES style's painter): open Display & sound, step down to Night light (Style,
+    # Theme, Language, Brightness, Volume, then it) and change it: saved like the Classic screen's
+    sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/street.json|" "$FX/data/settings.conf"
+    sed -i '/^night_light *=/d' "$FX/data/settings.conf"
+    BANANA_PHASE=dusk "$HERE/banana-ui" --headless "$OUT/$size-street-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+        --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "home 0; wait 600; press start; wait 300; shot workshop; press a; press down; press down; press down; press down; press down; press right; wait 300; shot workshop2" \
+        2>> "$stlog" || { echo "FAIL $size: banana-ui (workshop) exited $?"; fail=1; }
+    sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    grep -q '^night_light = warm' "$FX/data/settings.conf" || { echo "FAIL $size: the workshop's Night light didn't save: $(grep '^night_light' "$FX/data/settings.conf")"; fail=1; }
+    sed -i '/^night_light *=/d' "$FX/data/settings.conf"
+    golden "street-workshop" "$OUT/$size-street-workshop.png"
     # The one panel offers the layout themes only: a colour theme (Dark/Light) is forced to the Pocket layout there,
     # so they were rows that changed nothing. From a stored dark the Theme row reads Pocket, and stepping right
     # picks the next layout (not Light) -- which the value it writes proves.

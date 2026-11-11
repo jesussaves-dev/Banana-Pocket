@@ -9,7 +9,7 @@ CXXFLAGS ?= -O2
 override CXXFLAGS += -std=c++17 -Wall -Wextra -Wshadow=local -Wno-missing-field-initializers -Wno-unused-function -Werror
 override LDLIBS += -lpthread
 
-SRC = src/main.cpp src/headless.cpp src/boot_anim.cpp src/pause_menu.cpp src/soft.cpp src/kms.cpp src/frame.cpp src/compositor.cpp src/presenter.cpp src/egl_presenter.cpp src/input.cpp src/library.cpp src/sound.cpp src/splash.cpp src/settings.cpp src/settings_defaults.cpp src/wifi.cpp src/theme.cpp src/json.cpp src/i18n.cpp src/expr.cpp src/layout.cpp src/raster.cpp src/frontend.cpp
+SRC = src/main.cpp src/headless.cpp src/boot_anim.cpp src/pause_menu.cpp src/soft.cpp src/kms.cpp src/frame.cpp src/compositor.cpp src/presenter.cpp src/egl_presenter.cpp src/input.cpp src/library.cpp src/sound.cpp src/splash.cpp src/settings.cpp src/settings_snes.cpp src/settings_defaults.cpp src/wifi.cpp src/theme.cpp src/json.cpp src/i18n.cpp src/expr.cpp src/layout.cpp src/raster.cpp src/frontend.cpp
 PKGS = freetype2 libdrm zlib wayland-server egl glesv2 gbm xkbcommon
 ifeq ($(ALSA),1)
 PKGS += alsa

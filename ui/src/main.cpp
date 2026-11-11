@@ -509,6 +509,7 @@ int main(int argc, char** argv)
 	int lastMinute = -1;
 	float scale = sc;
 	Settings settingsView(&be, o.assets, o.data, scale, variant, &lib);
+	settingsView.setBananaDir(o.banana);
 	// the night light is the panel's own gamma, set before any game is handed the panel
 	std::function<void()> nightLight = [&]() {
 		std::string v = getConfValue(o.data + "/settings.conf", "night_light",

@@ -32,6 +32,8 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 	ui.setHome(0);
 	// Settings builds its list in the constructor (which runs here), so the theme variant is set just after it
 	Settings settings(&be, o.assets, o.data, sc, variant, &lib);
+	settings.setBananaDir(o.banana);
+	settings.setVariant(theme);	// the theme in use, as the menu does (main.cpp): its palette, and the SNES style's screens
 	settings.setPanelHeight(canvasH);
 	settings.setSync(true);
 	settings.searchCount = [&](const std::string& q) { return lib.countMatches(q); };

@@ -234,6 +234,21 @@ namespace banana
 			}
 		}
 		writeOsdStyle();
+		// the SNES style: its own grid and panels for the screens it redraws (the workshop)
+		snes = themeStyle(value) == "snes";
+		if (snes)
+		{
+			u = std::max(1.0f, std::floor(640 * s / 310));
+			std::string w = themeValue(value, "workshop");
+			snesArt = w.empty() ? "" : themeDir(value) + "/" + w;
+			auto col = [&](const char* k, uint32_t def) {
+				std::string hx = themeValue(value, std::string("vars.") + k);
+				uint32_t x = hx.size() == 7 && hx[0] == '#' ? (uint32_t)strtoul(hx.c_str() + 1, nullptr, 16) : def;
+				return Color(((x >> 16) & 255) / 255.0f, ((x >> 8) & 255) / 255.0f, (x & 255) / 255.0f, 1);
+			};
+			sInk = col("ink", 0x2b1a33); sPaper = col("paper", 0xfff3cf); sGold = col("gold", 0xffd21e);
+			sDim = col("dk", 0x5a3a4a); sMuted = col("paperLo", 0xd8c49a);
+		}
 	}
 
 	// time zones as POSIX TZ rules (glibc reads them from TZ with no zoneinfo files): the offset and the summer time
@@ -795,8 +810,9 @@ namespace banana
 	std::string Settings::themeStyle(const std::string& value)
 	{
 		std::string v = value == "dark" || value == "light" || value == "carts" ? "user:pocket" : value;
-		for (auto& t : userThemes()) if (t.value == v) return t.style;
-		return "classic";
+		std::string st = themeValue(v, "style");	// (a "file:" theme too, not only the listed ones)
+		for (char& ch : st) ch = (char)tolower((unsigned char)ch);
+		return st.empty() ? "classic" : st;
 	}
 
 	// Style changed: the theme goes to the one last used in that style (theme_<style> in settings.conf), else its
@@ -951,6 +967,8 @@ namespace banana
 		case Key::RIGHT: gsel = (gsel + 1) % n; return MOVED;
 		case Key::UP: case Key::DOWN:
 		{
+			// the SNES workshop's drawers are one column
+			if (snes) { gsel = (gsel + (k == Key::UP ? n - 1 : 1)) % n; return MOVED; }
 			int rows = (n + kGridCols - 1) / kGridCols, row = (gsel / kGridCols + (k == Key::UP ? rows - 1 : 1)) % rows;
 			gsel = std::min(n - 1, row * kGridCols + gsel % kGridCols);
 			return MOVED;
@@ -971,6 +989,7 @@ namespace banana
 	Settings::Result Settings::touch(float x, float y, bool down)
 	{
 		float cx = x / s, cy = y / s;
+		if (snes && page == LIST) return NONE;	// (the workshop has no touch targets yet)
 		if (down) { downX = cx; downY = cy; downOnRow = true; return NONE; }
 		if (!downOnRow) return NONE;
 		downOnRow = false;
@@ -1491,19 +1510,10 @@ namespace banana
 		be->endScreen();
 	}
 
-	void Settings::render()
+	// what the selected row is about, for the strip under the list (some rows say where things are now)
+	std::string Settings::rowHelp()
 	{
-		if (page == NETWORKS) { renderNetworks(); return; }
-		if (page == KEYBOARD) { renderKeyboard(); return; }
-		if (page == UPDATES) { renderUpdates(); return; }
-		if (page == SETUP) { renderSetup(); return; }
-		if (page == STATES) { renderStates(); return; }
-		if (inGroups) { renderGroups(); return; }
-		SPal p = pal(light);
 		const Item& cur = items[sel];
-		int gb = groupStart(groupOf(sel)), ge = groupEnd(groupOf(sel));
-
-		// what the selected setting does: in the strip under the list
 		std::string help = tr(cur.help);
 		if (cur.kind == Item::INFO) help = about;
 		if (cur.key == "wifi") help = "Wi-Fi: " + wifiInfo + ". Network, below, joins one; networks can also be written in banana/wifi.conf on a computer (see banana/README.txt).";
@@ -1531,6 +1541,42 @@ namespace banana
 		}
 		if (cur.key == "scrape" && scraping()) help = "Fetching covers and title screens. The menu shows them as they come, and it carries on if you leave this screen.";
 
+		return help;
+	}
+
+	// what row i shows on its right (untranslated: the caller translates)
+	std::string Settings::rowValue(int i)
+	{
+		const Item& it = items[i];
+		std::string v;
+		if (it.kind == Item::CHOICE || it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME || it.kind == Item::PERCENT) v = it.names[it.at];
+		else if (it.kind == Item::ACTION) v = armed == i ? tr("Press A again") : "";
+		else if (it.kind == Item::INFO) v = "";
+		// a page's row: Network the network it is on; Update the packages waiting on the card; the others nothing
+		else if (it.kind == Item::PAGE && it.key == "network") v = wstat.connected ? fit(wstat.ssid, true, 19, 300) : (wifiOn() ? tr("Choose") : "");
+		else if (it.kind == Item::PAGE && it.key == "update") v = updatesWaiting();
+		else if (it.kind == Item::PAGE && it.key == "scrape") v = scrapeShort();
+		else if (it.kind == Item::PAGE && it.key == "states")
+			v = states.empty() ? tr("None") : std::to_string(states.size()) + (states.size() == 1 ? tr(" state") : tr(" states"));
+		return v;
+	}
+
+	void Settings::render()
+	{
+		if (page == NETWORKS) { renderNetworks(); return; }
+		if (page == KEYBOARD) { renderKeyboard(); return; }
+		if (page == UPDATES) { renderUpdates(); return; }
+		if (page == SETUP) { renderSetup(); return; }
+		if (page == STATES) { renderStates(); return; }
+		if (snes && page == LIST) { renderWorkshop(); return; }
+		if (inGroups) { renderGroups(); return; }
+		SPal p = pal(light);
+		const Item& cur = items[sel];
+		int gb = groupStart(groupOf(sel)), ge = groupEnd(groupOf(sel));
+
+		// what the selected setting does: in the strip under the list
+		std::string help = rowHelp();
+
 		// ---- the list ----
 		be->beginScreen();
 		box("screen", false, 0, 0, 640, 480);
@@ -1556,16 +1602,7 @@ namespace banana
 			// the row's own icon (the same picture/music/moon/... the group tiles draw), so the list reads at a glance
 			icon(it.icon, 34, y + 12, 1);
 			text(tr(it.label), true, 20, 84, y + 16, on ? p.onPick : p.muted);
-			std::string v;
-			if (it.kind == Item::CHOICE || it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME || it.kind == Item::PERCENT) v = it.names[it.at];
-			else if (it.kind == Item::ACTION) v = armed == i ? tr("Press A again") : "";
-			else if (it.kind == Item::INFO) v = "";
-			// a page's row: Network the network it is on; Update the packages waiting on the card; the others nothing
-			else if (it.kind == Item::PAGE && it.key == "network") v = wstat.connected ? fit(wstat.ssid, true, 19, 300) : (wifiOn() ? tr("Choose") : "");
-			else if (it.kind == Item::PAGE && it.key == "update") v = updatesWaiting();
-			else if (it.kind == Item::PAGE && it.key == "scrape") v = scrapeShort();
-			else if (it.kind == Item::PAGE && it.key == "states")
-				v = states.empty() ? tr("None") : std::to_string(states.size()) + (states.size() == 1 ? tr(" state") : tr(" states"));
+			std::string v = rowValue(i);
 			if (v.empty()) continue;
 			v = tr(v);	// the row's own name for it (Dark/Light, On/Off, ...), not what is stored
 			float vw = text(v, true, 19, 0, 0, p.ink, false, 0, true);

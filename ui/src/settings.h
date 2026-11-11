@@ -26,6 +26,8 @@ namespace banana
 		Settings(rnds::Backend* be, const std::string& assets, const std::string& dataDir, float scale, const std::string& variant,
 			rnds::Source* source = nullptr);	// the library, for the power state (the scrape starts only on the charger)
 		void setVariant(const std::string& variant);	// "dark" or "light"
+		// where Banana's own assets are (fonts/BananaPixel.ttf, for the SNES style's screens)
+		void setBananaDir(const std::string& dir) { bananaDir = dir; B.reset(); }
 		// The pages' list is drawn on the one screen, and the selected setting's description and help go in the strip
 		// of panel below it. canvasH: the panel's height in the same CSS px (a 1240x1080 panel is 557)
 		void setPanelHeight(float canvasHeight) { canvasH = canvasHeight; }
@@ -119,6 +121,23 @@ namespace banana
 		};
 		std::string themeStyle(const std::string& value);
 		Result changeStyle(Item& it, int at);
+		// the SNES style's workshop (settings_snes.cpp): the groups as drawers and the selected one's rows on a sheet,
+		// on the theme's 310-wide grid (u device px a unit) in Banana's pixel font, with the theme's baked panels
+		// ("workshop" in its .json: the folder of workshop.png, drawer.png, drawer-on.png, sheet.png)
+		bool snes = false;
+		float u = 4;
+		std::string bananaDir, snesArt;
+		std::shared_ptr<rnds::Font> B;
+		rnds::Color sInk, sPaper, sGold, sDim, sMuted;
+		void renderWorkshop();
+		std::string rowHelp();			// the selected row's help (some say where things are now)
+		std::string rowValue(int i);	// what row i shows on its right, untranslated
+		float sText(const std::string& t, float x, float y, const rnds::Color& c, bool measureOnly = false);
+		std::string sFit(const std::string& t, float width);
+		void sImg(const std::string& file, float x, float y);
+		void sFill(float x, float y, float w, float h, const rnds::Color& c);
+		void sChip(const std::string& key, const std::string& label, float x, float y);
+		float sChipWidth(const std::string& key, const std::string& label);
 		rnds::Backend* be;
 		std::string assets, data;
 		float s;

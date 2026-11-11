@@ -10,6 +10,10 @@
       "type": "string",
       "description": "The theme's name, shown in Settings > Display & sound > Theme. Falls back to the file name."
     },
+    "workshop": {
+      "type": "string",
+      "description": "An SNES-style theme's Settings art: a folder (next to the .json) with workshop.png, drawer.png, drawer-on.png and sheet.png, drawn on a 310-wide grid (tools/gen-street.py makes them)."
+    },
     "style": {
       "type": "string",
       "description": "The whole look the theme belongs to, chosen in Settings > Display & sound > Style; the Theme row lists that style's themes. \"snes\" is Banana Street's; a theme with none is \"classic\" (Pocket and its family)."

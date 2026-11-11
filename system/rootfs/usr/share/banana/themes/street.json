@@ -11,6 +11,8 @@
   "font": "banana",
   "crisp": true,
   "canvas": { "w": 310 },
+  // Settings in this style: the workshop's panels (tools/gen-street.py)
+  "workshop": "street/banana",
 
   "vars": {
     "art": "street/banana",

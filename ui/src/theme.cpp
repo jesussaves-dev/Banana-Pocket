@@ -168,6 +168,22 @@ namespace banana
 		return known;
 	}
 
+	std::string themeValue(const std::string& value, const std::string& key)
+	{
+		std::string p = themePath(value);
+		std::map<std::string, std::string> kv;
+		if (p.empty() || !readTheme(p, kv, nullptr)) return "";
+		auto it = kv.find(key);
+		return it == kv.end() ? "" : it->second;
+	}
+
+	std::string themeDir(const std::string& value)
+	{
+		std::string p = themePath(value);
+		size_t k = p.rfind('/');
+		return k == std::string::npos ? "." : p.substr(0, k);
+	}
+
 	std::string styleName(const std::string& style)
 	{
 		if (style == "classic") return "Classic";

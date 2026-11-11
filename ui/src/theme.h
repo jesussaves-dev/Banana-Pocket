@@ -22,6 +22,10 @@ namespace banana
 	std::vector<std::string> themeStyles(const std::vector<UserTheme>& themes);
 	// a style's name in Settings: "Classic", "SNES", "Genesis", or the word itself with a capital
 	std::string styleName(const std::string& style);
+	// one value of a theme's .json by its dotted key ("workshop", "vars.ink"), "" if it has none; and the folder the
+	// .json is in (its own files are relative to it)
+	std::string themeValue(const std::string& value, const std::string& key);
+	std::string themeDir(const std::string& value);
 
 	// the Theme setting's value -> the palette it draws with ("dark" or "light"), with a user theme's colours
 	// and accent set for it (rnds::themeColors, rnds::accent); any other theme clears them and sets accentName's accent.

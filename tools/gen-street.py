@@ -372,6 +372,40 @@ def interior(p):
     return c
 
 
+def workshop(p):
+    """Settings in the SNES style: a dark wall of pegboard, the header and the button bar."""
+    c = Canvas(310, 270, p)
+    c.vgrad(0, 0, 310, 250, "dk1", "dk4")
+    for y in range(26, 250, 10):
+        for x in range(6 + (5 if y % 20 else 0), 310, 10): c.R(x, y, 2, 2, "dk4"); c.R(x, y, 1, 1, "ink")
+    win(c, 0, 0, 310, 22, 1)
+    win(c, 0, 250, 310, 20, 1)
+    return c
+
+
+def drawer(p, on):
+    """A settings group: a drawer front with its handle; the open one longer and gold."""
+    w, h, m = (124 if on else 112), 26, ("gold" if on else "wallA")
+    c = Canvas(w + 3, h + 3, p)
+    c.R(3, 3, w, h, "shadow", .5)
+    c.R(0, 0, w + 1, h, "ink")
+    for r in range(h - 2): c.R(0, 1 + r, w, 1, m + ("0" if r < 2 else "1" if r < 11 else "2" if r < 19 else "3"))
+    if not on:
+        for k in (4, 21): c.R(0, k, w, 1, m + "3")
+    c.R(w - 40, h - 7, 28, 3, "ink"); c.R(w - 39, h - 7, 26, 1, "paper0")
+    return c
+
+
+def sheet(p):
+    """The open group's rows: a sheet of paper on the pegboard."""
+    c = Canvas(174, 224, p)
+    c.R(3, 3, 170, 220, "shadow", .5)
+    c.vgrad(0, 0, 170, 220, "paper0", "paper2")
+    for i in range(8, 162, 3): c.R(i, 19, 2, 1, "ink")
+    for i in range(8, 162, 3): c.R(i, 183, 2, 1, "dk2")
+    return c
+
+
 def row(p, sel):
     w, h = (198, 17) if sel else (192, 15)
     c = Canvas(w, h, p)
@@ -397,7 +431,8 @@ def main():
                 for a in range(3): files["shop%d%d" % (t, a)] = shop(p, t, a)
             for k, c in files.items(): c.save(os.path.join(d, k + ".png")); n += 1
         p = palette(base, "day")
-        for k, c in {"hud": panel(p, 310, 46), "chip52": panel(p, 52, 14), "chip34": panel(p, 34, 14), "interior": interior(p),
+        for k, c in {"workshop": workshop(p), "drawer": drawer(p, False), "drawer-on": drawer(p, True), "sheet": sheet(p),
+                     "hud": panel(p, 310, 46), "chip52": panel(p, 52, 14), "chip34": panel(p, 34, 14), "interior": interior(p),
                      "row": row(p, False), "rowsel": row(p, True)}.items():
             c.save(os.path.join(out, k + ".png")); n += 1
     print("gen-street: %d images in %s" % (n, os.path.join(root, "street")))
