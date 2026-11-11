@@ -18,6 +18,10 @@ fail=0
 ${CXX:-c++} -O2 -std=c++17 -Wno-unused-function -o "$OUT/turn-test" "$HERE/tests/turn-test.cpp" 2> "$OUT/turn-build.log" ||
     { echo "FAIL: can't build turn-test (see $OUT/turn-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/turn-test" > "$OUT/turn.log" 2>&1 || { echo "FAIL: turn-test"; cat "$OUT/turn.log"; fail=1; }
+# the system shader's mask pattern, its four panel rotations, the composed base and the colour tables (src/shader_mask.h)
+${CXX:-c++} -O2 -std=c++17 -Wno-unused-function $(pkg-config --cflags libdrm 2>/dev/null) -o "$OUT/shader-mask-test" "$HERE/tests/shader-mask-test.cpp" 2> "$OUT/shader-mask-build.log" ||
+    { echo "FAIL: can't build shader-mask-test (see $OUT/shader-mask-build.log)"; fail=1; }
+[ "$fail" = 1 ] || "$OUT/shader-mask-test" > "$OUT/shader-mask.log" 2>&1 || { echo "FAIL: shader-mask-test"; cat "$OUT/shader-mask.log"; fail=1; }
 # the Phase 3B buffer rules: the one format/modifier/plane pair the compositor accepts (linear, one plane)
 ${CXX:-c++} -O2 -std=c++17 $(pkg-config --cflags libdrm 2>/dev/null) -o "$OUT/dmabuf-test" "$HERE/tests/dmabuf-test.cpp" 2> "$OUT/dmabuf-build.log" ||
     { echo "FAIL: can't build dmabuf-test (see $OUT/dmabuf-build.log)"; fail=1; }
