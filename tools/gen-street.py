@@ -305,8 +305,28 @@ def lamp(p):
     return c
 
 
-def mascot(p):
-    """The walker: a banana with a face, gloves and red shoes (original art), 28 x 40."""
+# The walker's poses: (body up, glove offsets, leg 1 and leg 2 as (sideways, lift)). 0 stands; 1-4 are the walk
+# (contact, passing, the other contact, passing), one cycle a shop; 5 is the idle bob, the body a pixel up.
+POSES = [
+    (0, (0, 0), ((0, 0), (0, 0))),
+    (0, (1, -1), ((-2, 0), (2, 0))),
+    (1, (0, 0), ((0, 0), (0, 1))),
+    (0, (-1, 1), ((1, 1), (-1, 0))),
+    (1, (0, 0), ((0, 1), (0, 0))),
+    (1, (0, 0), ((0, 0), (0, 0))),
+]
+
+
+def mascot(p, pose=0, left=False):
+    """The walker: a banana with a face, gloves and red shoes (original art), 28 x 41, facing right; left is the
+    same sprite flipped, as the Super NES flipped its sprites."""
+    up, gloves, legs = POSES[pose]
+    c = mascot_body(p, up, gloves, legs)
+    if left: c.im = c.im.transpose(Image.FLIP_LEFT_RIGHT)
+    return c
+
+
+def mascot_body(p, up, gloves, legs):
     Wm, Hm = 28, 31
     g = [[-1] * Wm for _ in range(Hm)]
     for j in range(Hm):
@@ -317,23 +337,29 @@ def mascot(p):
             d = (x + .5 - cx) / hw
             if abs(d) > 1: continue
             g[j][x] = 5 if j < 4 else 0 if d < -.6 else 1 if d < -.12 else 2 if d < .42 else 3 if d < .78 else 4
-    c = Canvas(28, 40, p)
+    c = Canvas(28, 41, p)	# a row of headroom for the poses a pixel up
     ramp = ["gold0", "gold1", "gold2", "goldLo", "gold4", "dk2"]
+    # the legs first, so the body's outline sits over their tops; the feet stay on the ground unless lifted
+    for (lx, (dx, lift)) in zip((10, 17), legs):
+        fx, fy = lx + dx, 36 - lift
+        top = 31 - up
+        c.R(lx, top, 3, fy + 1 - top, "ink"); c.R(lx + 1, top, 1, fy - top, "dk1")
+        if dx: c.R(min(lx, fx), fy - 2, abs(dx) + 3, 3, "ink"); c.R(min(lx, fx) + 1, fy - 2, abs(dx) + 1, 2, "dk1")
+        c.R(fx - 2, fy, 8, 4, "ink"); c.R(fx - 1, fy + 1, 6, 2, "awnA1"); c.R(fx - 1, fy + 1, 3, 1, "awnA0")
+    y0 = 1 - up
     for j in range(Hm):
         for x in range(Wm):
-            if g[j][x] >= 0: c.R(x, j, 1, 1, ramp[g[j][x]])
+            if g[j][x] >= 0: c.R(x, j + y0, 1, 1, ramp[g[j][x]])
             elif any(0 <= x + dx < Wm and 0 <= j + dy < Hm and g[j + dy][x + dx] >= 0 for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
-                c.R(x, j, 1, 1, "ink")
+                c.R(x, j + y0, 1, 1, "ink")
     ex = 13
     for o in (0, 6):
-        c.R(ex + o, 11, 4, 6, "ink"); c.R(ex + o, 12, 3, 4, "paper0"); c.R(ex + o + 1, 13, 2, 3, "ink"); c.R(ex + o + 1, 13, 1, 1, "paper0")
-    c.R(ex + 2, 20, 6, 1, "ink"); c.R(ex + 1, 19, 1, 1, "ink"); c.R(ex + 8, 19, 1, 1, "ink"); c.R(ex + 3, 21, 4, 1, "awnA1")
-    c.R(ex - 3, 18, 3, 2, "awnA1", .6); c.R(ex + 10, 18, 2, 2, "awnA1", .6)
-    for ax, ay in ((4, 20), (24, 20)):
+        c.R(ex + o, 11 + y0, 4, 6, "ink"); c.R(ex + o, 12 + y0, 3, 4, "paper0"); c.R(ex + o + 1, 13 + y0, 2, 3, "ink"); c.R(ex + o + 1, 13 + y0, 1, 1, "paper0")
+    c.R(ex + 2, 20 + y0, 6, 1, "ink"); c.R(ex + 1, 19 + y0, 1, 1, "ink"); c.R(ex + 8, 19 + y0, 1, 1, "ink"); c.R(ex + 3, 21 + y0, 4, 1, "awnA1")
+    c.R(ex - 3, 18 + y0, 3, 2, "awnA1", .6); c.R(ex + 10, 18 + y0, 2, 2, "awnA1", .6)
+    for (ax, ay), gy in zip(((4, 20), (24, 20)), gloves):
+        ay += y0 + gy
         c.R(ax - 1, ay - 1, 5, 5, "ink"); c.R(ax, ay, 3, 3, "paper0"); c.R(ax + 2, ay + 2, 1, 1, "paper3")
-    for lx in (10, 17):
-        c.R(lx, 30, 3, 6, "ink"); c.R(lx + 1, 30, 1, 5, "dk1")
-        c.R(lx - 2, 35, 8, 4, "ink"); c.R(lx - 1, 36, 6, 2, "awnA1"); c.R(lx - 1, 36, 3, 1, "awnA0")
     return c
 
 
@@ -461,7 +487,9 @@ def main():
             p = palette(base, ph)
             d = os.path.join(out, ph)
             files = {"sky": sky(p), "clouds": clouds(p), "far": far(p), "mid": mid(p), "signsel": signsel(p), "shine": shine(p),
-                     "closed": closed(p), "lamp": lamp(p), "mascot": mascot(p)}
+                     "closed": closed(p), "lamp": lamp(p)}
+            for k in range(len(POSES)):
+                files["mascot-r%d" % k], files["mascot-l%d" % k] = mascot(p, k), mascot(p, k, True)
             for i in range(4): files["band%d" % i] = band(p, i)
             for t in range(4):
                 for a in range(3): files["shop%d%d" % (t, a)] = shop(p, t, a)

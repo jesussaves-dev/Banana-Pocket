@@ -28,7 +28,7 @@
     "home": { "l": "prevBlock", "r": "nextBlock" },
     "library": { "up": "prev", "down": "next", "left": "prev:5", "right": "next:5" }
   },
-  "behavior": { "launchMs": 700, "scrollMs": 110, "cues": { "insert": 450 } },
+  "behavior": { "launchMs": 700, "scrollMs": 110, "fps": 4, "cues": { "insert": 450 } },
 
   "components": {
     // a button and what it does: the key on a paper chip
@@ -114,9 +114,12 @@
         { "use": "band", "with": { "n": 2, "top": 196, "bh": 13, "cell": 24, "bw": 384, "speed": 150 } },
         { "use": "band", "with": { "n": 3, "top": 209, "bh": 17, "cell": 30, "bw": 390, "speed": 187 } },
 
-        // the walker, in front of the selected shop's door. It holds still: anything reading `time` redraws the whole
-        // street every frame, which on the handheld cost 7-14 ms a frame with nothing moving.
-        { "type": "image", "src": "{art}/{phase}/mascot.png", "fit": "pixel", "x": 167, "y": 148, "w": 28, "h": 40 },
+        // the walker, in front of the selected shop's door, facing the way you last walked. While the street scrolls
+        // he walks (frames 1-4, one stride a quarter of a shop, so a step is a step whatever the speed); standing, he
+        // bobs a pixel twice a second (frame 5) unless Motion is off. Only the bob reads `time`, and behavior.fps 4
+        // wakes the idle street for it (twice per step, so timer jitter never skips one); frames that match draw nothing.
+        { "type": "image", "fit": "pixel", "x": 167, "y": 147, "w": 28, "h": 41,
+          "src": "{art}/{phase}/mascot-{dir < 0 ? 'l' : 'r'}{abs(scroll - cursor) > 0.02 ? 1 + mod(floor(abs(scroll) * 4), 4) : motion ? mod(floor(time / 500), 2) * 5 : 0}.png" },
 
         // what's selected, on a panel at the bottom
         { "type": "image", "src": "{art}/hud.png", "fit": "pixel", "x": 0, "y": 224, "w": 310, "h": 46 },
