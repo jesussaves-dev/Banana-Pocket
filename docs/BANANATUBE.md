@@ -1,7 +1,7 @@
 # BananaTube (the YouTube client)
 
 BananaTube is the app on the menu's **Apps shelf** that searches YouTube and plays a video. It is deliberately small:
-one SDL2 window under `cage`, `yt-dlp` for the search and for resolving a stream, and `mpv` for the picture and the
+one SDL2 window under `banana-ui`'s compositor, `yt-dlp` for the search and for resolving a stream, and `mpv` for the picture and the
 sound. There is no browser, no Electron and no embedded web view.
 
 ## On the menu
@@ -43,20 +43,21 @@ and Tab / Shift+Tab switch tabs (the QEMU test drives the app that way; the RPC 
 | Button | Search keyboard | Results | Playing |
 |---|---|---|---|
 | d-pad | move on the keys | move through the results | seek (up/down 10 s, left/right 60 s) |
-| A | type the key / `Shift` / `Search` | play the chosen video | play / pause |
+| A | type the key / `Shift` / `Search` | play the chosen video; **hold**: add to / remove from the queue | play / pause |
 | B | clear, then quit | back to the keyboard | stop and go back |
-| X | backspace | the chosen video's channel | undo the last SponsorBlock skip |
+| X | backspace | the chosen video's channel; on a channel: subscribe / unsubscribe; on Offline: delete (press twice) | undo the last SponsorBlock skip |
 | Y | run the search | back to the keyboard (search) | quality: 720 → 480 → 360p, reloaded at the same position |
 | L / R | switch tab | switch tab | previous / next chapter |
 | L2 | — | a page back | tap: back 10 s; hold: scrub back 10 s every 0.25 s |
 | R2 | — | a page forward | tap: forward 10 s; hold: play at 2x |
-| START | run the search | a new search | full screen |
-| SELECT | the quality cap (720/480/360p) | the quality cap (720/480/360p) | position / length bar / quality readout |
+| START | run the search | save the video to Offline (retry a failed one) | captions on / off |
+| SELECT | the quality cap (720/480/360p) | the quality cap; **hold**: autoplay on / off | position / length bar / quality / up next; **hold**: autoplay on / off |
 | touch | tap a key / `Search`, or a tab | tap a row to focus, tap again to play, or a tab | zones: left/right seek, centre pause, top-left stop |
 
-**Tabs, recent and quality:** the results shelf has four tabs — **Search** (the keyboard and its hits), **Recent** (the
-last 30 videos that actually started playing), **Channels** (the uploaders either list mentions, with a video count)
-and **Local** (the music and video files on the card).
+**Tabs, recent and quality:** the results shelf has six tabs — **Search** (the keyboard and its hits), **Recent** (the
+last 30 videos that actually started playing), **Channels** (the uploaders either list mentions, with a video count),
+**Subs** (the newest uploads of the channels you follow), **Offline** (saved videos and the download queue) and **Local**
+(the music and video files on the card).
 Switch with L/R, or a tap; SELECT changes the quality cap. A on a channel shows its videos from both lists, B walks
 back out.
 
@@ -77,6 +78,25 @@ opened again. Recent rows remember where playback stopped (written every 10 s an
 re-opening one seeks there once mpv has the stream up; a finished video clears its position. Recent survives a reboot in
 `/data/banana/bananatube-recent.tsv`; the quality cap (720p default, 480p/360p for a weak link) is saved in
 `/data/banana/bananatube.conf` and applied by `yt-dlp -g` to the next video.
+
+**Captions:** START in the player turns them on and off, and the choice is saved. yt-dlp fetches English captions (the
+uploader's, else YouTube's automatic ones) beside playback so a video never waits on them, into
+`/data/banana/cache/tube/captions/<id>.<lang>.vtt`, and mpv takes the file with `sub-add` once the stream is open.
+
+**Subs:** X on a channel row (or inside a channel) follows it, using the `browseId` the search results carry; the list is
+`/data/banana/bananatube-subs.tsv`. There is no Google account: the tab asks InnerTube's `browse` endpoint for each
+channel's Videos page and merges them newest first, at most every 10 minutes. A row from before this feature has no id,
+so a channel seen only there has to turn up in a search before it can be followed.
+
+**Offline:** START on a video queues it; one download runs at a time, only while the app is open, at the current quality
+cap, and an interrupted one continues on the next start. Picture and sound stay two files in `/data/banana/downloads`
+(`<id>.<format>.<ext>`), which mpv plays as a pair, so no `ffmpeg` binary is needed. The shelf is
+`/data/banana/bananatube-downloads.tsv`. A saved video plays from the card from any tab. Its captions are fetched when
+it finishes, so they work with no network.
+
+**Play next:** hold A on a row to queue it (`Q1`, `Q2` on the thumbnail). The start card, SELECT and the last 15 seconds
+show what is up next, and the next video starts when one really ends: a crash or a failed stream stops the queue. Hold
+SELECT to turn autoplay off, and the queue waits. The queue lasts for the session.
 
 **SponsorBlock** skips sponsor, self-promotion, interaction reminder, intro and outro segments from SponsorBlock's
 public API (`sponsor.ajay.app`, looked up by video id before playback). The client asks mpv for the playback position
@@ -108,14 +128,14 @@ seek, B stop). `banana-tube` never acts on SDL's touch: under `cage` SDL reports
 coordinates, and acting on both fired a second, wrong tap per gesture (the phantom characters).
 
 
-Playback: `banana-tube` starts `mpv` (full screen under `cage`) and keeps the pad to itself, telling mpv what to do
+Playback: `banana-tube` starts `mpv` (a second client of the compositor, covering the app's window) and keeps the pad to itself, telling mpv what to do
 over its JSON IPC socket (`/run/banana/bananatube.sock`). `banana-tube` resolves the stream first, with `yt-dlp -g`
 (capped at 720p, what the Adreno `a613` holds comfortably), and hands mpv the direct URL(s): the picture, and the
 sound for a DASH pair. The image's mpv has no Lua, so nothing runs inside it. The lookup blocks the menu for a few
 seconds before the video opens. When mpv exits, the results come back.
 
-**Video output:** `--vo=wlshm` (software, through shared memory). mpv's GPU output (`--vo=gpu`) under `cage`
-renders a white frame intermittently on the `a613`, and a stalled output stalls the playback clock with it; the
+**Video output:** `--vo=wlshm` (software, through shared memory; the compositor's EGL presenter uploads each frame).
+mpv's GPU output (`--vo=gpu`) rendered a white frame intermittently on the `a613`, and a stalled output stalls the playback clock with it; the
 software output draws like `banana-ui`'s own panel and is stable. Decoding still uses the GPU where it can:
 `--hwdec=auto-copy` (a copy-back hwdec such as `v4l2m2m-copy`) decodes on the chip and copies the frames back to
 system memory for `wlshm`, falling back to software on its own.
@@ -177,4 +197,5 @@ pinned in `buildroot/package/yt-dlp/yt-dlp.mk` and `yt-dlp.hash`.
 
 `system/tests/run-banana-tube-test.sh` builds the client and runs its logic pass under SDL's dummy driver (the harness has
 no display): the search-line parse, the keyboard navigation and the `back()`/`activate()` state machine. It runs from
-`make test`. Playback needs mpv, yt-dlp and a network and is not exercised there.
+`make test`. Playback needs yt-dlp and a network and is not exercised there; `ui/tests/compositor-player-test.cpp` runs
+a real mpv against the compositor's real Wayland server to check the player's window.
