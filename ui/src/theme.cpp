@@ -142,12 +142,40 @@ namespace banana
 			{
 				if (std::any_of(r.begin(), r.end(), [&](const UserTheme& u) { return u.value == "user:" + st; })) continue;
 				std::map<std::string, std::string> kv;
-				std::string name = st;
-				if (readTheme(std::string(dir) + "/" + st + ".json", kv, nullptr) && !kv["name"].empty()) name = kv["name"];
-				r.push_back({ "user:" + st, name });
+				std::string name = st, style = "classic";
+				if (readTheme(std::string(dir) + "/" + st + ".json", kv, nullptr))
+				{
+					if (!kv["name"].empty()) name = kv["name"];
+					if (!kv["style"].empty()) { style = kv["style"]; for (char& ch : style) ch = (char)tolower((unsigned char)ch); }
+				}
+				r.push_back({ "user:" + st, name, style });
 			}
 		}
 		return r;
+	}
+
+	std::vector<std::string> themeStyles(const std::vector<UserTheme>& themes)
+	{
+		static const char* ORDER[] = { "classic", "snes", "genesis" };
+		std::vector<std::string> known, other;
+		for (const char* o : ORDER)
+			if (std::any_of(themes.begin(), themes.end(), [&](const UserTheme& t) { return t.style == o; })) known.push_back(o);
+		for (auto& t : themes)
+			if (std::find(std::begin(ORDER), std::end(ORDER), t.style) == std::end(ORDER) && std::find(other.begin(), other.end(), t.style) == other.end())
+				other.push_back(t.style);
+		std::sort(other.begin(), other.end());
+		known.insert(known.end(), other.begin(), other.end());
+		return known;
+	}
+
+	std::string styleName(const std::string& style)
+	{
+		if (style == "classic") return "Classic";
+		if (style == "snes") return "SNES";
+		if (style == "genesis") return "Genesis";
+		std::string n = style;
+		if (!n.empty()) n[0] = (char)toupper((unsigned char)n[0]);
+		return n;
 	}
 
 	// a file a theme names: relative to its folder (or absolute), used only when it's there

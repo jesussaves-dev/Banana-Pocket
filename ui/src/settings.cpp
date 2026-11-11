@@ -284,6 +284,9 @@ namespace banana
 			items.push_back(it);
 		};
 		const char* D = "Display & sound";
+		// Style: the whole look (Classic, SNES...), from the themes there are; Theme: the colours within it (load())
+		add(D, "picture", "Style", "The whole look of the menu: Classic, or SNES (Banana Street). Theme then picks its colours.",
+			menu, "style", {}, {});
 		{
 			// Banana's three, then the themes in banana/themes on the card and the image's examples (theme.h)
 			std::vector<std::string> names = { "Dark", "Light" }, values = { "dark", "light" };
@@ -410,14 +413,25 @@ namespace banana
 
 	void Settings::load(Item& it)
 	{
+		if (it.key == "style")
+		{
+			// not kept itself: the style of the theme in use (themeStyle), and the styles that have a theme
+			it.names.clear(); it.values.clear();
+			for (auto& st : themeStyles(userThemes())) { it.names.push_back(styleName(st)); it.values.push_back(st); }
+			std::string cur = themeStyle(getConfValue(it.file, "theme", "dark"));
+			it.at = 0;
+			for (size_t i = 0; i < it.values.size(); i++) if (it.values[i] == cur) it.at = (int)i;
+			return;
+		}
 		if (it.key == "theme")
 		{
 			// One panel: a colour theme (Dark/Light) is forced to the Pocket layout (main.cpp, menuTheme), so those
-			// would be rows that change nothing -- the list is the layout themes. A stored Dark/Light (or the removed
-			// Carts) reads as the Pocket layout. A theme copied over file sharing while the menu runs is listed the next time
-			// Settings opens (the list was made once, when banana-ui started).
+			// would be rows that change nothing -- the list is the layout themes, those of the style in use. A stored
+			// Dark/Light (or the removed Carts) reads as the Pocket layout. A theme copied over file sharing while the
+			// menu runs is listed the next time Settings opens (the list was made once, when banana-ui started).
 			it.names.clear(); it.values.clear();
-			for (auto& t : userThemes()) { it.names.push_back(t.name); it.values.push_back(t.value); }
+			std::string style = themeStyle(getConfValue(it.file, it.key, "dark"));
+			for (auto& t : userThemes()) if (t.style == style) { it.names.push_back(t.name); it.values.push_back(t.value); }
 			it.help = "The look of the menu, drawn from a theme's .json: the Pocket layout and its colour variations. Your own go in banana/themes on the card (banana/themes/README.txt says how).";
 			std::string v = getConfValue(it.file, it.key, "dark");
 			if (v == "dark" || v == "light" || v == "carts")
@@ -765,6 +779,7 @@ namespace banana
 		if (it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME || it.kind == Item::PERCENT) at = std::min(n - 1, std::max(0, at));	// a slider stops at its ends
 		else at = (at + n) % n;
 		if (at == it.at) return NONE;
+		if (it.key == "style") return changeStyle(it, at);
 		it.at = at;
 		save(it);
 		if (it.key == "theme")
@@ -774,6 +789,34 @@ namespace banana
 		}
 		if (it.key == "lang") { i18nSet(it.values[at]); poke("bananad"); return CHANGED; }
 		return CHANGED;
+	}
+
+	// a theme's style; Dark/Light (and the removed Carts) are the Pocket layout's, so Classic
+	std::string Settings::themeStyle(const std::string& value)
+	{
+		std::string v = value == "dark" || value == "light" || value == "carts" ? "user:pocket" : value;
+		for (auto& t : userThemes()) if (t.value == v) return t.style;
+		return "classic";
+	}
+
+	// Style changed: the theme goes to the one last used in that style (theme_<style> in settings.conf), else its
+	// first (Pocket for Classic), and the theme in use is remembered for coming back. The Theme row follows.
+	Settings::Result Settings::changeStyle(Item& it, int at)
+	{
+		const std::string menu = data + "/settings.conf";
+		std::string was = getConfValue(menu, "theme", "dark"), from = it.values[it.at], to = it.values[at];
+		setConfValue(menu, "theme_" + from, was == "dark" || was == "light" || was == "carts" ? "user:pocket" : was);
+		std::vector<UserTheme> all = userThemes();
+		std::string pick = getConfValue(menu, "theme_" + to, "");
+		auto inStyle = [&](const std::string& v) { return std::any_of(all.begin(), all.end(), [&](const UserTheme& t) { return t.value == v && t.style == to; }); };
+		if (!inStyle(pick)) pick = to == "classic" && inStyle("user:pocket") ? "user:pocket" : "";
+		if (pick.empty()) for (auto& t : all) if (t.style == to) { pick = t.value; break; }
+		if (pick.empty()) return NONE;
+		it.at = at;
+		setConfValue(menu, "theme", pick);
+		for (auto& x : items) if (x.key == "theme") load(x);
+		setVariant(pick);
+		return THEME;
 	}
 
 	Settings::Result Settings::resetApply(bool emulator)

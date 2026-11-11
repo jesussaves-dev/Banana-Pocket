@@ -5,6 +5,7 @@
   // icons, names and counts stay live, so a new system needs no new art. Text is Banana's own pixel faces at 12 / 24.
   "name": "Banana Street (preview)",
   "author": "BananaOS",
+  "style": "snes",
   "base": "dark",
   "accent": "#ffd21e",
   "font": "banana",

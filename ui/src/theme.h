@@ -14,8 +14,14 @@ namespace banana
 	// Pocket, the layout a colour theme is drawn in
 	inline std::string pocketTheme() { return "file:" + themePath("user:pocket"); }
 
-	struct UserTheme { std::string value, name; };	// "user:ocean", the theme's own name ("Ocean")
+	// "user:ocean", the theme's own name ("Ocean"), and its style: the whole look it belongs to, its "style" in the
+	// .json ("snes" for Banana Street's), "classic" when it names none (Pocket and its family, and older themes)
+	struct UserTheme { std::string value, name, style; };
 	std::vector<UserTheme> userThemes();				// the card's first, then the image's (a card file of the same name wins)
+	// the styles that have a theme, Classic first, then SNES and Genesis, then any other in name order
+	std::vector<std::string> themeStyles(const std::vector<UserTheme>& themes);
+	// a style's name in Settings: "Classic", "SNES", "Genesis", or the word itself with a capital
+	std::string styleName(const std::string& style);
 
 	// the Theme setting's value -> the palette it draws with ("dark" or "light"), with a user theme's colours
 	// and accent set for it (rnds::themeColors, rnds::accent); any other theme clears them and sets accentName's accent.

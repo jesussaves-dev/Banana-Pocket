@@ -117,6 +117,8 @@ namespace banana
 			int at = 0;
 			enum Kind { CHOICE, BRIGHTNESS, VOLUME, PERCENT, INFO, ACTION, PAGE } kind = CHOICE;	// PERCENT: a saved choice drawn as a slider
 		};
+		std::string themeStyle(const std::string& value);
+		Result changeStyle(Item& it, int at);
 		rnds::Backend* be;
 		std::string assets, data;
 		float s;

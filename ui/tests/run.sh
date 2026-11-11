@@ -197,8 +197,8 @@ for size in 640x557; do
     ls "$FX/states/Mednafen/" 2>/dev/null | grep -q 'Banana Kart.state.bak-' || { echo "FAIL $size: no backup was made"; fail=1; }
     [ -s "$OUT/$size-xgame.png" ] || { echo "FAIL $size: no xgame shot"; fail=1; }
     for s in states states2; do [ -s "$OUT/$size-$s.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }; done
-    # Background Music: the Display & sound row (the seventh, after Theme, Language, Brightness, Volume, Night light
-    # and Menu sounds) toggles settings.conf's bgm, off then back on
+    # Background Music: the Display & sound row (the eighth, after Style, Theme, Language, Brightness, Volume, Night
+    # light and Menu sounds) toggles settings.conf's bgm, off then back on
     grep -q '^bgm = ' "$FX/data/settings.conf" && sed -i 's/^bgm = .*/bgm = on/' "$FX/data/settings.conf" || printf 'bgm = on\n' >> "$FX/data/settings.conf"
     blog=$OUT/$size-bgm.log
     run_bgm() { "$HERE/banana-ui" --headless "$OUT/$size-" --size 640x557 --assets "$HERE/assets/rnds" \
@@ -213,9 +213,9 @@ for size in 640x557; do
     run_bgm "home 0; press start; press r; press r; press r; press r; press r; press r; press a; press down; press right; press right; press right; press right; shot shaders-max"
     grep -q '^shader_mask_intensity = 100' "$FX/data/settings.conf" || { echo "FAIL $size: Mask strength didn't stop at 100: $(grep '^shader_mask_intensity' "$FX/data/settings.conf")"; fail=1; }
     sed -i '/^shader_/d' "$FX/data/settings.conf"
-    run_bgm "home 0; press start; press a; press down; press down; press down; press down; press down; press down; press right; shot bgm-off"
+    run_bgm "home 0; press start; press a; press down; press down; press down; press down; press down; press down; press down; press right; shot bgm-off"
     grep -q '^bgm = off' "$FX/data/settings.conf" || { echo "FAIL $size: Background Music Off didn't save: $(grep '^bgm' "$FX/data/settings.conf")"; fail=1; }
-    run_bgm "home 0; press start; press a; press down; press down; press down; press down; press down; press down; press right; shot bgm-on"
+    run_bgm "home 0; press start; press a; press down; press down; press down; press down; press down; press down; press down; press right; shot bgm-on"
     grep -q '^bgm = on' "$FX/data/settings.conf" || { echo "FAIL $size: Background Music On didn't save: $(grep '^bgm' "$FX/data/settings.conf")"; fail=1; }
     for s in bgm-off bgm-on; do [ -s "$OUT/$size-$s.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }; done
     # the AMOLED burn-in guard follows bananad.conf: 2 min idle dims the panel to 30%, 90 s later it blanks, and the
@@ -368,9 +368,22 @@ for size in 640x557; do
     printf 'theme = dark\n' > "$FX/data/settings.conf"
     BANANA_THEMES="$FX/data/themes" "$HERE/banana-ui" --headless "$OUT/$size-themelist-" --size 640x557 --assets "$HERE/assets/rnds" \
         --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
-        --script "press start; press a; press right; shot list; wait 1" 2> "$tllog" ||
+        --script "press start; press a; press down; press right; shot list; wait 1" 2> "$tllog" ||
         { echo "FAIL $size: banana-ui (theme list) exited $?"; fail=1; }
     grep -q '^theme = user:pocket-ocean$' "$FX/data/settings.conf" || { echo "FAIL $size: the one-panel theme list: $(grep '^theme' "$FX/data/settings.conf")"; fail=1; }
+    # Style (the row above Theme): Classic -> SNES picks Banana Street and remembers the Classic theme in use; back to
+    # Classic restores it (not Pocket, the default)
+    sylog=$OUT/$size-style.log
+    printf 'theme = user:pocket-terminal\n' > "$FX/data/settings.conf"
+    BANANA_THEMES="$FX/data/themes" "$HERE/banana-ui" --headless "$OUT/$size-style-" --size 640x557 --assets "$HERE/assets/rnds" \
+        --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "press start; press a; press right; shot snes; wait 1" 2> "$sylog" || { echo "FAIL $size: banana-ui (style) exited $?"; fail=1; }
+    grep -q '^theme = user:street$' "$FX/data/settings.conf" || { echo "FAIL $size: Style SNES: $(grep '^theme' "$FX/data/settings.conf" | tr '\n' ' ')"; fail=1; }
+    grep -q '^theme_classic = user:pocket-terminal$' "$FX/data/settings.conf" || { echo "FAIL $size: Style didn't remember the Classic theme"; fail=1; }
+    BANANA_THEMES="$FX/data/themes" "$HERE/banana-ui" --headless "$OUT/$size-style-" --size 640x557 --assets "$HERE/assets/rnds" \
+        --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "press start; press a; press left; shot classic; wait 1" 2>> "$sylog" || { echo "FAIL $size: banana-ui (style back) exited $?"; fail=1; }
+    grep -q '^theme = user:pocket-terminal$' "$FX/data/settings.conf" || { echo "FAIL $size: Style back to Classic: $(grep '^theme' "$FX/data/settings.conf" | tr '\n' ' ')"; fail=1; }
     [ -s "$OUT/$size-themelist-list.png" ] || { echo "FAIL $size: no themelist shot"; fail=1; }
     rm -rf "$FX/data/themes"; printf 'theme = dark\n' > "$FX/data/settings.conf"
     grep 'bench:' "$log" | sed "s/^banana-ui: /$size /"
