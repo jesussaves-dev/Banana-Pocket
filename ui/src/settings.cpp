@@ -29,6 +29,10 @@ using rnds::Color;
 
 namespace banana
 {
+	// the groups grid: 4 tiles to a row and two rows, since a third would run into the footer's touch band
+	static constexpr int kGridCols = 4, kGridMax = 8;
+	static constexpr float kGridTile = 148, kGridPitch = 152;
+
 	// ---- key = value files ------------------------------------------------------------------------------------------
 	static std::string trim(const std::string& s)
 	{
@@ -388,6 +392,13 @@ namespace banana
 			names.push_back("Banana"); values.push_back("banana");
 			add(F, "picture", s.second.c_str(), "The frame for this system. A game's own options can choose differently.", menu, ("frame." + s.first).c_str(), names, values);
 		}
+		const char* SH = "Shaders";
+		add(SH, "picture", "Screen mask", "A CRT or LCD pattern over the menu and the games, drawn by the display itself. The panel is OLED and a mask stays still for hours, so leave it off when you don't want it.",
+			menu, "shader_mask", { "Off", "CRT scanlines", "Aperture grille", "LCD grid" }, { "off", "crt240", "aperture", "lcd" });
+		add(SH, "picture", "Mask strength", "How dark the mask's lines are. Lower is gentler on the eyes and on the OLED panel.", menu, "shader_mask_intensity",
+			{ "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, { "10", "20", "30", "40", "50", "60", "70", "80", "90", "100" }, Item::PERCENT);
+		add(SH, "picture", "Screen colour", "The panel's colour, as a monitor of the time showed it: a cool Trinitron, a neutral studio PVM, or a muted handheld LCD.",
+			menu, "shader_color", { "Standard", "Trinitron", "PVM", "Handheld" }, { "bypass", "trinitron", "pvm", "handheld" });
 	}
 
 	void Settings::setFrameSystems(const std::vector<std::pair<std::string, std::string>>& systems)
@@ -467,7 +478,7 @@ namespace banana
 			it.at = pct < 0 ? 5 : std::min(10, std::max(0, (pct + 5) / 10));
 			return;
 		}
-		if (it.kind != Item::CHOICE) return;
+		if (it.kind != Item::CHOICE && it.kind != Item::PERCENT) return;
 		// the schema's default (settings_defaults.cpp), else the row's first choice
 		std::string def = settingDefault(it.key);
 		if (def.empty()) def = it.values[0];
@@ -711,6 +722,7 @@ namespace banana
 		if (it.file == data + "/bananad.conf") poke("bananad");
 		if (it.key == "timezone") { setenv("TZ", v.c_str(), 1); tzset(); poke("bananad"); }	// bananad's logs too
 		if (it.key == "night_light") nightChanged = true;	// the menu applies the panel's gamma (main.cpp)
+		if (it.key.compare(0, 7, "shader_") == 0) shaderChanged = true;	// and its mask and colour
 		if (it.key == "wifi") spawn("/usr/libexec/banana/wifi", v == "on" ? "up" : "down");
 		if (it.key == "ssh") spawn("/usr/libexec/banana/ssh", v == "on" ? "up" : "down");
 		if (it.key == "adb") spawn("/usr/libexec/banana/adb", v == "on" ? "up" : "down");
@@ -763,7 +775,7 @@ namespace banana
 		}
 		int n = (int)it.values.size();
 		int at = it.at + dir;
-		if (it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME) at = std::min(n - 1, std::max(0, at));	// a slider stops at its ends
+		if (it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME || it.kind == Item::PERCENT) at = std::min(n - 1, std::max(0, at));	// a slider stops at its ends
 		else at = (at + n) % n;
 		if (at == it.at) return NONE;
 		it.at = at;
@@ -784,6 +796,7 @@ namespace banana
 		std::string beforeAccent = getConfValue(menu, "accent", "yellow");
 
 		resetSettings(data, emulator ? ResetScope::Emulator : ResetScope::System);
+		if (!emulator) shaderChanged = true;	// the panel goes back to the defaults with the rows
 
 		if (!emulator)
 		{
@@ -903,10 +916,15 @@ namespace banana
 		int n = (int)groups.size();
 		switch (k)
 		{
-		// a grid of three columns, as the in-game menu's main page
+		// a grid, as the in-game menu's main page: up and down keep the column, stopping at a short last row's end
 		case Key::LEFT: gsel = (gsel + n - 1) % n; return MOVED;
 		case Key::RIGHT: gsel = (gsel + 1) % n; return MOVED;
-		case Key::UP: case Key::DOWN: gsel = (gsel + (k == Key::UP ? n - 3 : 3)) % n; return MOVED;
+		case Key::UP: case Key::DOWN:
+		{
+			int rows = (n + kGridCols - 1) / kGridCols, row = (gsel / kGridCols + (k == Key::UP ? rows - 1 : 1)) % rows;
+			gsel = std::min(n - 1, row * kGridCols + gsel % kGridCols);
+			return MOVED;
+		}
 		case Key::L: gsel = (gsel + n - 1) % n; return MOVED;
 		case Key::R: gsel = (gsel + 1) % n; return MOVED;
 		case Key::A:
@@ -969,8 +987,8 @@ namespace banana
 			if (downY >= 418 && downY <= 466) return pressGroups(downX < 320 ? Key::B : Key::A);
 			for (int g = 0; g < (int)groups.size(); g++)
 			{
-				float x = 18 + (g % 3) * 204, y = 82 + (g / 3) * 166;
-				if (downX < x || downX > x + 196 || downY < y || downY > y + 158) continue;
+				float x = 18 + tileOffset(g) + (g % kGridCols) * kGridPitch, y = 82 + (g / kGridCols) * 166;
+				if (downX < x || downX > x + kGridTile || downY < y || downY > y + 158) continue;
 				if (g != gsel) { gsel = g; return MOVED; }
 				return pressGroups(Key::A);
 			}
@@ -1359,19 +1377,18 @@ namespace banana
 		return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
 	}
 
-	// the groups grid has 3 tiles to a row; a last row with fewer is inset so the block reads centred rather than
-	// leaving a hole in the bottom-right
+	// a last row with fewer tiles is inset so the block reads centred rather than leaving a hole in the bottom-right
 	float Settings::tileOffset(int g) const
 	{
-		int n = std::min<int>((int)groups.size(), 6);
-		int row = g / 3, inRow = std::min(3, n - row * 3);
-		return inRow > 0 ? (3 - inRow) * 204 / 2.0f : 0;
+		int n = std::min<int>((int)groups.size(), kGridMax);
+		int row = g / kGridCols, inRow = std::min(kGridCols, n - row * kGridCols);
+		return inRow > 0 ? (kGridCols - inRow) * kGridPitch / 2.0f : 0;
 	}
 
 	bool Settings::animating() const
 	{
 		if (!mOpen || page != LIST) return false;
-		if (inGroups) return aCol != gsel % 3 || aRow != gsel / 3 || aOff != tileOffset(gsel);
+		if (inGroups) return aCol != gsel % kGridCols || aRow != gsel / kGridCols || aOff != tileOffset(gsel);
 		return aPick != sel || aTop != top;
 	}
 
@@ -1382,7 +1399,7 @@ namespace banana
 		aLast = t;
 		float k = 1 - (float)std::exp(-dt / 55.0);
 		auto ease = [&](float& v, float to) { if (v < -0.5f) v = to; v += (to - v) * k; if (std::fabs(to - v) < 0.01f) v = to; };
-		if (inGroups) { ease(aCol, (float)(gsel % 3)); ease(aRow, (float)(gsel / 3)); ease(aOff, tileOffset(gsel)); }
+		if (inGroups) { ease(aCol, (float)(gsel % kGridCols)); ease(aRow, (float)(gsel / kGridCols)); ease(aOff, tileOffset(gsel)); }
 		else
 		{
 			int g = groupOf(sel);
@@ -1408,22 +1425,23 @@ namespace banana
 		text(sub.c_str(), true, 17, 602 - sw, 31, p.muted);
 		advance();
 		aGroup = -1;	// (the list starts still when a group opens)
-		int gcount = std::min<int>((int)groups.size(), 6);
-		auto tileX = [&](int g) { return 18 + tileOffset(g) + (g % 3) * 204; };
-		auto tileY = [&](int g) { return 82 + (g / 3) * 166; };
-		for (int g = 0; g < gcount; g++) box("slot", false, tileX(g), tileY(g), 196, 158);
-		box("pick", true, 18 + aOff + aCol * 204, 82 + aRow * 166, 196, 158);
+		int gcount = std::min<int>((int)groups.size(), kGridMax);
+		const float mid = kGridTile / 2.0f;
+		auto tileX = [&](int g) { return 18 + tileOffset(g) + (g % kGridCols) * kGridPitch; };
+		auto tileY = [&](int g) { return 82 + (g / kGridCols) * 166; };
+		for (int g = 0; g < gcount; g++) box("slot", false, tileX(g), tileY(g), kGridTile, 158);
+		box("pick", true, 18 + aOff + aCol * kGridPitch, 82 + aRow * 166, kGridTile, 158);
 		for (int g = 0; g < gcount; g++)
 		{
-			bool on = std::fabs(g % 3 - aCol) < 0.5f && std::fabs(g / 3 - aRow) < 0.5f;
+			bool on = std::fabs(g % kGridCols - aCol) < 0.5f && std::fabs(g / kGridCols - aRow) < 0.5f;
 			float x = tileX(g), y = tileY(g);
-			iconCentred(items[groupStart(g)].icon, x + 98, y + 22, 2);
-			std::string label = fit(tr(groups[g]), true, 19, 180);
-			float lw = text(label, true, 19, 0, 0, p.ink, false, 0, true);
-			text(label, true, 19, x + 98 - lw / 2, y + 84, on ? p.onPick : p.ink);
-			std::string hint = fit(tr(groupHint(g)), false, 14, 176);
+			iconCentred(items[groupStart(g)].icon, x + mid, y + 22, 2);
+			std::string label = fit(tr(groups[g]), true, 17, kGridTile - 8);	// (17: "Display & sound" fits the tile whole)
+			float lw = text(label, true, 17, 0, 0, p.ink, false, 0, true);
+			text(label, true, 17, x + mid - lw / 2, y + 85, on ? p.onPick : p.ink);
+			std::string hint = fit(tr(groupHint(g)), false, 14, kGridTile - 20);
 			float hw = text(hint, false, 14, 0, 0, p.muted, false, 0, true);
-			text(hint, false, 14, x + 98 - hw / 2, y + 114, on ? p.onPickAccent : p.muted);
+			text(hint, false, 14, x + mid - hw / 2, y + 114, on ? p.onPickAccent : p.muted);
 			if (on)
 			{
 				// the selected group's size, a small plate in the tile's corner
@@ -1431,8 +1449,8 @@ namespace banana
 				snprintf(cb, sizeof cb, "%d", groupEnd(g) - groupStart(g));
 				float tw = text(cb, true, 14, 0, 0, p.kbdInk, false, 0, true);
 				float bw2 = tw + 16;
-				box("kbd", false, x + 196 - bw2 - 10, y + 10, bw2, 22);
-				text(cb, true, 14, x + 196 - bw2 - 10 + 8, y + 14, p.kbdInk);
+				box("kbd", false, x + kGridTile - bw2 - 10, y + 10, bw2, 22);
+				text(cb, true, 14, x + kGridTile - bw2 - 10 + 8, y + 14, p.kbdInk);
 			}
 		}
 		float bw = faceWidth("B", tr("Close"));
@@ -1509,7 +1527,7 @@ namespace banana
 			icon(it.icon, 34, y + 12, 1);
 			text(tr(it.label), true, 20, 84, y + 16, on ? p.onPick : p.muted);
 			std::string v;
-			if (it.kind == Item::CHOICE || it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME) v = it.names[it.at];
+			if (it.kind == Item::CHOICE || it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME || it.kind == Item::PERCENT) v = it.names[it.at];
 			else if (it.kind == Item::ACTION) v = armed == i ? tr("Press A again") : "";
 			else if (it.kind == Item::INFO) v = "";
 			// a page's row: Network the network it is on; Update the packages waiting on the card; the others nothing
@@ -1525,7 +1543,7 @@ namespace banana
 			// the value's own plate (not on the pick: the raised yellow plate is framing enough there)
 			if (!on) box("chip", false, 566 - vw - 8, y + 13, vw + 16, 30);
 			if (it.kind == Item::ACTION || it.kind == Item::PAGE) { text(v, true, 19, 566 - vw, y + 17, vc); continue; }
-			if (it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME)
+			if (it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME || it.kind == Item::PERCENT)
 			{
 				// the in-menu bar (the hero panel's, on one screen too): [····] 50%, no arrows (the bar is the affordance)
 				int pct = atoi(it.values[it.at].c_str());

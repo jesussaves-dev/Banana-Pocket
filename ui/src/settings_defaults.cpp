@@ -30,6 +30,8 @@ namespace banana
 		const char* const MSC[] = { "off", "ro", "rw" };
 		const char* const NIGHTLIGHT[] = { "off", "warm", "warmer" };
 		const char* const FRAME_BRIGHTNESS[] = { "100", "85", "70", "50", nullptr };
+		const char* const SHADER_MASKS[] = { "off", "crt240", "aperture", "lcd", nullptr };
+		const char* const SHADER_COLORS[] = { "bypass", "trinitron", "pvm", "handheld", nullptr };
 
 		// The values /etc/banana/settings.conf documents, and the ones a card is completed with when that file is
 		// missing (the host test, or a card whose root is older than the menu). Keep in step with the template file.
@@ -55,6 +57,9 @@ namespace banana
 			{ "bezels", "on", ENUM, ON_OFF, 0, 0 },
 			{ "frame_brightness", "85", ENUM, FRAME_BRIGHTNESS, 0, 0 },
 			{ "night_light", "off", ENUM, NIGHTLIGHT, 0, 0 },
+			{ "shader_mask", "off", ENUM, SHADER_MASKS, 0, 0 },
+			{ "shader_mask_intensity", "50", INTEGER, nullptr, 10, 100 },
+			{ "shader_color", "bypass", ENUM, SHADER_COLORS, 0, 0 },
 			{ "core.gba", "gpsp", CORE, nullptr, 0, 0 },
 			{ "core.gbc", "gambatte", CORE, nullptr, 0, 0 },
 			{ "core.gb", "gambatte", CORE, nullptr, 0, 0 },
