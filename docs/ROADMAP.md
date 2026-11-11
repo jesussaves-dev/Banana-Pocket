@@ -2,12 +2,21 @@
 Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Ordered by what is recommended next.
 
 ## Recommended next (in order)
-0.6.1 closed out the compositor (see *Done*). BananaTube's player work and the system shaders are on `main`, not yet in a
-release. Next:
-1. **Bluetooth** -- designed and planned, not built (see *In progress*): a bespoke no-D-Bus agent for Classic pads,
+0.7.0 is the new UI: the SNES style and Banana Street (see *Done*). Next:
+1. **Finish the SNES style** (see *In progress*): the screens and pieces it still draws the Classic way, and the parts
+   of the plan not built yet.
+2. **Bluetooth** -- designed and planned, not built (see *In progress*): a bespoke no-D-Bus agent for Classic pads,
    blocked on a Classic controller to test with.
 
 ## In progress
+
+- **The SNES style: what is left after 0.7.0.** The plan is the "Banana Street" page (plan artifact); tasks 1-7 are done.
+  - Still drawn the Classic way in the SNES style: the Wi-Fi network list, Updates, first-time setup and Save states
+    pages; the volume/brightness pill; the battery and charger notices. Touch does nothing in the SNES workshop.
+  - Not built yet: SNES-style menu sounds; the banana battery icon (ripe to brown as the charge drops); box art dithered
+    to the palette, with a setting for the original art; a closed shop's hint naming the folder for that system's games;
+    the reverse mosaic on wake (decoration only, after the panel is restored).
+  - A Genesis style needs only a theme with `"style": "genesis"`: the Style row lists the styles of the themes present.
 
 - **Bluetooth: designed, not built (2026-11-08).** Stack chosen by request: a bespoke `banana-bt` over the kernel
   mgmt API, a small SDP client and `hidp` — no D-Bus, no BlueZ, no udev; Bluetooth Classic HID only. Design:
@@ -234,6 +243,13 @@ accessibility / in-menu log viewer / battery-time item (2026-11-04).)*
 - **Hardware Validation (`docs/RPC-TEST.md`):** In progress on physical units.
 
 ## Done
+- [x] **0.7.0: the new UI, the SNES style (2026-11-11).** Settings > Display & sound > Style picks Classic (the Pocket
+  layout and its themes) or SNES, the new default on a new card. SNES is Banana Street: every system a shop on one
+  street, on a 310 x 270 grid drawn at exactly 4 device px a unit, art baked by `tools/gen-street.py` to the Super NES's
+  rules (15-bit colour, shading ramps, scanline skies, parallax) for each time of day. Banana's own pixel fonts, the
+  mosaic launch, the walker (walks, turns, bobs), and SNES painters for Settings (the workshop), the keyboard (the phone
+  book) and the pause menu (the ticket). Five neighborhoods: Banana Street, Harbor, Blossom Row, Sundown Strip and Old
+  Town. `tools/check-themes.py` checks their art and that the generated ones match `street.json`.
 - [x] **System shaders (on `main`, 2026-11-11).** Settings > Shaders: CRT, aperture-grille and LCD masks on the overlay
   plane at a strength slider, and Trinitron, PVM and handheld colour through the panel's CTM, with no GPU work. The mask
   lines up with the game's pixels at integer scales and sits under a frame; MODE + Select toggles it for one game. The
