@@ -53,9 +53,9 @@
 
   "screens": {
     "all": { "top": [
-      // the clock and the battery, each on a small panel over the sky
-      { "type": "rect", "x": 4, "y": 4, "w": 34, "h": 13, "fill": "=hud", "border": 1, "borderColor": "=gold" },
-      { "type": "text", "x": 4, "w": 34, "y": 6, "align": "center", "text": "{clock}", "size": 8, "color": "=paper" },
+      // the clock (wide enough for "01:48 PM") and the battery, each on a small panel over the sky
+      { "type": "rect", "x": 4, "y": 4, "w": 46, "h": 13, "fill": "=hud", "border": 1, "borderColor": "=gold" },
+      { "type": "text", "x": 4, "w": 46, "y": 6, "align": "center", "text": "{clock}", "size": 8, "color": "=paper" },
       { "type": "rect", "right": 4, "y": 4, "w": 34, "h": 13, "fill": "=hud", "border": 1, "borderColor": "=gold", "visible": "=battery >= 0" },
       { "type": "text", "right": 4, "w": 34, "y": 6, "align": "center", "text": "{battery}%", "size": 8,
         "color": "=battery < 20 ? '#ff6a6a' : paper", "visible": "=battery >= 0" }
@@ -146,8 +146,9 @@
         { "use": "band", "with": { "top": 209, "bh": 17, "cell": 30, "speed": 187 } },
         { "type": "rect", "x": 0, "y": 202, "w": 310, "h": 2, "fill": "=paperLo" },
 
-        // the walker: Banana's bunch in front of the selected shop's door, bobbing while the street holds still
-        { "type": "image", "src": "banana.png", "fit": "pixel", "x": 167, "y": "=158 + (scroll == cursor ? round(pulse(time, 1200)) : 0)", "w": 22, "h": 22 },
+        // the walker: Banana's bunch in front of the selected shop's door. It holds still: anything reading `time`
+        // redraws the whole street every frame, which on the handheld cost 7-14 ms a frame with nothing moving.
+        { "type": "image", "src": "banana.png", "fit": "pixel", "x": 167, "y": 158, "w": 22, "h": 22 },
 
         // what's selected, on a panel at the bottom
         { "type": "rect", "x": 0, "y": 224, "w": 310, "h": 46, "fill": "=hud", "border": 1, "borderColor": "=gold" },
@@ -169,8 +170,8 @@
           "item": { "type": "rect", "y": 9, "w": 310, "h": 1, "fill": "=mortar" } },
         { "type": "rect", "x": 0, "y": 0, "w": 310, "h": 21, "fill": "=hud", "border": 1, "borderColor": "=gold" },
         // between the clock and the battery (drawn over every view)
-        { "type": "image", "src": "{sys.icon}", "fit": "pixel", "x": 44, "y": 3, "w": 16, "h": 16 },
-        { "type": "text", "x": 64, "y": 5, "w": 160, "text": "{sys.name}", "size": 10, "color": "=gold" },
+        { "type": "image", "src": "{sys.icon}", "fit": "pixel", "x": 56, "y": 3, "w": 16, "h": 16 },
+        { "type": "text", "x": 76, "y": 5, "w": 150, "text": "{sys.name}", "size": 10, "color": "=gold" },
         { "type": "text", "right": 42, "y": 7, "w": 40, "align": "right", "text": "{cursor + 1}/{count}", "size": 8, "color": "=paper" },
 
         // the box on the counter
