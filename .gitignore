@@ -44,3 +44,5 @@ __pycache__/
 /tools/dmabuf-capture/build/
 /ui/build/
 /tools/egl-buffer-client/build/
+/AGENTS.md
+/docs/superpowers/
