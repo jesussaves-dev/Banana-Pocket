@@ -1,7 +1,7 @@
 # PLAN: Banana's own kernel (RPC / SM4450)
 
 Written 2026-11-10 · status: **proposal, nothing started** · owner decision needed per phase (kernel work needs explicit
-approval under `AGENTS.md` §4, and this plan is that request, phase by phase).
+approval, and this plan is that request, phase by phase).
 
 ## 0. What "our own kernel" can honestly mean
 

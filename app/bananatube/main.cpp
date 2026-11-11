@@ -2159,7 +2159,7 @@ struct App
 	}
 
 	// ---- evdev touch ---------------------------------------------------------------------------------------------
-	// SDL2's Wayland backend does not bind wl_touch, so under cage the app receives no SDL_FINGER and no emulated
+	// SDL2's Wayland backend does not bind wl_touch, so the app receives no SDL_FINGER and no emulated
 	// pointer. The panel's touchscreen (FT5x06) is read from evdev here, with the same mapping banana-ui uses: scale
 	// the raw axes to the panel's native mode, then turn them by the panel's rotation into the app surface's own
 	// (upright) 1240x1080 space. The turn defaults to 90 (the RPC's panel) and can be overridden on the card with
@@ -2448,7 +2448,7 @@ struct App
 						cycleTab((ev.key.keysym.mod & KMOD_SHIFT) ? -1 : 1);
 					else if (k >= 32 && k < 127 && mode == Mode::KEYS) query += static_cast<char>(k);
 				}
-				// Touch is read from evdev (pollTouch), never through SDL: under cage SDL delivers a touch as a
+				// Touch is read from evdev (pollTouch), never through SDL: under cage (before 0.6.1) SDL delivered a touch as a
 				// *pointer* at offset coordinates, and acting on that too fired a second, wrong tap per gesture (the
 				// phantom 'h'/'7' characters). SDL's keyboard events above stay (a desktop keyboard for testing).
 			}

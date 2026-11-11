@@ -19,7 +19,7 @@ image. This page walks both, from a stock Android handheld.
 - A **card reader** and a computer (Linux, Windows or macOS).
 - Optional but handy: a USB‑C **data** cable — for `fastboot`, for the Android ABL scripts, and later for updates.
 - The image: **`banana-retroid-pocket-classic.img.gz`** from
-  [the Releases page](https://github.com/jesussaves-ai/Banana-Pocket/releases).
+  [the Releases page](https://github.com/jesussaves-dev/Banana-Pocket/releases).
 
 ## Step 1 — Install a Linux bootloader (SM4450)
 

@@ -105,7 +105,7 @@ only cuts segments out of downloads.) A skipped segment is not skipped again in 
 "Skipped sponsor (X to undo)".
 
 **Touch:** the panel's touchscreen is the FT5x06 (multitouch, `/dev/input/event*`). SDL2's **Wayland** backend does not
-bind `wl_touch`, so under `cage` the app receives no `SDL_FINGER` and no emulated pointer — `banana-tube` therefore
+bind `wl_touch`, so the app receives no `SDL_FINGER` and no emulated pointer — `banana-tube` therefore
 reads the touchscreen from **evdev** itself, with the same mapping `banana-ui` uses: scale the raw axes to the panel's
 native mode (1080x1240), then turn them by the panel's rotation into the app surface's upright 1240x1080 space. The
 turn defaults to 90 (the RPC's panel) and can be overridden on the card with `/data/banana/bananatube/touch.conf`
@@ -124,8 +124,8 @@ large zones:
 - **the rest (centre)**: play / pause.
 
 `--osd-playing-msg` shows the controls briefly when a video starts. The gamepad still works too (A play/pause, d-pad
-seek, B stop). `banana-tube` never acts on SDL's touch: under `cage` SDL reports a touch as a *pointer* at offset
-coordinates, and acting on both fired a second, wrong tap per gesture (the phantom characters).
+seek, B stop). `banana-tube` never acts on SDL's touch: under `cage`, which ran it before 0.6.1, SDL reported a touch
+as a *pointer* at offset coordinates, and acting on both fired a second, wrong tap per gesture (the phantom characters).
 
 
 Playback: `banana-tube` starts `mpv` (a second client of the compositor, covering the app's window) and keeps the pad to itself, telling mpv what to do

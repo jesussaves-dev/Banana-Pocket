@@ -28,7 +28,7 @@
 # Ultimate recovery: if this process is killed with SIGKILL (or the handheld loses power) the stand-in can stay in
 # the respawn slot; a reboot always restores the normal system (the bind mount is per-boot).
 #
-# It does not touch cage, the launchers, the kernel or the image; the known-good fallback is untouched.
+# It does not touch the launchers, the kernel or the image; the known-good fallback is untouched.
 
 set -u
 

@@ -1267,12 +1267,12 @@ int main(int argc, char **argv)
 	const char *verdict = NULL, *why = "";
 	if (!opt_no_atomic && !matrix_ran) { verdict = "HOLD"; why = "the atomic matrix did not run"; }
 	else if (opt_no_atomic) { verdict = "HOLD"; why = "--no-atomic: enumeration only"; }
-	else if (!overlay_present) { verdict = "NO-GO"; why = "no OVERLAY plane can feed the target CRTC; retain cage"; }
-	else if (overlay_state == ST_FAIL) { verdict = "NO-GO"; why = "the PRIMARY + OVERLAY combination was rejected (or cannot stack); retain cage"; }
+	else if (!overlay_present) { verdict = "NO-GO"; why = "no OVERLAY plane can feed the target CRTC"; }
+	else if (overlay_state == ST_FAIL) { verdict = "NO-GO"; why = "the PRIMARY + OVERLAY combination was rejected (or cannot stack)"; }
 	else if (overlay_state == ST_NOT_RUN) { verdict = "HOLD"; why = "the overlay plane exists but its rows did not run"; }
 	else if (!overlay_ar24) { verdict = "HOLD"; why = "the overlay has no AR24 (opaque only): record the partial result before Phase 2"; }
 	else if (!stack_known) { verdict = "HOLD"; why = "z-order is not exposed on both planes; stacking cannot be verified"; }
-	else if (!stack_ok) { verdict = "NO-GO"; why = "the overlay cannot be placed above the primary; retain cage"; }
+	else if (!stack_ok) { verdict = "NO-GO"; why = "the overlay cannot be placed above the primary"; }
 	else if (!rotation_advertised) { verdict = "GO (EGL rotate)"; why = "overlay works, primary rotate-90 is not advertised: budget one EGL pass"; }
 	else if (rotation_state == ST_PASS) { verdict = "GO (direct plane)"; why = "overlay and primary rotation are both accepted"; }
 	else if (rotation_state == ST_FAIL) { verdict = "GO (EGL rotate)"; why = "overlay works, primary rotation was rejected: budget one EGL pass"; }

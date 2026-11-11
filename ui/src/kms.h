@@ -6,7 +6,8 @@
 // (ARGB8888, premultiplied, zpos top) and a black buffer stays on the primary. The panel is portrait-native
 // 1080x1240 while the menu draws 1240x1080: the rotation happens once, in software, in turn() (90 degrees
 // clockwise). The Wayland output of a future game client is the logical 1240x1080; its game frame would be
-// rotated by the same 90 degrees. Without an overlay/atomic KMS the old single-plane path is kept.
+// rotated by the same 90 degrees. Without an overlay/atomic KMS the old single-plane path is kept. A CRT/LCD mask
+// (shader_mask.h) takes the overlay, and the menu then moves to the primary.
 #include "shader_mask.h"
 #include <cstdint>
 #include <string>

@@ -1,6 +1,6 @@
 // The system-wide shader: a CRT/LCD mask on the overlay plane and the panel's colour matrix. Pure, no DRM calls, so
 // the patterns, the rotation and the composed base are unit-tested without a display (ui/tests/shader-mask-test.cpp)
-// and `Display` only has to hand the result to KMS. See docs/PLAN: the system-wide shader plan.
+// and `Display` only has to hand the result to KMS. See docs/ARCHITECTURE.md, section 3.
 #pragma once
 #include <algorithm>
 #include <cmath>
@@ -137,7 +137,7 @@ namespace banana
 		return false;
 	}
 
-	// the overlay plane's alpha for the slider's percent, in 16.16
+	// the overlay plane's alpha for the slider's percent: DRM's 16-bit range, 0xFFFF opaque
 	constexpr uint32_t maskPlaneAlpha(int pct) { return ((uint32_t)pct * 65535u + 50u) / 100u; }
 
 	// the panel's GAMMA_LUT: the profile's curve (only PVM has one) with the night light's gains, so both share it.
@@ -160,7 +160,7 @@ namespace banana
 		lut[0].red = lut[0].green = lut[0].blue = 0;
 	}
 
-	// 16.16, row-major, non-negative (CONVERT_S3_15 drops the sign bit), quantized to 2^-15 so the kernel's shift is
+	// S31.32, row-major, non-negative (CONVERT_S3_15 drops the sign bit), quantized to 2^-15 so the kernel's shift is
 	// exact, and each row sums to at most 1.0. BYPASS is blob 0; the 9300K gains come from that white point, the
 	// other two are starting choices to tune on the panel.
 	inline constexpr uint64_t kColorCtm[COLOR_PROFILE_COUNT][9] = {

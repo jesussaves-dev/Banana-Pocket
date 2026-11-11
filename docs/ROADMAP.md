@@ -2,7 +2,8 @@
 Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Ordered by what is recommended next.
 
 ## Recommended next (in order)
-0.6.1 closed out the compositor (see *Done*). Next:
+0.6.1 closed out the compositor (see *Done*). BananaTube's player work and the system shaders are on `main`, not yet in a
+release. Next:
 1. **Bluetooth** -- designed and planned, not built (see *In progress*): a bespoke no-D-Bus agent for Classic pads,
    blocked on a Classic controller to test with.
 
@@ -10,7 +11,8 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
 
 - **Bluetooth: designed, not built (2026-11-08).** Stack chosen by request: a bespoke `banana-bt` over the kernel
   mgmt API, a small SDP client and `hidp` — no D-Bus, no BlueZ, no udev; Bluetooth Classic HID only. Design:
-  `docs/superpowers/specs/2026-11-08-bluetooth-design.md`; plan (9 tasks): `docs/superpowers/plans/2026-11-08-bluetooth.md`.
+  `docs/superpowers/specs/2026-11-08-bluetooth-design.md`; plan (9 tasks): `docs/superpowers/plans/2026-11-08-bluetooth.md`
+  (local working notes, not tracked in the repo).
   The kernel is ready: the device tree carries the `qcom,wcn3950-bt` node under the WCN3990 combo,
   `bluetooth`/`hci_uart`/`btqca`/`hidp` build as modules, and `qca/cmbtfw13.tlv` + `.ver` ship in `/lib/firmware`; only
   userspace is missing. **Blocked on test hardware:** the pad here is an 8BitDo Ultimate 2, which speaks BLE, and this
@@ -32,6 +34,14 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
     measured against test 1's 25–29 mA: the two clean half-hour windows held **26 mA** (11 and 12 mAh), a 2.2 h window
     **29 mA** with two spurious wakes in it, and the short ones 32–36 mA (too brief to read). A bound UDC is **not**
     what keeps the controller or its PHY clocks alive -- the hook earns nothing and is a candidate to drop.
+  - **Measured 2026-11-11: the SoC never reaches low power, and the ADSP is the prime suspect.** With a `qcom,rpmh-stats`
+    node in the device tree (branch `dts/rpmh-stats`, not merged), a 76-minute `deep` sleep with the sound server stopped
+    drew about 32 mA, and `aosd`, `cxsd` and `ddr` in `debugfs/qcom_stats` stayed at **0**. APSS and WPSS slept the whole
+    time; the ADSP's counters never moved, its last sleep being about when the sound card comes up at boot. A second
+    sleep with the sound server down and the LPASS macros runtime-suspended first made no difference, so it is not
+    suspend racing their 3 s autosuspend. LPASS clock votes stay on with everything idle (`LPASS_HW_DCODEC` 6,
+    `TX_CORE_MCLK` 3). Stopping the ADSP to test is unsafe: it also runs `qcom_battmgr` and USB-C (`ucsi_glink`). Next:
+    a sleep with the audio drivers unloaded, to release those votes.
   - **Queued, one variable per sleep:** (3) a `s2idle` sleep for comparison, to know what `deep` is worth. If none
     moves it, the floor is the platform's S2R depth (firmware) and the remaining wins are on the wake side.
     (Unbinding `ath10k_snoc`/WPSS was tried and rejected: 69 mA over 0.4 h, no win.)
@@ -224,9 +234,10 @@ that costs nothing idle). Sizes are rough: **S** a day or two, **M** about a wee
   one to try on hardware with a real card before trusting it.
 
 ## Maintenance
-- **The repo moved:** GitHub redirects `jesussaves-ai/Banana-Pocket` to `jesussaves-dev/Banana-Pocket`. `update-check`'s
-  `REPO`, `os-release`'s `HOME_URL` and the README still name the old one; OTA works through the 301 (the release list
-  and the asset download both follow it), but switch the three in the next build.
+- **System shaders, two loose ends.** With a mask or colour active, the first commits after a wake can fail `EBUSY`: at
+  most 5 frames (about 83 ms) as the screen returns, not visible; 45 failures in 21 game wakes against 2 in 9 with both
+  off, cause not found. And one `[dpu error] enc35 timeout pending` in about 60 wakes, on the retry after a failed
+  `deep` suspend (`-95`, which predates the shaders).
 - **Agent DX:** `make agent-check` (quiet syntax + host compile + the fast suite, 4 lines on success) and `make agent-map` (regenerates the source map) were added 0.5.x; keep the `AGENTS.md` Source Map fresh when core files move.
 
 *(Dropped: a quick-settings/performance overlay -- performance is fine and RetroArch's own OSD (`fps_show` /
@@ -244,12 +255,17 @@ accessibility / in-menu log viewer / battery-time item (2026-11-04).)*
 - **Hardware Validation (`docs/RPC-TEST.md`):** In progress on physical units.
 
 ## Done
+- [x] **System shaders (on `main`, 2026-11-11).** Settings > Shaders: CRT, aperture-grille and LCD masks on the overlay
+  plane at a strength slider, and Trinitron, PVM and handheld colour through the panel's CTM, with no GPU work. The mask
+  lines up with the game's pixels at integer scales and sits under a frame; MODE + Select toggles it for one game. The
+  night light moved to the same atomic `GAMMA_LUT`, and the flip path no longer allocates. Accepted on the unit: 22
+  wakes in the menu and 21 with a game running, 16.67 ms pacing, 0 drops.
 - [x] **Bezels by the compositor.** Screen frames moved from RetroArch's overlay to the overlay plane, for every
   RetroArch system and ports, chosen per system (Settings > Frames) and per game (Game options, or the pause menu's
   *Frame* row, which applies at once). The game's window is sized to the frame's hole, so no integer scale is forced and
   a shader runs under a frame. GB, GBC and GBA keep their console art with the LCD grid removed; anything else can use a
   frame drawn from the theme. Measured: 0 dropped frames with the overlay held through play. Design:
-  `docs/superpowers/specs/2026-11-10-compositor-bezels-design.md`.
+  `docs/superpowers/specs/2026-11-10-compositor-bezels-design.md` (local notes).
 - [x] **0.6.1: the compositor closed out (2026-11-10).** `cage` and `wlroots` are out of the tree and the image, so
   `banana-ui` is the only path for RetroArch, ports and BananaTube (T7/T8 in `docs/PLAN_DRM_COMPOSITOR.md`). A menu wake
   keeps DRM master on the same fd, so a surviving child can no longer leave the panel dark (F15). PSX is settled at 60

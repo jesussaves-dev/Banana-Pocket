@@ -29,7 +29,7 @@ All of these are the handheld's real 1240×1080 panel — grabbed by the QEMU bo
 |---|---|
 | ![the menu](docs/screenshots/menu_thumb.png) | the menu, after the library scan |
 | ![first-time setup](docs/screenshots/first-setup_thumb.png) | the first-time setup: Wi-Fi, time zone, RetroAchievements, box art |
-| ![settings](docs/screenshots/settings_thumb.png) | Settings (Start): display & sound, sleep & power, RetroArch, network, system |
+| ![settings](docs/screenshots/settings_thumb.png) | Settings (Start): display & sound, sleep & power, RetroArch, network, system, frames, shaders |
 | ![update](docs/screenshots/update_thumb.png) | System > Update: a package waiting to be written to the other slot |
 | ![a game](docs/screenshots/game_thumb.png) | a Game Boy Advance game, running through RetroArch on the panel |
 | ![the pause menu](docs/screenshots/pause-menu_thumb.png) | **new:** the pause menu over a frozen game — slot 3 picked, its save-state screenshot on the right |
@@ -84,6 +84,9 @@ flowchart LR
   is **bit-exact**: a 1-pixel LCD grid comes out as a 1-pixel LCD grid.
 - **Banana's layer** — volume and brightness, the battery, achievements, the pause menu — sits on the overlay plane.
   When nothing is showing, that plane is switched off entirely.
+- **System shaders** (Settings > Shaders) cost the GPU nothing: a CRT, aperture-grille or LCD mask rides on the overlay
+  plane, and the panel's own colour matrix gives a Trinitron, PVM or handheld-LCD look, over the menu and every game
+  alike. The mask lines up with the game's pixels at integer scales, and **MODE + Select** turns it off for one game.
 - **Sleep** keeps the game and its graphics where they were; the panel is re-armed on wake.
 
 ## 🧩 What runs the show
@@ -149,7 +152,7 @@ Screenshots and logs land in `qemu-out/`. Want to press the buttons yourself? Ad
 ### 🕹️ Running it on the handheld
 
 Grab the image and the update package from
-[the Releases page](https://github.com/jesussaves-ai/Banana-Pocket/releases).
+[the Releases page](https://github.com/jesussaves-dev/Banana-Pocket/releases).
 
 The full walkthrough — the **OpenABL** bootloader, the Android root/unlock dance to install it, writing the card and
 the first boot — is in **[`docs/INSTALL.md`](docs/INSTALL.md)**.

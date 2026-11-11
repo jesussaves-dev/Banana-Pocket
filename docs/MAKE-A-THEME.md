@@ -159,7 +159,7 @@ write them for you.
 ## 5. Sharing your theme
 
 A theme is its `.json` plus its folder, if it has one. Zip those together and post the zip — that is what the
-themes in [banana-themes](https://github.com/jesussaves-ai/banana-themes) are.
+themes in [banana-themes](https://github.com/jesussaves-dev/banana-themes) are.
 
 Worth doing: put a `name` and an `author` in the file, and say which BananaOS it was made for. Pictures and fonts
 are your own or openly licensed — a lot of the old console and computer fonts are not.
@@ -189,6 +189,5 @@ on a grey) and the position you typed (280 is fine, 680 is off the 640-wide scre
   [turntable.json](themes/turntable.json) (moves on its own), [classic.json](themes/classic.json) (a status bar).
 - **[themes/README.txt](../system/rootfs/usr/share/banana/themes/README.txt)** — the colour keys, by what they
   paint.
-- **[THEME-EDITOR.md](THEME-EDITOR.md)** — for anyone building their own editor rather than a theme.
 - **[theme.schema.json](theme.schema.json)** — the format as a machine-readable schema, if you would rather have
   your editor check it for you.

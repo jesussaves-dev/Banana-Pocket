@@ -7,7 +7,7 @@
 # restores them transactionally, runs the command in its own session, and always restores the launcher: on normal
 # exit, on failure, on SIGTERM/HUP. A reboot is the last resort (the bind mount is per-boot).
 #
-# This is a test harness for docs/PLAN_DRM_COMPOSITOR.md phase 2; it does not touch cage or any launcher.
+# This is a test harness for docs/PLAN_DRM_COMPOSITOR.md phase 2; it does not touch any launcher.
 
 set -u
 NAME=dmabuf

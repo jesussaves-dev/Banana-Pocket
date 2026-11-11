@@ -45,6 +45,19 @@ internal Android is there.
       stays awake; the power button still sleeps it, and Settings > Sleep & power or `autosleep_minutes` in
       `banana/bananad.conf` asks for the timer back
 
+## System shaders
+
+Settings > Shaders. `tools/drm-probe-window.sh --color` (with `tools/drm-plane-probe`) shows on the panel what the
+hardware can do, without the menu.
+
+- [ ] Each Screen mask draws at once in the menu; Mask strength moves on each step
+- [ ] Each Screen colour looks different, and black stays black
+- [ ] The mask and colour survive sleep/wake, in the menu and with a game running
+- [ ] In a game with a console frame, the lines match the game's pixels and stay off the frame
+- [ ] MODE + Select takes the mask off and puts it back; after quitting that game the saved mask is back
+- [ ] The volume card and pause menu draw over the mask, with and without a frame
+- [ ] With the mask off and no frame, `plane[44]` in `/sys/kernel/debug/dri/1/state` shows `crtc=(null)`
+
 ## Fan and heat
 
 - [ ] The fan spins up under a game and settles when idle (`/sys/class/hwmon/*/pwm1`)
