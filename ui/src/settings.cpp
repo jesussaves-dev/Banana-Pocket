@@ -434,6 +434,8 @@ namespace banana
 			it.names.clear(); it.values.clear();
 			for (auto& st : themeStyles(userThemes())) { it.names.push_back(styleName(st)); it.values.push_back(st); }
 			std::string cur = themeStyle(getConfValue(it.file, "theme", "dark"));
+			// (the theme in use may be a "file:" one outside the list: its style is still listed)
+			if (std::find(it.values.begin(), it.values.end(), cur) == it.values.end()) { it.names.push_back(styleName(cur)); it.values.push_back(cur); }
 			it.at = 0;
 			for (size_t i = 0; i < it.values.size(); i++) if (it.values[i] == cur) it.at = (int)i;
 			return;
