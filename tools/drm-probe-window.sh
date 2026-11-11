@@ -6,10 +6,11 @@
 # a Ctrl-C, a probe failure or a timeout all restore the launcher.
 #
 #   drm-probe-window [--probe /data/drm-plane-probe] [--connector DSI-1] [--card /dev/dri/card0]
-#                    [--commit <git hash>] [--foreground]
+#                    [--commit <git hash>] [--foreground] [--color]
 #
 #   (no --foreground) it detaches with setsid, prints its log path, and returns; tail that log for the result.
 #   --foreground         run in this shell (a console, not a flaky SSH session)
+#   --color              the probe's real CTM and plane-alpha commits, to watch, instead of its TEST_ONLY matrix
 #
 # What it does, in order:
 #   1. checks: root, the probe, the launcher, no game, /data not handed to a computer, battery/charger
@@ -36,6 +37,7 @@ CONNECTOR=
 CARD=
 COMMIT=unknown
 FOREGROUND=0
+COLOR=0
 TARGET=/usr/bin/banana-ui-session
 STANDIN=/tmp/banana-drm-probe-standin
 CONF=/data/banana/bananad.conf
@@ -49,7 +51,8 @@ while [ $# -gt 0 ]; do
 	--card) CARD=$2; shift 2 ;;
 	--commit) COMMIT=$2; shift 2 ;;
 	--foreground) FOREGROUND=1; shift ;;
-	*) echo "usage: $0 [--probe PATH] [--connector NAME] [--card PATH] [--commit HASH] [--foreground]" >&2; exit 1 ;;
+	--color) COLOR=1; shift ;;
+	*) echo "usage: $0 [--probe PATH] [--connector NAME] [--card PATH] [--commit HASH] [--foreground] [--color]" >&2; exit 1 ;;
 	esac
 done
 
@@ -63,6 +66,7 @@ if [ "${DRM_PROBE_DETACHED:-0}" != 1 ] && [ "$FOREGROUND" != 1 ]; then
 	set -- --probe "$PROBE" --commit "$COMMIT"
 	[ -n "$CONNECTOR" ] && set -- "$@" --connector "$CONNECTOR"
 	[ -n "$CARD" ] && set -- "$@" --card "$CARD"
+	[ "$COLOR" = 1 ] && set -- "$@" --color
 	if command -v setsid >/dev/null 2>&1; then
 		DRM_PROBE_DETACHED=1 setsid "$0" "$@" </dev/null >>"$log" 2>&1 &
 	else
@@ -210,7 +214,7 @@ REPORT="$LOGDIR/drm-probe-$board-$ts.txt"
 	echo "kernel: $(uname -a)"
 	echo "probe commit: $COMMIT"
 	echo "probe sha256: $(sha256sum "$PROBE" | cut -d' ' -f1)"
-	echo "probe args: --take-master${CARD:+ --card $CARD}${CONNECTOR:+ --connector $CONNECTOR}"
+	echo "probe args: --take-master${CARD:+ --card $CARD}${CONNECTOR:+ --connector $CONNECTOR}$([ "$COLOR" = 1 ] && echo " --color")"
 	echo
 } > "$REPORT" || fail "cannot write $REPORT"
 
@@ -265,6 +269,7 @@ say "exclusive window: stand-in pid $STANDIN_PID, menu stopped"
 set -- --take-master
 [ -n "$CARD" ] && set -- "$@" --card "$CARD"
 [ -n "$CONNECTOR" ] && set -- "$@" --connector "$CONNECTOR"
+[ "$COLOR" = 1 ] && set -- "$@" --color
 say "running: timeout $TIMEOUT $PROBE $*"
 rm -f "$PROBE_PIDFILE"
 DRM_PROBE_PID="$PROBE_PIDFILE" DRM_PROBE_BIN="$PROBE" \

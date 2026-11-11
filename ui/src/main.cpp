@@ -1498,6 +1498,30 @@ int main(int argc, char** argv)
 		disp.setWarmth(v == "warmer" ? 2 : v == "warm" ? 1 : 0);
 	};
 	nightLight();
+	// the system shader's saved mask and colour, set before the first flip like the night light
+	std::string shaderMaskSet, shaderColorSet;	// what the panel has, so a slider move stays one integer
+	MaskGeom shaderGeom;		// the mask's cell for what is on screen: a game's, or the default in the menu
+	bool shaderChordOff = false;	// MENU + Select took the mask away for this game, unsaved
+	FrameHole shaderHole;		// the frame on screen's hole, to hand back to the compositor after a re-bake
+	auto shaderMaskOf = [](const std::string& m) {
+		return m == "crt240" ? SHADER_MASK_CRT_240P : m == "aperture" ? SHADER_MASK_APERTURE_GRILLE :
+		       m == "lcd" ? SHADER_MASK_LCD_GRID : SHADER_MASK_OFF;
+	};
+	std::function<void(bool)> shaderApply = [&](bool force) {
+		auto conf = [&](const char* k, const char* d) {
+			return getConfValue(o.data + "/settings.conf", k, getConfValue("/etc/banana/settings.conf", k, d));
+		};
+		std::string m = conf("shader_mask", "off"), c = conf("shader_color", "bypass");
+		disp.shaderSetIntensity(atoi(conf("shader_mask_intensity", "50").c_str()));
+		if (force || m != shaderMaskSet)
+			disp.shaderSetMask(shaderMaskOf(m), shaderGeom);
+		if (force || c != shaderColorSet)
+			disp.shaderSetColor(c == "trinitron" ? COLOR_PROFILE_TRINITRON_9300K : c == "pvm" ? COLOR_PROFILE_PVM_6500K :
+			                    c == "handheld" ? COLOR_PROFILE_HANDHELD_LCD : COLOR_PROFILE_BYPASS);
+		shaderMaskSet = m;
+		shaderColorSet = c;
+	};
+	shaderApply(true);
 	settingsView.setPanelHeight(canvasH);
 	settingsView.searchCount = [&](const std::string& q) { return lib.countMatches(q); };
 	settingsView.setVariant(menuTheme());
@@ -1600,6 +1624,24 @@ int main(int argc, char** argv)
 			hole = frameBananaHole(id, W, H);
 			frameDrawBanana(px, W, H, hole, settingsView.frameColors());
 		}
+		// the mask's cell, before the frame is baked over it. An art frame's hole is a whole multiple of the system's
+		// picture; a Banana frame turns integer scaling off; with no frame it is RetroArch's own setting.
+		{
+			int mx = hole.x, my = hole.y, mw = hole.w;
+			bool integer = k == FrameKind::Art;
+			if (k == FrameKind::None && !id.empty())
+			{
+				std::string v = getConfValue("/data/retroarch/retroarch.cfg", "video_scale_integer",
+				                             getConfValue("/etc/banana/retroarch.cfg", "video_scale_integer", "false"));
+				if (v.find("true") != std::string::npos) integer = maskIntegerHole(id.c_str(), W, H, mx, my, mw);
+			}
+			shaderGeom = maskGeomFor(id.c_str(), mx, my, mw, integer);
+			if (shaderMaskSet != "off" && !shaderChordOff)
+			{
+				disp.shaderSetMask(shaderMaskOf(shaderMaskSet), shaderGeom);
+				logf("shader: %s, cell %d at %d,%d", id.c_str(), shaderGeom.rowPeriod, shaderGeom.originX, shaderGeom.originY);
+			}
+		}
 		if (k != FrameKind::None)
 		{
 			frameDim(px.data(), px.size(), atoi(getConfValue(o.data + "/settings.conf", "frame_brightness", "85").c_str()));
@@ -1613,10 +1655,12 @@ int main(int argc, char** argv)
 		{
 			disp.frameSet(nullptr);
 			comp.setFrame(0, 0, 0, 0, 0);
+			shaderHole = FrameHole();
 		}
 		else
 		{
 			comp.setFrame(disp.frameFb(), hole.x, hole.y, hole.w, hole.h);
+			shaderHole = hole;
 			logf("frame: %s for %s, hole %d,%d %dx%d", frameKindWord(k), id.c_str(), hole.x, hole.y, hole.w, hole.h);
 		}
 		return k;
@@ -1955,6 +1999,19 @@ int main(int argc, char** argv)
 				comp.forwardTouch(ev.type == InputEvent::TOUCH_DOWN ? 0 : ev.type == InputEvent::TOUCH_MOVE ? 1 : 2,
 				                  (int)ev.x, (int)ev.y, ev.pointer);
 			if (ev.type == InputEvent::PRESS && ev.key == Key::MENU) { quickPending = true; return; }
+			// MENU + Select: the mask off and on for this game, not saved
+			if (quickPending && ev.type == InputEvent::PRESS && ev.key == Key::SELECT)
+			{
+				quickPending = false;
+				if (shaderMaskSet != "off")
+				{
+					shaderChordOff = !shaderChordOff;
+					disp.shaderSetMask(shaderChordOff ? SHADER_MASK_OFF : shaderMaskOf(shaderMaskSet), shaderGeom);
+					comp.setFrame(disp.frameFb(), shaderHole.x, shaderHole.y, shaderHole.w, shaderHole.h);
+					logf("shader: mask %s by the chord", shaderChordOff ? "off" : "on");
+				}
+				return;
+			}
 			// another button while MENU is held is a RetroArch hotkey (MENU + Start quits, + X its own menu, ...): no
 			// pause menu on that release
 			if (quickPending && ev.type == InputEvent::PRESS) { quickPending = false; return; }
@@ -2046,6 +2103,11 @@ int main(int argc, char** argv)
 	auto finishGame = [&](int status)
 	{
 		closeQuick();	// a game that ends (or crashes) under the pause menu must not leave the pad grabbed
+		if (shaderChordOff)	// the chord lasts one game: the saved mask is back in the menu
+		{
+			shaderChordOff = false;
+			disp.shaderSetMask(shaderMaskOf(shaderMaskSet), shaderGeom);
+		}
 		int game = gameIndex;
 		long secs = (long)((nowMs() - gameStart) / 1000);
 		if (system("banana-perf ui") != 0) {}
@@ -2197,7 +2259,6 @@ int main(int argc, char** argv)
 	bool cheevosSeen = true;	// /run/banana/cheevos: the achievements a game just unlocked, read on this pass
 	bool shotWanted = false;	// /run/banana/screen.req: write the frame to screen.jpg on this pass (below)
 	bool overlaySeen = true;	// /run/banana/overlay: a 3D card over the client on the primary
-	int nightSettle = 0;	// a saved night light set before the menu's first flip does not reach the DSPP: 1 = flip queued, 2 = re-set
 	if (resume == Resume::Ready) resumeDue = nowMs() + 500;	// a short window: the game is the point
 	while (!quit)
 	{
@@ -2247,6 +2308,7 @@ int main(int argc, char** argv)
 			if (settingsView.update(now)) dirty = true;	// a Wi-Fi scan came back, a network joined
 			if (settingsView.takeLibraryChanged()) roms.due = now;	// box art fetched: the library again, at home
 			if (settingsView.takeNightLightChanged()) nightLight();	// the panel's gamma follows the row
+			if (settingsView.takeShaderChanged()) shaderApply(false);	// its mask and colour too
 		}
 		// for testing over SSH: a game's path written to /run/banana/launch starts it, as A on it in the library would
 		if (launchSeen || launchWatch < 0)
@@ -2395,7 +2457,6 @@ int main(int argc, char** argv)
 			drawn = true;
 			dirty = false;
 		}
-		if (nightSettle == 1 && !disp.flipPending()) { nightSettle = 2; nightLight(); }
 		if (drawn && disp.isOpen() && !disp.flipPending() && !comp.gameActive() && !comp.clientOnScreen())
 		{
 			const uint32_t* scr[2] = { be.pixels(0), be.pixels(1) };
@@ -2404,7 +2465,6 @@ int main(int argc, char** argv)
 			bool flipped = disp.present(scr, dmg);
 			fstat.present(t0, nowMs() - t0);
 			drawn = false;
-			if (flipped && nightSettle == 0) nightSettle = 1;
 			// a frame that changed nothing on the panels flips nothing, so no flip event paces the next one: it waits a
 			// refresh instead (an animation that draws the same pixels, a picture still loading, ran this loop at
 			// 400-900 frames a second on one core)
@@ -2535,6 +2595,7 @@ int main(int argc, char** argv)
 							comp.stop();
 							disp.close();
 							for (int tries = 0; !disp.openSingle(o.top, err) && tries < 50; tries++) sleepUs(20000);
+							shaderApply(true);	// close() let go of the mask's buffers
 							if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
 						}
 						std::lock_guard<std::mutex> l(worker.uiLock);

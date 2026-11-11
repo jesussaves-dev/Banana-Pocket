@@ -18,6 +18,14 @@ fail=0
 ${CXX:-c++} -O2 -std=c++17 -Wno-unused-function -o "$OUT/turn-test" "$HERE/tests/turn-test.cpp" 2> "$OUT/turn-build.log" ||
     { echo "FAIL: can't build turn-test (see $OUT/turn-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/turn-test" > "$OUT/turn.log" 2>&1 || { echo "FAIL: turn-test"; cat "$OUT/turn.log"; fail=1; }
+# the system shader's mask pattern, its four panel rotations, the composed base and the colour tables (src/shader_mask.h)
+${CXX:-c++} -O2 -std=c++17 -Wno-unused-function $(pkg-config --cflags libdrm 2>/dev/null) -o "$OUT/shader-mask-test" "$HERE/tests/shader-mask-test.cpp" 2> "$OUT/shader-mask-build.log" ||
+    { echo "FAIL: can't build shader-mask-test (see $OUT/shader-mask-build.log)"; fail=1; }
+[ "$fail" = 1 ] || "$OUT/shader-mask-test" > "$OUT/shader-mask.log" 2>&1 || { echo "FAIL: shader-mask-test"; cat "$OUT/shader-mask.log"; fail=1; }
+# the zero-heap atomic request (src/kms.h): the kernel's object groups and counts must come out as it reads them
+${CXX:-c++} -O2 -std=c++17 -I"$HERE/src" $(pkg-config --cflags libdrm 2>/dev/null) -o "$OUT/atomic-buf-test" "$HERE/tests/atomic-buf-test.cpp" 2> "$OUT/atomic-buf-build.log" ||
+    { echo "FAIL: can't build atomic-buf-test (see $OUT/atomic-buf-build.log)"; fail=1; }
+[ "$fail" = 1 ] || "$OUT/atomic-buf-test" > "$OUT/atomic-buf.log" 2>&1 || { echo "FAIL: atomic-buf-test"; cat "$OUT/atomic-buf.log"; fail=1; }
 # the Phase 3B buffer rules: the one format/modifier/plane pair the compositor accepts (linear, one plane)
 ${CXX:-c++} -O2 -std=c++17 $(pkg-config --cflags libdrm 2>/dev/null) -o "$OUT/dmabuf-test" "$HERE/tests/dmabuf-test.cpp" 2> "$OUT/dmabuf-build.log" ||
     { echo "FAIL: can't build dmabuf-test (see $OUT/dmabuf-build.log)"; fail=1; }
@@ -196,6 +204,15 @@ for size in 640x480 1024x768; do
     run_bgm() { "$HERE/banana-ui" --headless "$OUT/$size-" --single --size 640x557 --assets "$HERE/assets/rnds" \
         --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" --script "$1" 2>> "$blog" ||
         { echo "FAIL $size: banana-ui (bgm) exited $?"; fail=1; }; }
+    # the Shaders group is the seventh tile; its rows save at once, and the strength slider stops at its end
+    sed -i '/^shader_/d' "$FX/data/settings.conf"
+    run_bgm "home 0; press start; press r; press r; press r; press r; press r; press r; press a; press right; press down; press right; press right; press down; press right; shot shaders"
+    grep -q '^shader_mask = crt240' "$FX/data/settings.conf" || { echo "FAIL $size: Screen mask didn't save: $(grep '^shader_mask =' "$FX/data/settings.conf")"; fail=1; }
+    grep -q '^shader_mask_intensity = 70' "$FX/data/settings.conf" || { echo "FAIL $size: Mask strength didn't save: $(grep '^shader_mask_intensity' "$FX/data/settings.conf")"; fail=1; }
+    grep -q '^shader_color = trinitron' "$FX/data/settings.conf" || { echo "FAIL $size: Screen colour didn't save: $(grep '^shader_color' "$FX/data/settings.conf")"; fail=1; }
+    run_bgm "home 0; press start; press r; press r; press r; press r; press r; press r; press a; press down; press right; press right; press right; press right; shot shaders-max"
+    grep -q '^shader_mask_intensity = 100' "$FX/data/settings.conf" || { echo "FAIL $size: Mask strength didn't stop at 100: $(grep '^shader_mask_intensity' "$FX/data/settings.conf")"; fail=1; }
+    sed -i '/^shader_/d' "$FX/data/settings.conf"
     run_bgm "home 0; press start; press a; press down; press down; press down; press down; press down; press down; press right; shot bgm-off"
     grep -q '^bgm = off' "$FX/data/settings.conf" || { echo "FAIL $size: Background Music Off didn't save: $(grep '^bgm' "$FX/data/settings.conf")"; fail=1; }
     run_bgm "home 0; press start; press a; press down; press down; press down; press down; press down; press down; press right; shot bgm-on"

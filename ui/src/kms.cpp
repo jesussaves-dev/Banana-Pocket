@@ -221,15 +221,22 @@ namespace banana
 			if (pl.zpos_mutable) addp(pl.id, pl.zpos, over ? pl.zpos_max : 0);
 			if (over)
 			{
-				if (pl.has_alpha) addp(pl.id, pl.alpha, 0xffff);	// the menu pixels are opaque
+				if (pl.has_alpha) addp(pl.id, pl.alpha, fb == maskFb() ? maskPlaneAlpha(maskPct) : 0xffff);	// the menu pixels are opaque
 				if (pl.has_blend) addp(pl.id, pl.blend, 0);	// premultiplied
 			}
 		};
 		addp(pn.conn, propId(pn.conn, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID"), pn.crtc);
 		addp(pn.crtc, propId(pn.crtc, DRM_MODE_OBJECT_CRTC, "MODE_ID"), pn.mode_blob);
 		addp(pn.crtc, propId(pn.crtc, DRM_MODE_OBJECT_CRTC, "ACTIVE"), 1);
-		addPlane(pn.primary, pn.black.fb, false);
-		addPlane(pn.overlay, pn.buf[pn.front].fb, true);
+		// the LUT is always attached: it keeps the DSPP reserved, so the CTM can come and go without a modeset
+		if (pn.lut_size && colorRebuild(pn))
+		{
+			addp(pn.crtc, pn.crtc_ctm, pn.color.ctm);
+			addp(pn.crtc, pn.crtc_gamma_lut, pn.color.lut);
+		}
+		// with a mask up the menu moves to the primary, since there is only the one overlay
+		addPlane(pn.primary, maskFb() ? pn.buf[pn.front].fb : pn.black.fb, false);
+		addPlane(pn.overlay, maskFb() ? maskFb() : pn.buf[pn.front].fb, true);
 		int ret = drmModeAtomicCommit(fd, r, DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
 		if (ret)
 		{
@@ -328,6 +335,15 @@ namespace banana
 			p[0].atomic = atomic;
 			if (atomic)
 			{
+				uint64_t size = 0;
+				p[0].crtc_ctm = propId(p[0].crtc, DRM_MODE_OBJECT_CRTC, "CTM");
+				p[0].crtc_gamma_lut = propId(p[0].crtc, DRM_MODE_OBJECT_CRTC, "GAMMA_LUT");
+				if (p[0].crtc_gamma_lut && propId(p[0].crtc, DRM_MODE_OBJECT_CRTC, "GAMMA_LUT_SIZE", &size) &&
+				    size >= 2 && size <= kMaxLut)
+					p[0].lut_size = (uint32_t)size;
+			}
+			if (atomic)
+			{
 				if (drmModeCreatePropertyBlob(f, &p[0].mode, sizeof p[0].mode, &p[0].mode_blob) ||
 				    !makeBuf(p[0].buf[0], DRM_FORMAT_ARGB8888) || !makeBuf(p[0].buf[1], DRM_FORMAT_ARGB8888) ||
 				    !makeBuf(p[0].black, DRM_FORMAT_XRGB8888) || !makeBuf(p[0].card[0], DRM_FORMAT_ARGB8888) ||
@@ -401,8 +417,44 @@ namespace banana
 		applyGamma();
 	}
 
+	bool Display::shaderSetColor(ColorProfile c)
+	{
+		if (c >= COLOR_PROFILE_COUNT) return false;
+		colorProfile = c;
+		if (fd < 0 || !p[0].atomic || !p[0].lut_size) return false;
+		return colorRebuild(p[0]);
+	}
+
+	// The panel's colour as fresh blobs for the next commit to attach. Always new ids: the kernel only reprograms the
+	// DSPP when the blob id changes, and neither the modeset after a wake nor the flip after it may be skipped.
+	bool Display::colorRebuild(Panel& pn)
+	{
+		if (fd < 0 || !pn.lut_size) return false;
+		ColorState& c = pn.color;
+		for (uint32_t& id : c.retired)
+		{
+			if (id) drmModeDestroyPropertyBlob(fd, id);
+			id = 0;
+		}
+		c.retired[0] = c.ctm;
+		c.retired[1] = c.lut;
+		c.ctm = c.lut = 0;
+		colorLutFill(lutScratch, pn.lut_size, colorProfile, warmth);
+		bool ok = drmModeCreatePropertyBlob(fd, lutScratch, pn.lut_size * sizeof(drm_color_lut), &c.lut) == 0;
+		if (ok && colorProfile != COLOR_PROFILE_BYPASS && pn.crtc_ctm)
+		{
+			drm_color_ctm m;
+			memcpy(m.matrix, kColorCtm[colorProfile], sizeof m.matrix);
+			ok = drmModeCreatePropertyBlob(fd, &m, sizeof m, &c.ctm) == 0;
+		}
+		if (!ok) fprintf(stderr, "kms: colour: can't make a blob (%s)\n", strerror(errno));
+		c.dirty = true;
+		return ok;
+	}
+
 	// the night light: a linear ramp with green and blue pulled down, on every CRTC. Level 0 is the plain ramp, so
 	// turning it off restores the panel's own look; the LUT is after the planes, so a game's frame is tinted too.
+	// An atomic panel takes it as a GAMMA_LUT blob on the next commit: the legacy call below would clear the CTM.
 	void Display::applyGamma()
 	{
 		if (fd < 0) return;
@@ -410,6 +462,7 @@ namespace banana
 		double kb = warmth >= 2 ? 0.65 : warmth == 1 ? 0.82 : 1.0;
 		for (int s = 0; s < count; s++)
 		{
+			if (p[s].atomic && p[s].lut_size) { colorRebuild(p[s]); continue; }
 			drmModeCrtc* c = drmModeGetCrtc(fd, p[s].crtc);
 			if (!c) continue;
 			unsigned n = c->gamma_size;
@@ -437,13 +490,22 @@ namespace banana
 		{
 			freeBuf(pn.buf[0]); freeBuf(pn.buf[1]); freeBuf(pn.black); freeBuf(pn.card[0]); freeBuf(pn.card[1]);
 			freeBuf(pn.frame[0]); freeBuf(pn.frame[1]);
+			freeBuf(pn.mask[0]); freeBuf(pn.mask[1]);
 			pn.frameOn = false;
 			if (pn.mode_blob) { drmModeDestroyPropertyBlob(fd, pn.mode_blob); pn.mode_blob = 0; }
+			for (uint32_t id : { pn.color.ctm, pn.color.lut, pn.color.retired[0], pn.color.retired[1] })
+				if (id) drmModeDestroyPropertyBlob(fd, id);
+			pn.color = ColorState();
 		}
 		::close(fd);
 		fd = -1;
 		pending = 0;
 		rot = 0; SW = SH = 0;
+		maskMode = SHADER_MASK_OFF;
+		baseStale = false;
+		std::vector<uint8_t>().swap(maskCopy);
+		std::vector<uint8_t>().swap(frameRaw);
+		std::vector<uint8_t>().swap(frameCopy);
 	}
 
 	bool Display::present(const uint32_t* const screens[2], const Damage dmg[2])
@@ -460,7 +522,12 @@ namespace banana
 			pn.missed[back] = Damage();
 			d.x0 = std::max(d.x0, 0); d.y0 = std::max(d.y0, 0);
 			d.x1 = std::min(d.x1, W); d.y1 = std::min(d.y1, H);
-			if (d.empty()) continue;
+			if (d.empty())
+			{
+				// nothing to draw, but new colour blobs still need a commit to reach the panel
+				if (pn.atomic && pn.color.dirty && commitMenu(pn, pn.buf[pn.front].fb)) any = true;
+				continue;
+			}
 			Buf& bf = pn.buf[back];
 			if (rot)
 				turn(screens[s], bf, d);
@@ -479,7 +546,7 @@ namespace banana
 			pn.missed[pn.front] = dmg[s];	// the buffer going hidden misses this frame
 			if (pn.atomic)
 			{
-				if (commitFrame(pn, pn.black.fb, SW, SH, bf.fb))
+				if (commitMenu(pn, bf.fb))
 				{
 					pn.front = back;
 					any = true;
@@ -514,9 +581,9 @@ namespace banana
 	bool Display::commitFrame(Panel& pn, uint32_t primaryFb, uint32_t srcW, uint32_t srcH, uint32_t overlayFb, int fenceFd)
 	{
 		if (fd < 0 || pending || !pn.atomic) return false;
-		drmModeAtomicReq* r = drmModeAtomicAlloc();
-		if (!r) return false;
-		auto addp = [&](uint32_t obj, uint32_t prop, uint64_t v) { if (prop) drmModeAtomicAddProperty(r, obj, prop, v); };
+		AtomicBuf& r = atomicBuf;
+		r.clear();
+		auto addp = [&](uint32_t obj, uint32_t prop, uint64_t v) { r.add(obj, prop, v); };
 		auto addPlane = [&](const Plane& pl, uint32_t fb, uint32_t sw, uint32_t sh, bool on, int ff) {
 			addp(pl.id, pl.crtc_id, on ? pn.crtc : 0);
 			addp(pl.id, pl.fb_id, fb);
@@ -529,19 +596,40 @@ namespace banana
 			addp(pl.id, pl.crt_y, 0);
 			addp(pl.id, pl.crt_w, SW);
 			addp(pl.id, pl.crt_h, SH);
+			if (pl.id == pn.overlay.id && pl.has_alpha) addp(pl.id, pl.alpha, fb == maskFb() ? maskPlaneAlpha(maskPct) : 0xffff);
 			// 3F: the display waits on the GPU's own writes to this scanout buffer, so the compositor does not
 			// have to glFinish. The kernel takes its own reference; the caller closes the fd after the commit.
 			if (ff >= 0) addp(pl.id, pl.in_fence_fd, (uint64_t)(int64_t)ff);
 		};
 		addPlane(pn.primary, primaryFb, srcW, srcH, primaryFb != 0, fenceFd);
 		addPlane(pn.overlay, overlayFb, SW, SH, overlayFb != 0, -1);
-		int ret = drmModeAtomicCommit(fd, r, DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK, &pending);
-		drmModeAtomicFree(r);
+		if (pn.color.dirty)
+		{
+			addp(pn.crtc, pn.crtc_ctm, pn.color.ctm);
+			addp(pn.crtc, pn.crtc_gamma_lut, pn.color.lut);
+		}
+		if (r.overflow)
+		{
+			fprintf(stderr, "kms: atomic request did not fit (%d properties in %d objects)\n", r.n, r.groups);
+			return false;
+		}
+		// the same request drmModeAtomicCommit builds, without its allocation: count_objs is the number of object
+		// groups, and props/vals are read through them in counts[] order
+		drm_mode_atomic req = {};
+		req.flags = DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK;
+		req.count_objs = (uint32_t)r.groups;
+		req.objs_ptr = (uint64_t)(uintptr_t)r.objs;
+		req.count_props_ptr = (uint64_t)(uintptr_t)r.counts;
+		req.props_ptr = (uint64_t)(uintptr_t)r.props;
+		req.prop_values_ptr = (uint64_t)(uintptr_t)r.vals;
+		req.user_data = (uint64_t)(uintptr_t)&pending;
+		int ret = drmIoctl(fd, DRM_IOCTL_MODE_ATOMIC, &req);
 		if (ret)
 		{
 			fprintf(stderr, "kms: atomic commit failed: ret=%d errno=%s\n", ret, strerror(errno));
 			return false;
 		}
+		pn.color.dirty = false;
 		pending++;
 		return true;
 	}
@@ -556,8 +644,9 @@ namespace banana
 		if (count <= 0 || !p[0].atomic) return false;
 		Buf& b = p[0].card[p[0].cardFront ^ 1];	// the hidden buffer, never one the plane may scan
 		if (!b.map) return false;
-		// a game's frame under the card, or transparent: the client on the primary shows through
-		if (p[0].frameOn && frameCopy.size() == b.size) memcpy(b.map, frameCopy.data(), b.size);
+		// the composed base under the card, or transparent: the client on the primary shows through
+		if (baseStale) shaderRecompose();
+		if (frameCopy.size() == b.size) memcpy(b.map, frameCopy.data(), b.size);
 		else memset(b.map, 0, b.size);
 		return true;
 	}
@@ -585,20 +674,77 @@ namespace banana
 		if (!canvas)
 		{
 			pn.frameOn = false;
-			std::vector<uint8_t>().swap(frameCopy);
+			std::vector<uint8_t>().swap(frameRaw);
+			shaderRecompose();
 			return true;
 		}
 		int back = pn.frameFront ^ 1;	// never the buffer the plane may scan
 		Buf& b = pn.frame[back];
 		if (!b.map && !makeBuf(b, DRM_FORMAT_ARGB8888)) return false;
-		frameCopy.resize(b.size);
+		frameRaw.resize(b.size);
 		Buf cached = b;
-		cached.map = frameCopy.data();
+		cached.map = frameRaw.data();
 		turn(canvas, cached, Damage{ 0, 0, W, H });
+		pn.frameOn = true;
+		shaderRecompose();
 		memcpy(b.map, frameCopy.data(), b.size);
 		pn.frameFront = back;
-		pn.frameOn = true;
 		return true;
+	}
+
+	// frameCopy from what is set now. The frame goes over the mask, so the mask only shows through the frame's hole.
+	void Display::shaderRecompose()
+	{
+		baseStale = false;
+		bool mask = maskMode != SHADER_MASK_OFF && !maskCopy.empty();
+		bool frame = p[0].frameOn && !frameRaw.empty();
+		if (!mask && !frame) { std::vector<uint8_t>().swap(frameCopy); return; }
+		if (!mask) { frameCopy = frameRaw; return; }
+		frameCopy.resize(maskCopy.size());
+		maskCompose((uint32_t*)frameCopy.data(), frame ? (const uint32_t*)frameRaw.data() : nullptr,
+		            (const uint32_t*)maskCopy.data(), maskCopy.size() / 4, maskPct);
+	}
+
+	// the mask changed under a frame on screen: bake it into the hidden frame buffer, for frameFb() to name
+	void Display::shaderRebakeFrame()
+	{
+		shaderRecompose();
+		Panel& pn = p[0];
+		if (!pn.frameOn || frameCopy.empty()) return;
+		int back = pn.frameFront ^ 1;
+		Buf& b = pn.frame[back];
+		if ((!b.map && !makeBuf(b, DRM_FORMAT_ARGB8888)) || b.size != frameCopy.size()) return;
+		memcpy(b.map, frameCopy.data(), b.size);
+		pn.frameFront = back;
+	}
+
+	bool Display::shaderSetMask(ShaderMask m, const MaskGeom& g)
+	{
+		if (fd < 0 || count <= 0 || !p[0].atomic || m >= SHADER_MASK_COUNT) return false;
+		Panel& pn = p[0];
+		if (m == SHADER_MASK_OFF)
+		{
+			maskMode = m;
+			std::vector<uint8_t>().swap(maskCopy);
+			shaderRebakeFrame();
+			return true;
+		}
+		int back = pn.maskFront ^ 1;	// never the buffer the plane may scan
+		Buf& b = pn.mask[back];
+		if (!b.map && !makeBuf(b, DRM_FORMAT_ARGB8888)) return false;
+		maskCopy.resize(b.size);
+		maskFill((uint32_t*)maskCopy.data(), b.pitch / 4, W, H, rot, m, g);
+		memcpy(b.map, maskCopy.data(), b.size);
+		pn.maskFront = back;
+		maskMode = m;
+		shaderRebakeFrame();
+		return true;
+	}
+
+	void Display::shaderSetIntensity(int pct)
+	{
+		maskPct = std::min(100, std::max(0, pct));
+		baseStale = true;
 	}
 
 	uint32_t Display::frameFb() const
@@ -608,7 +754,14 @@ namespace banana
 
 	bool Display::showMenu()
 	{
-		return commitFrame(p[0], p[0].black.fb, SW, SH, p[0].buf[p[0].front].fb);
+		return commitMenu(p[0], p[0].buf[p[0].front].fb);
+	}
+
+	// the menu on the overlay above a black primary, or on the primary under the mask
+	bool Display::commitMenu(Panel& pn, uint32_t menuFb)
+	{
+		uint32_t m = maskFb();
+		return m ? commitFrame(pn, menuFb, SW, SH, m) : commitFrame(pn, pn.black.fb, SW, SH, menuFb);
 	}
 
 	bool Display::blank()

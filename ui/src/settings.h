@@ -53,6 +53,8 @@ namespace banana
 		bool takeLibraryChanged() { bool r = libChanged; libChanged = false; return r; }
 		// the night light row changed: the menu sets the panel's gamma again (main.cpp)
 		bool takeNightLightChanged() { bool r = nightChanged; nightChanged = false; return r; }
+		// a Shaders row changed: the menu sets the panel's mask and colour again (main.cpp)
+		bool takeShaderChanged() { bool r = shaderChanged; shaderChanged = false; return r; }
 
 		// what the host has to do after an input
 		enum Result { NONE, MOVED, CHANGED, CLOSED, THEME, REBOOT, POWEROFF, SEARCH };
@@ -113,7 +115,7 @@ namespace banana
 			std::string file, key;					// where it is kept ("" for the special ones)
 			std::vector<std::string> names, values;	// shown, stored
 			int at = 0;
-			enum Kind { CHOICE, BRIGHTNESS, VOLUME, INFO, ACTION, PAGE } kind = CHOICE;
+			enum Kind { CHOICE, BRIGHTNESS, VOLUME, PERCENT, INFO, ACTION, PAGE } kind = CHOICE;	// PERCENT: a saved choice drawn as a slider
 		};
 		rnds::Backend* be;
 		std::string assets, data;
@@ -256,11 +258,11 @@ namespace banana
 		double aLast = 0;
 		bool aMoving = false;
 		void advance();
-		float tileOffset(int g) const;	// x inset that centres the last row of the groups grid (3 tiles to a row)
+		float tileOffset(int g) const;	// x inset that centres the last row of the groups grid
 		// box art: banana-scrape runs on its own and says how far it got in /run/banana/scrape.status
 		std::string scrapeLine;				// that file's line, as last read
 		double scrapeNext = 0;
-		bool libChanged = false, nightChanged = false;
+		bool libChanged = false, nightChanged = false, shaderChanged = false;
 		bool scraping() const { return scrapeLine.compare(0, 8, "running ") == 0; }
 		bool pollScrape(double nowMs);		// true when the line changed
 		void startScrape();

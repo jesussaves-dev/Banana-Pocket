@@ -7,6 +7,7 @@
 // 1080x1240 while the menu draws 1240x1080: the rotation happens once, in software, in turn() (90 degrees
 // clockwise). The Wayland output of a future game client is the logical 1240x1080; its game frame would be
 // rotated by the same 90 degrees. Without an overlay/atomic KMS the old single-plane path is kept.
+#include "shader_mask.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -24,6 +25,30 @@ namespace banana
 			if (empty()) { *this = o; return; }
 			x0 = x0 < o.x0 ? x0 : o.x0; y0 = y0 < o.y0 ? y0 : o.y0;
 			x1 = x1 > o.x1 ? x1 : o.x1; y1 = y1 > o.y1 ? y1 : o.y1;
+		}
+	};
+
+	// One atomic request, filled by hand: drmModeAtomicAlloc allocates a request per commit, and commitFrame runs every
+	// frame. The kernel reads count_objs object groups, each counts[i] properties taken in order from props and vals,
+	// so properties are added object by object. Too many of either is an overflow: the frame is refused, never truncated.
+	struct AtomicBuf
+	{
+		static constexpr int kMaxProps = 32, kMaxGroups = 8;
+		uint32_t objs[kMaxGroups] = {}, counts[kMaxGroups] = {}, props[kMaxProps] = {};
+		uint64_t vals[kMaxProps] = {};
+		int n = 0, groups = 0;
+		uint32_t last = 0;
+		bool overflow = false;
+		void clear() { n = groups = 0; last = 0; overflow = false; }
+		void add(uint32_t obj, uint32_t prop, uint64_t v)
+		{
+			if (!prop) return;	// the plane has no such property: nothing to set
+			if (n >= kMaxProps) { overflow = true; return; }
+			if (groups && obj == last) counts[groups - 1]++;
+			else if (groups < kMaxGroups) { objs[groups] = obj; counts[groups++] = 1; }
+			else { overflow = true; return; }
+			props[n] = prop; vals[n] = v; n++;
+			last = obj;
 		}
 	};
 
@@ -57,6 +82,15 @@ namespace banana
 		// the night light: 0 off, 1 warm, 2 warmer. A gamma LUT on the panel, so it covers a game too (set from the
 		// menu, which holds the master; the kernel keeps the LUT across the compositor hand-over)
 		void setWarmth(int level);
+		// the panel's colour matrix and curve. Outside the flip path: it builds the blobs and the next commit carries
+		// them. False when this driver has no colour management or a blob could not be made.
+		bool shaderSetColor(ColorProfile c);
+		// the CRT/LCD mask on the overlay plane. Both run outside the flip path and the next commit carries the result:
+		// shaderSetMask fills the hidden buffer and bakes a game's frame over it, shaderSetIntensity stores one integer.
+		bool shaderSetMask(ShaderMask m, const MaskGeom& g);
+		void shaderSetIntensity(int pct);
+		// the mask's framebuffer, 0 when it is off
+		uint32_t maskFb() const { return count > 0 && p[0].atomic && maskMode != SHADER_MASK_OFF ? p[0].mask[p[0].maskFront].fb : 0; }
 		// Phase 3B: the DRM fd (the compositor imports a client's DMA-BUF on it), whether the atomic overlay path
 		// is in use, and the two compositor frames. presentGame() puts a client's framebuffer on the primary and
 		// hides the menu overlay; showMenu() puts the menu back. Both honor the one-flip-in-flight rule.
@@ -93,9 +127,13 @@ namespace banana
 			uint64_t zpos_max = 0;
 			bool zpos_mutable = false, has_alpha = false, has_blend = false;
 		};
+		// the blobs the next commit attaches. Old ids wait in retired until the next rebuild, never freed mid-commit.
+		struct ColorState { uint32_t ctm = 0, lut = 0, retired[2] = {}; bool dirty = false; };
 		struct Panel
 		{
 			uint32_t conn = 0, crtc = 0;
+			uint32_t crtc_ctm = 0, crtc_gamma_lut = 0, lut_size = 0;	// lut_size 0: no atomic colour on this CRTC
+			ColorState color;
 			uint8_t mode[68] = { 0 };
 			Buf buf[2];		// the menu, ARGB8888 (atomic overlay) or XRGB8888 (legacy primary)
 			Buf card[2];	// the 3D card layer, ARGB8888 over a client on the primary (atomic only)
@@ -103,6 +141,8 @@ namespace banana
 			Buf frame[2];	// a game's screen frame, made the first time one is shown
 			int frameFront = 0;
 			bool frameOn = false;
+			Buf mask[2];	// the CRT/LCD mask, made the first time one is set
+			int maskFront = 0;
 			Buf black;		// XRGB8888, the primary when the menu is on the overlay
 			int front = 0;
 			Damage missed[2];
@@ -111,11 +151,24 @@ namespace banana
 			uint32_t mode_blob = 0;
 		};
 		int fd = -1, W = 0, H = 0, pending = 0, count = 1;
+		AtomicBuf atomicBuf;	// the flip path's request, reused every frame
+		static constexpr unsigned kMaxLut = 1024;
+		drm_color_lut lutScratch[kMaxLut];	// colorRebuild's staging, so a rebuild allocates only the kernel's blobs
+		ColorProfile colorProfile = COLOR_PROFILE_BYPASS;
 		int rot = 0, SW = 0, SH = 0;	// the panel's rotation, and its size in its own rows (the scanout buffers')
 		Panel p[2];
-		std::vector<uint8_t> frameCopy;	// the turned frame in cached memory: reading the uncached dumb buffer per card is slow
+		// all in cached memory, since reading the uncached dumb buffers per card is slow. frameCopy is what a card is
+		// drawn on: the frame over the mask, or either one alone, and empty with neither.
+		std::vector<uint8_t> frameCopy, frameRaw, maskCopy;
+		ShaderMask maskMode = SHADER_MASK_OFF;
+		int maskPct = 50;
+		bool baseStale = false;	// the intensity moved since frameCopy was composed
+		void shaderRecompose();
+		void shaderRebakeFrame();
+		bool commitMenu(Panel& pn, uint32_t menuFb);
 		void turn(const uint32_t* src, Buf& bf, const Damage& d);
 		void applyGamma();
+		bool colorRebuild(Panel& pn);
 		int warmth = 0;
 		bool makeBuf(Buf& b, uint32_t fourcc);
 		void freeBuf(Buf& b);
