@@ -69,100 +69,75 @@ release. Next:
   headless menu test loads the German catalog. Next: the Settings sub-pages, the menu chrome, system/app names,
   date/time formats, then another language or two.
 
-## Ideas (unscheduled)
-Not commitments: sketches to weigh against the list above. Each one builds on something the image already has.
-- **An app store, when there are apps to sell.** The Apps shelf already installs a folder with `app.json` from
-  `/data/banana/apps` or `/data/apps`, and PortMaster already covers games and ports (it unpacks to the card and
-  updates itself). Only `bananatube` ships, so a catalog today would be a store with one product. Parked (2026-11-08)
-  until there is something to publish; when it comes back it needs a curated index, a SHA-256 per payload (an app runs
-  as root), and an offline cache, and it should not try to ship cores or system packages (those ride the A/B image).
-- **Session recap card.** After a game, a short card on the menu: time played, achievements won this session, and the
-  new state slot. The data is already written (`playstats.tsv`, `/run/banana/cheevos`), so this is a menu view, not a new
-  recorder.
-- **Haptic cues.** `bananad` already drives the vibrator. Use short pulses for achievements, a low-battery warning and
-  a sleep refusal, each switchable in Settings, so the slate can tell you something without a sound.
-- **Quick-resume shelf.** The last three games with their saved state, one button away from the home screen, so a
-  pick-up-where-you-left-off session needs no library browsing.
-- **Per-system ambience.** The menu's background loop (`bgm`) varies by system, from a WAV on the card, so each shelf
-  sounds different. Falls back to the current single loop.
-- **Burn-in-aware home screen.** Rotate the home shelf's static chrome by a pixel or two every few minutes (the guard
-  already knows idle time), so a long session on the AMOLED never leaves a ghost of the menu bar.
-- **Battery session planner.** From the battery curve (`bananad`'s battery reads) and the play history, show "about 3 h
-  left at this pace" beside the percentage. Pairs with item 6's time-remaining estimate.
-- **Saves you can read.** A "last session" log view per game (start, end, states written, cheevos), built on the
-  in-menu log viewer in item 6. Makes a lost save easy to trace.
-- **Field diagnostics bundle.** One Settings button that packs the logs, the sound-server log, `dmesg` tail and
-  `settings.conf` (with secrets stripped) into `/data/banana/backups` for a bug report. Complements `make sound-test`
-  and the `tools/rpc-*.sh` probes.
-- **Offline update cache.** Keep the last good update package on the card until the new slot boots once, so a failed
-  update can be reapplied without Wi-Fi.
-- **Sessions that survive a hang.** Quick resume writes a state only on a clean quit (`savestate_auto_save`), so the
-  2026-11-02 overnight hang and any forced power-off lose everything since the last manual save. The bridge can save
-  into two alternating hidden slots on a timer, with a one-line fsynced journal in `/data/banana/sessions.tsv`;
-  the menu offers the survivor on the home card. The save-RAM `autosave_interval` does not cover states.
-- **Saves you can see, and boot into.** *Half done in 0.6.0:* state thumbnails are on (`run-retroarch` sets
-  `savestate_thumbnail_enable` once) and the pause menu shows a slot's picture and saves/loads any slot 0-9. Left:
-  show the same PNGs in the library's state browser (still text-only) and let A there **start the game from a state**
-  (a per-launch `state_slot` plus `LOAD_STATE` once it runs).
-- **Per-core latency profiles.** Runahead is compiled in and off; one frame removes most of the lag on 8/16-bit cores,
-  and nobody will dig through RetroArch's quick menu on this screen. A curated core table in `run-retroarch` plus one
-  Settings row (Off/Auto/2), with a per-game override in `pergame.conf`.
-- **The game page.** The shelf shows a title and "genre · year". The scraper receives description, developer,
-  publisher, players and rating and throws them away (`scrape.cpp` writes only genre and date); `playstats.tsv` holds
-  plays, seconds and achievements that no shipped theme renders. One X page per game: art, description, facts,
-  playtime and achievements, with play/states/saves/reset actions.
+## Ideas
+Not commitments: sketches to weigh against the list above. Most handheld distros are a frontend that hands the screen to
+an emulator and waits. Banana keeps the screen: it sees every frame, owns a hardware overlay plane, and can freeze, resume
+and frame any game, RetroArch or not. These lean on that and on the rest of what only Banana has (its own daemon, A/B
+updates, a CPU-drawn UI that costs nothing idle). Each group runs smallest first. Sizes are rough: **S** a day or two,
+**M** about a week, **L** a project.
 
-## Ideas: what could set Banana Pocket apart (2026-11-10)
-Most handheld distros are a frontend that hands the screen to an emulator and waits. Since 0.6.0 Banana keeps the
-screen: it sees every frame, owns a hardware overlay plane, and can freeze, resume and frame any game, RetroArch or
-not. These ideas lean on that, and on the rest of what only Banana has (its own daemon, A/B updates, a CPU-drawn UI
-that costs nothing idle). Sizes are rough: **S** a day or two, **M** about a week, **L** a project. Not commitments.
+### Picked to build
+- **Below-minimum brightness (S).** The panel's `GAMMA_LUT` can scale the picture down past the backlight's lowest level,
+  for playing in a pitch-dark room. A small extension of the night light in `colorLutFill`, on a Brightness or Night light
+  row.
+- **A real CRT personality (S).** With a CRT mask on: on sleep the picture collapses to a line and then a dot by animating
+  the plane's size; on wake a degauss thump through the vibrator, and the colour warms up over about 20 s through the LUT.
+  Optional faint flyback whine.
+- **Rumble for games that never had it (M).** RetroArch's achievement engine (rcheevos) already reads game memory. A small
+  per-game file maps conditions such as "health dropped" or "boss died" to vibrator patterns through `bananad`, and the
+  files can be shared.
 
 ### The compositor as a feature
-- **Home button, game keeps waiting (L).** From the pause menu, *Home* goes back to the library with the game still
-  frozen (it is already SIGSTOPped and its buffers are imported); its tile shows a "running" badge and A picks it up
-  instantly, with no reload. A second game asks to close the first. This is the Switch's best trick, and nobody
-  else on these handhelds can do it because nobody else keeps the screen.
-- **Filters for every game (M).** The rotate pass already touches every pixel once, so a colour step there is nearly
-  free: colour-blind filters (protan/deutan/tritan), a GBA colour-correction curve, a
-  grayscale "battery saver" mode, a subtle scanline or LCD grid for ports and PICO-8. One Settings row and a pause-menu
-  row, for RetroArch, ports and BananaTube alike, with no RetroArch shader and no conflict with the bezel rule.
 - **Screenshots that are the real frame (S).** A button combo (or a pause-menu row) saves the exact frame the panel
   shows -- the `3c-dump-now` path already reads it bit-exact -- with the overlay cards left out, into a per-game
   folder that the game page shows. *(A screenshot gallery was dropped by request on 2026-11-04; this is only the
   capture -- skip it if that still stands.)*
-- **Last-30-seconds clips (L).** Keep a ring of recent frames (downscaled; hardware encode only if the SoC's video
-  block -- the `venus` driver, not in this trimmed kernel today -- can be enabled) and save the last half-minute on a combo. A replay of the boss fight, on a retro handheld.
-- **The handheld as a webcam (M).** Add a UVC function to the USB gadget beside NCM/adb and feed it the compositor's
-  frames: plug into a computer and OBS sees a camera showing the game, no capture card. Streaming and recording for
-  free, and a great demo.
-- **Guides over the game (M).** A pause-menu *Guide* row opens a text or image walkthrough (a `.txt`/`.md`/`.png`
-  beside the ROM, or a per-game folder) on the overlay plane, scrollable with the d-pad while the game is frozen.
 - **A frame-time graph on demand (S).** The 3F trace already times every frame; a pause-menu toggle draws a small
   graph and fps in a corner of the overlay, for everything, not just RetroArch. *(A performance overlay was dropped
   in favour of RetroArch's own OSD; listed again only because this one also covers ports.)*
+- **Filters for every game (M).** The rotate pass already touches every pixel once, so a colour step there is nearly
+  free: colour-blind filters (protan/deutan/tritan), a GBA colour-correction curve, a grayscale "battery saver" mode.
+  One Settings row and a pause-menu row, for RetroArch, ports and BananaTube alike.
+- **Guides over the game (M).** A pause-menu *Guide* row opens a text or image walkthrough (a `.txt`/`.md`/`.png`
+  beside the ROM, or a per-game folder) on the overlay plane, scrollable with the d-pad while the game is frozen.
 - **Touch controls for ports that need them (M).** Ports that expect a mouse or a touchscreen get a translucent
   on-screen layer on the overlay plane, injected through uinput, defined per port in a small file.
+- **The handheld as a webcam (M).** Add a UVC function to the USB gadget beside NCM/adb and feed it the compositor's
+  frames: plug into a computer and OBS sees a camera showing the game, no capture card.
+- **Home button, game keeps waiting (L).** From the pause menu, *Home* goes back to the library with the game still
+  frozen (it is already SIGSTOPped and its buffers are imported); its tile shows a "running" badge and A picks it up
+  instantly, with no reload. A second game asks to close the first.
+- **Last-30-seconds clips (L).** Keep a ring of recent frames (downscaled; hardware encode only if the SoC's video
+  block -- the `venus` driver, not in this trimmed kernel today -- can be enabled) and save the last half-minute on a
+  combo.
 
-### Play sessions that just work
+### Play sessions
 - **Per-game memory (S).** Brightness, volume, the shader toggle, fast-forward and the slot last used, restored when that
   game starts again (`pergame.conf` already exists).
-- **Autosave that survives a crash (M).** Combine the pause-menu slot plumbing with the "sessions that survive a hang"
-  idea above: a rolling hidden state every few minutes, and on the next boot the home card offers "the game was cut
-  off 4 minutes ago -- resume?".
+- **Quick-resume shelf (S).** The last three games with their saved state, one button away from the home screen, so a
+  pick-up-where-you-left-off session needs no library browsing.
 - **Sleep means paused, always (S).** On a power-button sleep, write a quick state first (the game is about to be frozen
   anyway), so even a dead battery overnight loses nothing.
-- **Instant "off" (M).** Make the power-off a deep sleep that resumes into the menu or the frozen game in about a
-  second, with a real shutdown only at a low battery or after N days. Feels like a console instead of a computer.
 - **Session recap and play diary (S).** After a game: time played, achievements this session, the state slot used --
   then a weekly "you played 6 h, mostly Kirby" card. The data is already in `playstats.tsv` and `/run/banana/cheevos`.
 - **Gentle limits (S).** An optional "remind me after 1 h" and a bedtime reminder on the overlay (no forced stop), and a
   separate kid profile with a daily allowance and a locked Settings.
+- **The game page (M).** The shelf shows a title and "genre · year". The scraper receives description, developer,
+  publisher, players and rating and throws them away (`scrape.cpp` writes only genre and date); `playstats.tsv` holds
+  plays, seconds and achievements that no shipped theme renders. One X page per game: art, description, facts,
+  playtime and achievements, with play/states/saves/reset actions.
+- **Sessions that survive a hang (M).** Quick resume writes a state only on a clean quit (`savestate_auto_save`), so a
+  hang or forced power-off loses everything since the last manual save. The bridge can save into two alternating hidden
+  slots on a timer, with a one-line fsynced journal in `/data/banana/sessions.tsv`; the menu offers the survivor on the
+  home card. The save-RAM `autosave_interval` does not cover states.
+- **Autosave that survives a crash (M).** Combine the pause-menu slot plumbing with the idea above: a rolling hidden
+  state every few minutes, and on the next boot the home card offers "the game was cut off 4 minutes ago -- resume?".
+- **Instant "off" (M).** Make the power-off a deep sleep that resumes into the menu or the frozen game in about a
+  second, with a real shutdown only at a low battery or after N days.
 
-### The battery and the hardware
-- **Auto clocks from real frame times (M).** The compositor knows how long each frame took. Start a game on
-  `balanced` and step the clocks down while there is headroom and up before a frame is missed: battery life without a
-  profile to pick per game.
+### Battery and hardware
+- **Haptic cues (S).** `bananad` already drives the vibrator. Use short pulses for achievements, a low-battery warning and
+  a sleep refusal, each switchable in Settings, so the slate can tell you something without a sound.
 - **Charge limit for a handheld left on the cable (S).** If the charger driver exposes
   `charge_control_end_threshold`, an "80 % when plugged in" switch. Batteries in docked handhelds age fast.
 - **Battery health and an honest estimate (S).** Cycle count and full-charge capacity from the gauge, and "about 3 h left
@@ -171,44 +146,48 @@ that costs nothing idle). Sizes are rough: **S** a day or two, **M** about a wee
 - **AMOLED care (S).** Shift the overlay cards and the home shelf's static chrome by a pixel or two over time, and offer
   a true-black theme and a "dim the bezel" option -- the panel is OLED, and static frames burn in.
 - **Headphone volume limit (S).** A separate maximum for headphones, remembered per output.
+- **Auto clocks from real frame times (M).** The compositor knows how long each frame took. Start a game on
+  `balanced` and step the clocks down while there is headroom and up before a frame is missed: battery life without a
+  profile to pick per game.
 
-### Saves, sharing and the computer next door
+### Saves and sharing
 - **Save sync over Wi-Fi without an account (M).** Two-way sync of `saves/` and `states/` with a folder on your own
-  computer or NAS (SMB/WebDAV, or Syncthing's protocol later), conflict-safe by keeping both copies. No cloud and no
-  login, just your machine.
+  computer or NAS (SMB/WebDAV, or Syncthing's protocol later), conflict-safe by keeping both copies.
 - **A web page on the handheld (M).** Open `http://banana.local` from a phone or laptop on the same Wi-Fi: upload ROMs
   and BIOS files, browse and download screenshots and saves, edit `settings.conf` safely, read the logs, start an
   update. ksmbd already shares the card; this is the friendly version, with a QR code in Settings > Network.
-- **Two handhelds, one game (L).** RetroArch netplay between two Banana Pockets found automatically on the same Wi-Fi
-  (mDNS), started from the pause menu: *Invite* on one, a toast on the other.
 - **Achievement hunting (M).** A game-page tab with every achievement, locked ones included (from the
   RetroAchievements API, cached for offline), shown by rarity, plus "closest to unlocking" hints.
+- **Two handhelds, one game (L).** RetroArch netplay between two Banana Pockets found automatically on the same Wi-Fi
+  (mDNS), started from the pause menu: *Invite* on one, a toast on the other.
 
 ### Updates, recovery and trust
+- **Slot versions in Settings (S).** Show each slot's version and build date in Settings > System (the 0.5.17 test build
+  that kept the same version number is exactly why). Pruning old packages is already done (`update prune`).
+- **Offline update cache (S).** Keep the last good update package on the card until the new slot boots once, so a failed
+  update can be reapplied without Wi-Fi.
+- **Field diagnostics bundle (S).** One Settings button that packs the logs, the sound-server log, `dmesg` tail and
+  `settings.conf` (with secrets stripped) into `/data/banana/backups` for a bug report.
 - **Delta updates (M).** Ship a binary diff of the squashfs against the previous release (zchunk/bsdiff) so a typical
   OTA is a few MB instead of ~240 MB, with the full package kept as the fallback.
 - **A recovery screen without Android (M).** Hold a button at power-on to get a minimal menu: boot the other slot,
   reset settings, run a filesystem check, or start transfer mode -- for when the menu itself will not start.
-- **Prune and verify (S).** Keep the two newest update packages and delete the rest after a good boot, and show each
-  slot's version and build date in Settings > System (the 0.5.17 test build that kept the same version number is
-  exactly why).
 - **Signed releases (M).** Sign the update package and check the signature before writing a slot, so an update from a
   card or a mirror is provably Banana's.
 
-### Small things that make it feel finished
+### Polish
 - **Quick settings in the pause menu (S).** Brightness, volume and Wi-Fi as sliders and toggles at the
   bottom of the pause menu, so nobody leaves a game to change them. *(A quick-settings overlay was dropped earlier;
   the pause menu now exists, so this would be a few rows in it rather than a new overlay.)*
-- **Per-game controls (M).** A Banana-styled remap page from the pause menu (swap A/B, turbo on a button, d-pad as
-  stick), saved per game, in place of RetroArch's remap menu.
 - **Sleep timer for BananaTube (S).** "Stop after this video / in 30 min" in the player, then the handheld sleeps.
-- **Faster to the menu (M).** The menu now waits ~1.8 s for the sound on a cold boot. Show the menu while the audio
-  comes up and play the click on the first sound that is ready (or skip it) as a "fast boot" option, for anyone who
-  prefers 8 s to 10 s.
 - **Fresh-card welcome (S).** When the library is empty, a friendly page instead of empty shelves: where ROMs go, the
   file-sharing address and QR code, and which BIOS files each system still needs (checked against `bios/`).
 - **What's new after an update (S).** The first boot of a new version shows a short card with the release's headlines
   (shipped with the image), once.
+- **Per-game controls (M).** A Banana-styled remap page from the pause menu (swap A/B, turbo on a button, d-pad as
+  stick), saved per game, in place of RetroArch's remap menu.
+- **Faster to the menu (M).** The menu now waits ~1.8 s for the sound on a cold boot. Show the menu while the audio
+  comes up and play the click on the first sound that is ready (or skip it) as a "fast boot" option.
 
 ## Field notes (open questions, from working on the unit)
 
