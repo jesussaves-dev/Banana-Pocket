@@ -107,6 +107,9 @@ namespace rnds
 		virtual void popClip() = 0;
 		virtual void beginScreen() = 0;
 		virtual void endScreen() = 0;
+		// a post-effect over what is drawn so far in the box (device px): the mosaic, each block of `size` px the
+		// colour of its top-left pixel. A backend without it draws nothing for it.
+		virtual void mosaic(float x, float y, float w, float h, float size) { (void)x; (void)y; (void)w; (void)h; (void)size; }
 	};
 
 	// ---- the theme ----------------------------------------------------------------------------------------------------

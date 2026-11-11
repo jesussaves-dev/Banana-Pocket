@@ -273,6 +273,7 @@ namespace banana
 			const Cmd& c = it.c;
 			rnds::Color col(c.c[0], c.c[1], c.c[2], c.c[3]);
 			if (c.op == Cmd::DRAW) doDraw((SoftTex*)c.tex.get(), c.x, c.y, c.w, c.h, col, cl);
+			else if (c.op == Cmd::MOSAIC) doMosaic(c, cl);
 			else doFill(c.x, c.y, c.w, c.h, col, cl);
 		}
 	}
@@ -307,6 +308,12 @@ namespace banana
 			}
 			for (; p < old.size(); p++) addDirty(old[p].box);
 			if (dirty.empty()) { skipped++; std::swap(items, old); return; }
+			// a mosaic's block is the colour of its top-left pixel, which a rectangle cutting the block would leave
+			// out: anything to draw under a mosaic draws its whole box again
+			for (auto& it : items)
+				if (it.c.op == Cmd::MOSAIC)
+					for (size_t i = 0; i < dirty.size(); i++)
+						if (overlaps(dirty[i].x0, dirty[i].y0, dirty[i].x1, dirty[i].y1, it.box.x0, it.box.y0, it.box.x1, it.box.y1)) { addDirty(it.box); break; }
 		}
 		for (auto& r : dirty) redraw(r);
 		std::swap(items, old);
@@ -320,6 +327,27 @@ namespace banana
 	void SoftBackend::fill(float x, float y, float w, float h, const rnds::Color& c)
 	{
 		rec.push_back({ Cmd::FILL, nullptr, x, y, w, h, { c.r, c.g, c.b, c.a } });
+	}
+
+	void SoftBackend::mosaic(float x, float y, float w, float h, float size)
+	{
+		if (size >= 2) rec.push_back({ Cmd::MOSAIC, nullptr, x, y, w, h, { std::floor(size), 0, 0, 1 } });
+	}
+
+	// blocks of c.c[0] px from the box's corner, each the colour its top-left pixel was drawn (SNES mosaic)
+	void SoftBackend::doMosaic(const Cmd& c, const Clip& cl)
+	{
+		const int n = (int)c.c[0], ox = edge(c.x), oy = edge(c.y);
+		for (int by = oy + (cl.y0 - oy) / n * n; by < cl.y1; by += n)
+		{
+			const int y0 = std::max(by, cl.y0), y1 = std::min(by + n, cl.y1);
+			for (int bx = ox + (cl.x0 - ox) / n * n; bx < cl.x1; bx += n)
+			{
+				const int x0 = std::max(bx, cl.x0), x1 = std::min(bx + n, cl.x1);
+				const uint32_t p = scr[(size_t)y0 * W + x0];
+				for (int y = y0; y < y1; y++) std::fill(&scr[(size_t)y * W + x0], &scr[(size_t)y * W + x1], p);
+			}
+		}
 	}
 
 	void SoftBackend::pushClip(float x, float y, float w, float h)

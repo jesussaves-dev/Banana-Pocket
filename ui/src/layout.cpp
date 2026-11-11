@@ -201,7 +201,7 @@ namespace banana
 			auto n = std::make_shared<Node>();
 			n->serial = ++serials;
 			n->type = v.str("type", v.get("children") ? "group" : v.get("text") ? "text" : v.get("src") ? "image" : v.get("source") ? "list" : "rect");
-			static const std::set<std::string> types = { "rect", "text", "image", "group", "list" };
+			static const std::set<std::string> types = { "rect", "text", "image", "group", "list", "effect" };
 			if (!types.count(n->type)) { err(where + ": unknown type \"" + n->type + "\""); return nullptr; }
 			std::string here = where + (v.get("id") ? "#" + v.str("id") : "") + "(" + n->type + ")";
 			for (auto& e : v.obj)
@@ -1002,6 +1002,12 @@ namespace banana
 				drawText(c, ax0, ay0, has(c, "w") ? aw : 0, has(c, "h") ? ah : 0, cf, L);
 			}
 			else if (n->type == "image") drawImage(c, ax0, ay0, aw, ah, cf);
+			else if (n->type == "effect")
+			{
+				// "mosaic": what was drawn before it in its box, in blocks this many units wide (1 or less: none)
+				const float mz = std::floor((float)num(c, "mosaic", 0) * cf.k);
+				if (mz >= 2) m->be->mosaic(std::round(ax0 * s), std::round(ay0 * s), std::round(aw * s), std::round(ah * s), mz * s);
+			}
 			else if (n->type == "group")
 			{
 				// a group can paint a box behind its children too

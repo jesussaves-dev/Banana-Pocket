@@ -67,6 +67,7 @@ namespace banana
 		void popClip() override;
 		void beginScreen() override;
 		void endScreen() override;
+		void mosaic(float x, float y, float w, float h, float size) override;
 
 		// drawn over the screen just before it ends (the menu's notices), so it is part of the screen's draw list
 		std::function<void()> overlay;
@@ -83,10 +84,10 @@ namespace banana
 		// changed are cleared and drawn again, with every draw that touches them clipped to them
 		struct Cmd
 		{
-			enum Op { DRAW, FILL, PUSH, POP } op;
+			enum Op { DRAW, FILL, PUSH, POP, MOSAIC } op;
 			rnds::TexPtr tex;	// held, so its address can't be reused by a new texture while it is compared
 			float x, y, w, h;
-			float c[4];
+			float c[4];		// a tint or fill; MOSAIC: its block size
 		};
 		struct Clip { int x0, y0, x1, y1; };
 		struct Item
@@ -113,6 +114,7 @@ namespace banana
 		void blitRuns(const SoftTex* t, int bx0, int by0, int x0, int y0, int x1, int y1, uint32_t tr, uint32_t tg, uint32_t tb, uint32_t ta, uint32_t tintWord);
 		void doDraw(SoftTex* t, float x, float y, float w, float h, const rnds::Color& tint, const Clip& cl);
 		void doFill(float x, float y, float w, float h, const rnds::Color& c, const Clip& cl);
+		void doMosaic(const Cmd& c, const Clip& cl);
 		int W, H;
 		std::vector<uint32_t> scr;
 		Damage dmg;

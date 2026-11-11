@@ -119,7 +119,7 @@ Pictures from hooks (`sys.icon`, `game.art`...) are full paths. A theme's own fi
 
 ## Elements
 
-An element is an object with a `type`: `rect`, `text`, `image`, `group` or `list`. Without a `type`, it is a group if
+An element is an object with a `type`: `rect`, `text`, `image`, `group`, `list` or `effect`. Without a `type`, it is a group if
 it has `children`, text if it has `text`, an image if it has `src`, a list if it has `source`, and a rect otherwise.
 An array of elements is a group of them.
 
@@ -164,6 +164,13 @@ pixel, so they come out hard-edged with no grey at `size` 12 and 24 on a `"canva
 `pixel` stretched without smoothing, `pixelContain` whole multiples of its pixels), `radius`, `tint` (multiplied),
 `crop` (`cardLabel`: a real DS card scan's artwork, `noStrip`: a DS box without its white strip), `placeholder` (a
 colour shown while it loads or when there is nothing). Pictures are decoded and fitted off the main thread.
+
+### effect
+
+Applies to everything drawn before it in its box (without `w`/`h`: its parent), so it goes last: in the `all` screen
+it covers every view. `mosaic`: blocks this many units wide, each the colour of its top-left pixel (1 or less: none),
+the Super NES's mosaic. A fade needs no effect: a black `rect` whose `alpha` steps in sixteenths. Banana Street's
+launch is an example.
 
 ### group
 

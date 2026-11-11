@@ -253,7 +253,7 @@
       "additionalProperties": true,
       "properties": {
         "type": {
-          "enum": ["rect", "text", "image", "group", "list"],
+          "enum": ["rect", "text", "image", "group", "list", "effect"],
           "description": "The element's kind. Inferred from its other members when absent."
         },
         "id": { "type": "string", "description": "A name for the element (for the error messages)." },
@@ -337,6 +337,7 @@
         "wrap": { "$ref": "#/$defs/prop", "description": "true: the text wraps within w." },
         "maxLines": { "$ref": "#/$defs/prop", "description": "The most lines a wrapped text may take." },
         "lineHeight": { "$ref": "#/$defs/prop", "description": "The distance between lines." },
+        "mosaic": { "$ref": "#/$defs/prop", "description": "An effect's mosaic: what was drawn before it in its box, in blocks this many units wide (each the colour of its top-left pixel); 1 or less: none." },
         "ellipsis": { "$ref": "#/$defs/prop", "description": "A line longer than w ends in ... (default on)." },
         "outline": { "$ref": "#/$defs/outline" },
         "src": { "type": "string", "description": "An image's source: a hook (\"{game.art}\"), a file next to the theme's JSON, or a full path." },

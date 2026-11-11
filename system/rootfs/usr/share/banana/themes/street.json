@@ -58,7 +58,11 @@
       { "type": "text", "size": 12, "x": 4, "w": 52, "y": 5, "align": "center", "text": "{clock}", "color": "=paper" },
       { "type": "image", "src": "{art}/chip34.png", "fit": "pixel", "right": 4, "y": 4, "w": 34, "h": 14, "visible": "=battery >= 0" },
       { "type": "text", "size": 12, "right": 4, "w": 34, "y": 5, "align": "center", "text": "{battery}%",
-        "color": "=battery < 20 ? '#ff6a6a' : paper", "visible": "=battery >= 0" }
+        "color": "=battery < 20 ? '#ff6a6a' : paper", "visible": "=battery >= 0" },
+      // starting a game, over everything (the status panels too): the picture breaks into growing blocks while the
+      // brightness steps down in sixteenths, the Super NES's mosaic and fade
+      { "type": "effect", "mosaic": "=view == 'launch' ? 1 + round(launch.progress * 15) : 0" },
+      { "type": "rect", "fill": "=alpha('#000000', round(launch.progress * 15) / 15)", "visible": "=view == 'launch'" }
     ] },
 
     "home": {

@@ -346,7 +346,7 @@ for size in 640x557; do
     # block: from Game Boy Advance (Nintendo) to Ports (the next maker), and back to the first of the Nintendo block.
     BANANA_PHASE=dusk "$HERE/banana-ui" --headless "$OUT/$size-street-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
         --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
-        --script "home 0; wait 1000; shot home; press right; wait 1000; shot home2; press r; wait 600; press l; wait 600; press a; wait 1000; shot lib; press down; wait 600; shot lib2" \
+        --script "home 0; wait 1000; shot home; press right; wait 1000; shot home2; press r; wait 600; press l; wait 600; press a; wait 1000; shot lib; press down; wait 600; shot lib2; press a; wait 350; shot launch; wait 1000" \
         2> "$stlog" || { echo "FAIL $size: banana-ui (street) exited $?"; fail=1; }
     sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
     grep -q "theme:" "$stlog" && { echo "FAIL $size: the street theme: $(grep 'theme:' "$stlog" | head -3)"; fail=1; }
@@ -359,6 +359,16 @@ for size in 640x557; do
         [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ] || { echo "FAIL $size: $f is blank"; fail=1; }
     done
     for s in home lib; do golden "street-$s" "$OUT/$size-street-$s.png"; done
+    # halfway through the launch the street's mosaic has the picture in square blocks (8 to 16 units, 32 to 64 px
+    # here): the shot equals itself sampled down to one pixel a block and back up, for one of those block sizes
+    f=$OUT/$size-street-launch.png; mos=0
+    for n in 32 36 40 44 48 52 56 60 64; do
+        w=$((1240 / n * n)); h=$((1080 / n * n))
+        convert "$f" -crop ${w}x${h}+0+0 +repage "$OUT/mos-a.png" 2>/dev/null
+        convert "$OUT/mos-a.png" -sample $((w / n))x$((h / n))! -sample ${w}x${h}! "$OUT/mos-b.png" 2>/dev/null
+        [ "$(compare -metric AE "$OUT/mos-a.png" "$OUT/mos-b.png" null: 2>&1 | cut -d' ' -f1)" = 0 ] && { mos=$n; break; }
+    done
+    [ "$mos" != 0 ] || { echo "FAIL $size: the street's launch isn't a mosaic"; fail=1; }
     # The one panel offers the layout themes only: a colour theme (Dark/Light) is forced to the Pocket layout there,
     # so they were rows that changed nothing. From a stored dark the Theme row reads Pocket, and stepping right
     # picks the next layout (not Light) -- which the value it writes proves.
