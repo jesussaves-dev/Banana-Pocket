@@ -16,6 +16,7 @@ namespace banana
 		virtual ~Presenter() = default;
 		virtual const char* name() const = 0;
 		virtual bool rotated() const = 0;	// true when the output is panel-oriented (a real 3C rotation)
+		virtual bool acceptsShm() const { return false; }	// render() can upload a wl_shm source
 		virtual bool start(std::string& err) = 0;
 		virtual void stop() = 0;
 		// Draw the client frame into a scanout framebuffer. On true, the GPU has finished reading the source (the

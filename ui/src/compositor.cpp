@@ -1,4 +1,5 @@
-// Phase 3B: the in-process Wayland server. One kiosk client, one fullscreen xdg toplevel, linear DMA-BUFs only,
+// Phase 3B: the in-process Wayland server. One kiosk client (and a player it starts, which covers it while it is up:
+// BananaTube's mpv is a process of its own), one fullscreen xdg toplevel each, linear DMA-BUFs or wl_shm,
 // presented on the DRM primary plane with the menu overlay hidden. No rotation here (3C): the client's 1240x1080
 // buffer is scaled to the 1080x1240 panel by the plane, so the picture is sideways on purpose until the EGL pass.
 //
@@ -35,12 +36,16 @@
 #include "xdg-shell-server-protocol.h"
 #include "linux-dmabuf-unstable-v1-server-protocol.h"
 #include "wayland-drm-server-protocol.h"
+#include "viewporter-server-protocol.h"
 
 namespace banana
 {
 	namespace
 	{
-		constexpr const char* kWaylandDir = "/run/banana/wayland";
+#ifndef BANANA_WAYLAND_DIR
+#define BANANA_WAYLAND_DIR "/run/banana/wayland"	// the host test (ui/tests/run.sh) moves it somewhere writable
+#endif
+		constexpr const char* kWaylandDir = BANANA_WAYLAND_DIR;
 		constexpr const char* kSocket = "banana-0";
 		constexpr int kClientFormatW = 1240;	// the measured client buffer / the menu canvas
 		constexpr int kClientFormatH = 1080;
@@ -71,6 +76,7 @@ namespace banana
 			wl_resource* res = nullptr;	// wl_surface
 			wl_resource* xdg = nullptr;	// xdg_surface
 			wl_resource* top = nullptr;	// xdg_toplevel
+			wl_client* owner = nullptr;
 			bool configured = false;
 			Buffer* pend = nullptr;		// attached, not committed
 		};
@@ -81,12 +87,17 @@ namespace banana
 		wl_client* client = nullptr;
 		wl_listener clientCreated = {};
 		wl_listener clientGone = {};
-		std::vector<Surface*> surfaces;	// every wl_surface the client made; only one may present
-		Surface* surf = nullptr;		// the one presenting (the first that commits a buffer)
+		wl_client* child = nullptr;		// the player the kiosk client started: on screen over it, without the seat
+		wl_listener childGone = {};
+		std::vector<Surface*> surfaces;	// every wl_surface the clients made; one per client may present
+		Surface* surf = nullptr;		// the kiosk client's presenting surface (the first that commits a buffer); has the seat
+		Surface* cover = nullptr;		// the child's presenting surface: while set, the one on screen
+		Surface* top() const { return cover ? cover : surf; }
 
 		Buffer* pending = nullptr;		// committed, not yet presented
 		Buffer* inflight = nullptr;		// presented, flip not completed
 		Buffer* onScreen = nullptr;		// the FB the primary is scanning now (kept until replaced)
+		Buffer* under = nullptr;		// the kiosk client's newest frame while it is covered, shown when the cover goes
 		wl_resource* pendCb = nullptr;		// a frame callback requested for the next commit
 		wl_resource* pendingCb = nullptr;
 		wl_resource* inflightCb = nullptr;
@@ -245,10 +256,10 @@ namespace banana
 			// (ui/src/rotate.h fitRotated), so a port or video window that is not 1240x1080 stays upright.
 			// RetroArch picks its first size itself, after the first configure, and only a later one moves it: say it
 			// once more, and a client that still will not change is letterboxed into the hole
-			if (holeW && !cfgRepeated && surf && surf->top && ((int)b->w != cfgW || (int)b->h != cfgH))
+			if (holeW && !cfgRepeated && top() && top()->top && ((int)b->w != cfgW || (int)b->h != cfgH))
 			{
 				cfgRepeated = true;
-				sendConfigure(surf);
+				sendConfigure(top());
 			}
 			double ft0 = f3On ? msNow() : 0;
 			if (presenter) presenter->setHole(holeX, holeY, holeW, holeH);
@@ -393,7 +404,12 @@ namespace banana
 			s->res = nullptr;
 			if (s->pend) { bufferRelease(s->pend); s->pend = nullptr; }
 			s->xdg = s->top = nullptr;	// the client's resources are going away too
-			if (surf == s) surf = nullptr;
+			if (surf == s)
+			{
+				surf = nullptr;
+				if (under) { bufferRelease(under); under = nullptr; }
+			}
+			if (cover == s) uncover();
 			for (size_t i = 0; i < surfaces.size(); i++)
 				if (surfaces[i] == s) { surfaces.erase(surfaces.begin() + i); break; }
 			delete s;
@@ -410,9 +426,58 @@ namespace banana
 				if (onScreen) { bufferDrop(onScreen); onScreen = nullptr; }
 			}
 		}
+		// The player's window is gone: what the kiosk client drew under it comes back. It may have drawn before this
+		// was heard (it reaps the player and repaints at once), so that frame was kept, not dropped.
+		void uncover()
+		{
+			cover = nullptr;
+			dropPending();
+			fireCb(pendCb, pendCbGone);
+			fireCb(pendingCb, pendingCbGone);
+			if (stopping) return;
+			if (under)
+			{
+				pending = under;
+				under = nullptr;
+				frame();
+			}
+			else if (!surf)
+			{
+				if (inflight) restoreMenu = true;
+				else if (hidMenu) showMenu();
+			}
+		}
+		// A player's first frame: it goes on top, and whatever the kiosk client still had queued is answered.
+		void coverWith(Surface* s)
+		{
+			cover = s;
+			dropPending();
+			fireCb(pendCb, pendCbGone);
+			fireCb(pendingCb, pendingCbGone);
+			logf("the player covers the client");
+		}
+		void childDisconnected()
+		{
+			wl_list_remove(&childGone.link);
+			child = nullptr;
+			if (cover) uncover();
+			logf("player disconnected");
+		}
 		void clientDisconnected()
 		{
 			tracef("client disconnected");
+			// a probe (SDL opens and closes a connection to test for Wayland) can still be here when the real
+			// connection arrives, which then counts as the child: it takes the kiosk slot. A kiosk client that really
+			// ran takes its player with it, or the player would hold the screen over the menu.
+			wl_client* heir = nullptr;
+			if (under) { bufferRelease(under); under = nullptr; }	// or the cover going would put it back on screen
+			if (child && !surf)
+			{
+				heir = child;
+				wl_list_remove(&childGone.link);
+				child = nullptr;
+			}
+			else if (child) wl_client_destroy(child);
 			client = nullptr;
 			cfgW = cfgH = 0;
 			dropLastShown();
@@ -426,6 +491,12 @@ namespace banana
 			if (inflight) restoreMenu = true;
 			else if (hidMenu && !stopping) showMenu();
 			logf("client disconnected");
+			if (heir)
+			{
+				client = heir;
+				wl_client_add_destroy_listener(heir, &clientGone);
+				logf("the second connection is the client");
+			}
 		}
 
 		// ---- 3E.2 seat: keyboard focus, xkb keymap and forwarding ---------------------------------------------------
@@ -607,6 +678,44 @@ namespace banana
 			b->res = nullptr;
 			((Impl*)b->im)->bufferDrop(b);
 		}
+		void shmBufferGone(wl_listener* l, void*)
+		{
+			Impl::Buffer* b = wl_container_of(l, b, shmGone);
+			wl_list_remove(&l->link);
+			b->res = nullptr;
+			b->shm = nullptr;
+			((Impl*)b->im)->bufferDrop(b);
+		}
+		// One ClientBuffer per wl_shm buffer, made on its first attach: the resource's own reference, like a dma-buf's
+		Impl::Buffer* shmBuffer(Impl* im, wl_resource* res, wl_shm_buffer* shm)
+		{
+			if (wl_listener* l = wl_resource_get_destroy_listener(res, shmBufferGone))
+			{
+				Impl::Buffer* b = wl_container_of(l, b, shmGone);
+				return b;
+			}
+			uint32_t fmt = wl_shm_buffer_get_format(shm);
+			if (fmt != WL_SHM_FORMAT_XRGB8888 && fmt != WL_SHM_FORMAT_ARGB8888)
+			{
+				logf("rejecting a shm buffer: format %u", fmt);
+				return nullptr;
+			}
+			auto* b = new Impl::Buffer();
+			b->im = im;
+			b->res = res;
+			b->shm = shm;
+			b->shmSource = true;
+			b->w = (uint32_t)wl_shm_buffer_get_width(shm);
+			b->h = (uint32_t)wl_shm_buffer_get_height(shm);
+			b->stride = (uint32_t)wl_shm_buffer_get_stride(shm);
+			b->format = fmt == WL_SHM_FORMAT_XRGB8888 ? DRM_FORMAT_XRGB8888 : DRM_FORMAT_ARGB8888;
+			b->modifier = DRM_FORMAT_MOD_LINEAR;
+			b->serial = ++im->nextBufferSerial;
+			b->refs = 1;
+			b->shmGone.notify = shmBufferGone;
+			wl_resource_add_destroy_listener(res, &b->shmGone);
+			return b;
+		}
 		void bufferDestroy(wl_client*, wl_resource* res) { wl_resource_destroy(res); }
 		const struct wl_buffer_interface bufferImpl = { .destroy = bufferDestroy };
 
@@ -730,9 +839,17 @@ namespace banana
 			Impl::Buffer* b = nullptr;
 			if (buf)
 			{
-				if (wl_shm_buffer_get(buf))
+				if (wl_shm_buffer* shm = wl_shm_buffer_get(buf))
 				{
-					if (!im->saidShm) { im->saidShm = true; logf("shm frame ignored (linux-dmabuf only)"); }
+					if (!im->presenter || !im->presenter->acceptsShm())
+					{
+						if (!im->saidShm) { im->saidShm = true; logf("shm frame ignored (this presenter takes dma-bufs only)"); }
+					}
+					else if ((b = shmBuffer(im, buf, shm)))
+					{
+						b->refs++;
+						b->shmDirty = true;
+					}
 				}
 				else
 				{
@@ -749,6 +866,15 @@ namespace banana
 			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
 			Impl* im = s->im;
 			wl_resource* cb = wl_resource_create(c, &wl_callback_interface, wl_resource_get_version(res), id);
+			if (im->top() && im->top() != s)
+			{
+				// not the surface on screen: nothing will pace it, and SDL waits on this before its next swap
+				struct timespec ts;
+				clock_gettime(CLOCK_MONOTONIC, &ts);
+				wl_callback_send_done(cb, (uint32_t)((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000));
+				wl_resource_destroy(cb);
+				return;
+			}
 			if (im->pendCb) wl_resource_destroy(im->pendCb);	// its destroy handler nulls the slot and unlinks
 			im->pendCb = cb;
 			wl_resource_add_destroy_listener(cb, &im->pendCbGone);
@@ -769,7 +895,8 @@ namespace banana
 				}
 				return;
 			}
-			if (s->pend && im->surf && im->surf != s)
+			Impl::Surface*& slot = s->owner == im->child ? im->cover : im->surf;
+			if (s->pend && slot && slot != s)
 			{
 				// a second surface's buffer: a kiosk shows the first surface that presents, not this one
 				if (!im->saidSecondary) { im->saidSecondary = true; logf("a second surface committed a buffer; ignored"); }
@@ -777,9 +904,19 @@ namespace banana
 				s->pend = nullptr;
 				return;
 			}
+			if (s->pend && s->owner != im->child && im->cover)
+			{
+				// drawn under the player: not shown yet, but the newest is what comes back when the player goes
+				if (!im->surf) im->surf = s;
+				if (im->under) im->bufferRelease(im->under);
+				im->under = s->pend;
+				s->pend = nullptr;
+				return;
+			}
 			if (s->pend)
 			{
-				if (!im->surf) im->surf = s;
+				if (s->owner == im->child) { if (!im->cover) im->coverWith(s); }
+				else if (!im->surf) im->surf = s;
 				if (im->pending) { if (im->f3On) im->f3Drops++; im->dropPending(); }
 				im->pending = s->pend;
 				s->pend = nullptr;
@@ -822,6 +959,7 @@ namespace banana
 			Impl* im = (Impl*)wl_resource_get_user_data(res);
 			auto* s = new Impl::Surface();
 			s->im = im;
+			s->owner = c;
 			s->res = wl_resource_create(c, &wl_surface_interface, wl_resource_get_version(res), id);
 			wl_resource_set_implementation(s->res, &surfaceImpl, s, [](wl_resource* r) {
 				if (auto* s = (Impl::Surface*)wl_resource_get_user_data(r)) s->im->surfaceGone(s);
@@ -885,7 +1023,7 @@ namespace banana
 				.release = [](wl_client*, wl_resource* r) { wl_resource_destroy(r); },
 			};
 			wl_resource_set_implementation(r, &ptrImpl, im, ptrGone);
-			im->ptr = r;
+			if (c == im->client) im->ptr = r;	// the seat is the kiosk client's: a player is driven through it, over IPC
 		}
 		void seatGetKb(wl_client* c, wl_resource* res, uint32_t id)
 		{
@@ -895,6 +1033,7 @@ namespace banana
 				.release = [](wl_client*, wl_resource* r) { wl_resource_destroy(r); },
 			};
 			wl_resource_set_implementation(r, &kbImpl, im, kbGone);
+			if (c != im->client) return;
 			im->kb = r;
 			im->sendKeymap();
 			im->updateFocus();
@@ -907,7 +1046,7 @@ namespace banana
 				.release = [](wl_client*, wl_resource* r) { wl_resource_destroy(r); },
 			};
 			wl_resource_set_implementation(r, &touchImpl, im, touchGone);
-			im->touch = r;
+			if (c == im->client) im->touch = r;
 		}
 		void seatRelease(wl_client*, wl_resource* r) { wl_resource_destroy(r); }
 		const struct wl_seat_interface seatImpl = {
@@ -919,6 +1058,33 @@ namespace banana
 			wl_resource_set_implementation(r, &seatImpl, data, nullptr);
 			wl_seat_send_capabilities(r, WL_SEAT_CAPABILITY_KEYBOARD | WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_TOUCH);
 			if (version >= 2) wl_seat_send_name(r, "seat0");
+		}
+
+		// ---- wp_viewporter (mpv's Wayland outputs refuse to start without it) ----------------------------------------
+		// Nothing to do with the requests: mpv's buffers are already its window's size at scale 1, and the presenter
+		// fits whatever it gets. Only the player sees this global (viewportVisible), so an SDL port does not start
+		// asking for a scaled, emulated mode the presenter would not scale.
+		void viewportDestroy(wl_client*, wl_resource* r) { wl_resource_destroy(r); }
+		void viewportSource(wl_client*, wl_resource*, wl_fixed_t, wl_fixed_t, wl_fixed_t, wl_fixed_t) {}
+		void viewportDest(wl_client*, wl_resource*, int32_t, int32_t) {}
+		const struct wp_viewport_interface viewportImpl = {
+			.destroy = viewportDestroy, .set_source = viewportSource, .set_destination = viewportDest,
+		};
+		void viewporterDestroy(wl_client*, wl_resource* r) { wl_resource_destroy(r); }
+		void viewporterGet(wl_client* c, wl_resource* res, uint32_t id, wl_resource*)
+		{
+			wl_resource* r = wl_resource_create(c, &wp_viewport_interface, wl_resource_get_version(res), id);
+			wl_resource_set_implementation(r, &viewportImpl, nullptr, nullptr);
+		}
+		const struct wp_viewporter_interface viewporterImpl = { .destroy = viewporterDestroy, .get_viewport = viewporterGet };
+		void viewporterBind(wl_client* c, void* data, uint32_t version, uint32_t id)
+		{
+			wl_resource* r = wl_resource_create(c, &wp_viewporter_interface, version < 1 ? version : 1, id);
+			wl_resource_set_implementation(r, &viewporterImpl, data, nullptr);
+		}
+		bool viewportVisible(const wl_client* c, const wl_global* g, void* data)
+		{
+			return wl_global_get_interface(g) != &wp_viewporter_interface || c == ((Impl*)data)->child;
 		}
 
 		// ---- wl_drm (Mesa's WSI asks for it; buffers still arrive through linux-dmabuf) -------------------------------
@@ -1088,10 +1254,17 @@ namespace banana
 		{
 			Impl* im = wl_container_of(l, im, clientCreated);
 			wl_client* c = (wl_client*)data;
+			if (im->client && im->child)
+			{
+				logf("a third client is refused (one client and its player)");
+				wl_client_destroy(c);
+				return;
+			}
 			if (im->client)
 			{
-				logf("a second client is refused (one fullscreen client)");
-				wl_client_destroy(c);
+				im->child = c;
+				wl_client_add_destroy_listener(c, &im->childGone);
+				logf("player connected");
 				return;
 			}
 			im->client = c;
@@ -1103,6 +1276,11 @@ namespace banana
 		{
 			Impl* im = wl_container_of(l, im, clientGone);
 			im->clientDisconnected();
+		}
+		void onChildGone(wl_listener* l, void*)
+		{
+			Impl* im = wl_container_of(l, im, childGone);
+			im->childDisconnected();
 		}
 	}
 
@@ -1147,6 +1325,7 @@ namespace banana
 
 		im->clientCreated.notify = onClientCreated;
 		im->clientGone.notify = onClientGone;
+		im->childGone.notify = onChildGone;
 		im->pendCbGone.notify = cbGonePend;
 		im->pendingCbGone.notify = cbGonePending;
 		im->inflightCbGone.notify = cbGoneInflight;
@@ -1159,6 +1338,8 @@ namespace banana
 		wl_global_create(im->wl, &zwp_linux_dmabuf_v1_interface, 4, im, dmabufBind);
 		wl_global_create(im->wl, &wl_drm_interface, 2, im, drmBind);
 		wl_display_init_shm(im->wl);
+		wl_global_create(im->wl, &wp_viewporter_interface, 1, im, viewporterBind);
+		wl_display_set_global_filter(im->wl, viewportVisible, im);
 
 		// Presentation strategy. 3C (the EGL rotate presenter) is the default; if it cannot start, the 3B direct
 		// presenter keeps the client working and logs that the output is not rotated. A persistent
@@ -1240,7 +1421,7 @@ namespace banana
 		// bananad uses this to write the 3D card file instead of the launcher/OSD paths while the compositor owns
 		// the panel. Absent when the compositor is off.
 		if (FILE* f = fopen("/run/banana/compositor", "w")) { fputs("banana-ui\n", f); fclose(f); }
-		logf("wayland-0 at %s/%s (xdg-shell 1, linux-dmabuf 4 linear, wl_drm; primary %s; presenter %s)",
+		logf("wayland-0 at %s/%s (xdg-shell 1, linux-dmabuf 4 linear, wl_drm, wl_shm; primary %s; presenter %s)",
 		     kWaylandDir, kSocket, im->devName, im->presenter->name());
 		return true;
 	}
@@ -1279,6 +1460,7 @@ namespace banana
 		if (im->pending) { im->bufferDrop(im->pending); im->pending = nullptr; }
 		if (im->inflight) { im->bufferDrop(im->inflight); im->inflight = nullptr; }
 		if (im->onScreen) { im->bufferDrop(im->onScreen); im->onScreen = nullptr; }
+		if (im->under) { im->bufferDrop(im->under); im->under = nullptr; }
 		im->dropLastShown();
 		im->pendingCb = im->inflightCb = im->pendCb = nullptr;
 		wl_display_destroy_clients(im->wl);
@@ -1354,10 +1536,10 @@ namespace banana
 
 	void Compositor::reconfigure()
 	{
-		if (!impl || !impl->surf || !impl->surf->top || !impl->surf->configured) return;
+		if (!impl || !impl->top() || !impl->top()->top || !impl->top()->configured) return;
 		Impl* im = impl;
 		if (im->cfgW != (im->holeW ? im->holeW : kClientFormatW) || im->cfgH != (im->holeW ? im->holeH : kClientFormatH))
-			im->sendConfigure(im->surf);
+			im->sendConfigure(im->top());
 	}
 
 	bool Compositor::gameActive() const
