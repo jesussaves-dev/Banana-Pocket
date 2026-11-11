@@ -30,6 +30,19 @@ ${CXX:-c++} -O2 -std=c++17 -o "$OUT/rotation-test" "$HERE/tests/rotation-test.cp
 ${CXX:-c++} -O2 -std=c++17 -Wno-unused-function -o "$OUT/frame-test" "$HERE/tests/frame-test.cpp" "$HERE/src/frame.cpp" 2> "$OUT/frame-build.log" ||
     { echo "FAIL: can't build frame-test (see $OUT/frame-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/frame-test" "$HERE/../system/rootfs/usr/share/banana/overlays" "$OUT/frame-banana.png" > "$OUT/frame.log" 2>&1 || { echo "FAIL: frame-test"; cat "$OUT/frame.log"; fail=1; }
+# BananaTube's player under the compositor: real mpv against the real Wayland server (KMS and EGL faked)
+if command -v mpv >/dev/null && [ -f "$HERE/build/wayland/viewporter-server-protocol.h" ]; then
+	WLT=$OUT/wl; mkdir -p "$WLT"; chmod 700 "$WLT"
+	wayland-scanner client-header "$(pkg-config --variable=pkgdatadir wayland-protocols)/stable/xdg-shell/xdg-shell.xml" "$OUT/xdg-shell-client-protocol.h"
+	${CXX:-c++} -O1 -std=c++17 -DBANANA_WAYLAND_DIR="\"$WLT\"" -I"$OUT" -I"$HERE/build/wayland" -I"$HERE/src" \
+		$(pkg-config --cflags libdrm wayland-server wayland-client xkbcommon egl glesv2 gbm) \
+		-o "$OUT/compositor-player-test" "$HERE/tests/compositor-player-test.cpp" "$HERE/src/compositor.cpp" "$HERE/src/trace.cpp" \
+		"$HERE"/build/wayland/*.o $(pkg-config --libs wayland-server wayland-client xkbcommon libdrm) 2> "$OUT/player-build.log" ||
+		{ echo "FAIL: can't build compositor-player-test (see $OUT/player-build.log)"; fail=1; }
+	[ "$fail" = 1 ] || "$OUT/compositor-player-test" "$WLT" > "$OUT/player.log" 2>&1 || { echo "FAIL: compositor-player-test"; cat "$OUT/player.log"; fail=1; }
+else
+	echo "skip: compositor-player-test (needs mpv and a built banana-ui)"
+fi
 # A golden theme test: the key screens compared to committed baselines, so a change that moves or drops an element
 # fails here instead of only being seen on the handheld. The comparison is at 32x24 grey -- a layout change is a big
 # difference (an added block scores ~0.06), while a freetype version's rasterization stays under 0.02 -- and

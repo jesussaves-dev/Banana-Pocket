@@ -50,12 +50,6 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
     instead: no gap, at ~12 mA more asleep (37-42 mA rather than 26); the sleep hook reads the key, and `bananad`
     skips the wait/reinit in that mode.
 
-- **BananaTube: what is left of the YouTube work.** A1 (idle frames), A2 (cards, keyboard, thumbnail bound), B1 (player
-  OSD + Y quality) and the Pocket shell all shipped in 0.5.9. Left: **captions** (Track B3 -- yt-dlp's subtitle path
-  into mpv's `--sub-file`, no new dependency) and the three unscheduled Ideas below -- a **Subscriptions** tab from the
-  channels' saved `browseId`s (no account), an **offline shelf** (a yt-dlp download queue with progress and a local mpv
-  path) and a **play-next queue** in the player OSD. Designs/plans: `docs/superpowers/specs/2026-11-04-bananatube-*`
-  and `docs/superpowers/plans/2026-11-04-bananatube-*`.
 - **Languages: Spanish and German, Settings screen first.** The pipeline is in: the English string is the key,
   `tr()` in `ui/src/i18n.cpp` falls back to English, catalogs are JSON in `/usr/share/banana/lang/<code>.json` with a
   `/data/banana/lang/` override on the card (like a theme), and Settings > Display & sound gains a **Language** row
@@ -87,13 +81,6 @@ Not commitments: sketches to weigh against the list above. Each one builds on so
   left at this pace" beside the percentage. Pairs with item 6's time-remaining estimate.
 - **Saves you can read.** A "last session" log view per game (start, end, states written, cheevos), built on the
   in-menu log viewer in item 6. Makes a lost save easy to trace.
-- **BananaTube subscriptions without an account.** Search results carry each channel's `browseId`; keep a local list of
-  those ids and fetch each channel's uploads from InnerTube's browse endpoint, so a Subscriptions tab works with no
-  Google sign-in. The Channels tab already gathers the names; this adds the id and the feed.
-- **BananaTube offline shelf.** A download queue over yt-dlp (picture + sound to `/data/banana/downloads`) with a fifth
-  tab showing progress and a local mpv playback path, so a flight or a bad Wi-Fi spot does not end the session.
-- **Play next queue.** Queue a few results with a long A press or SELECT, show "up next" in the player OSD, and start
-  the next one when the current video ends; a single toggle keeps autoplay from draining the battery unasked.
 - **Field diagnostics bundle.** One Settings button that packs the logs, the sound-server log, `dmesg` tail and
   `settings.conf` (with secrets stripped) into `/data/banana/backups` for a bug report. Complements `make sound-test`
   and the `tools/rpc-*.sh` probes.
@@ -362,6 +349,15 @@ accessibility / in-menu log viewer / battery-time item (2026-11-04).)*
   and slot, panel size and rotation from banana-ui's log, Wi-Fi state, UDC state, `/data` free space, the update
   packages on the card) read straight off the unit with one ssh. `docs/RPC-TEST.md` stays the human checklist -- the
   parts a script cannot judge (does a game run, does a save survive a reboot) are the parts that need eyes anyway.
+- [x] **BananaTube: the picture is back, and the rest of the YouTube work.** Since cage left, a video played sound with no
+  picture: `banana-ui`'s compositor refused a second client, mpv is one, and its Wayland output also wants `wp_viewporter`
+  and sends `wl_shm` frames, neither of which the compositor took. It now admits one player over the kiosk client (it
+  covers the app, and the app's newest frame returns when it leaves), offers `wp_viewporter` to the player only, and
+  uploads shm frames in the EGL presenter. Then the items left over: **captions** (START in the player; yt-dlp fetches
+  them beside playback and mpv takes them with `sub-add`), a **Subs** tab (X follows a channel, InnerTube's browse
+  endpoint, no account), an **Offline** tab (START saves to `/data/banana/downloads`, picture and sound as two files) and
+  a **play-next queue** (hold A; hold SELECT turns autoplay off). `ui/tests/compositor-player-test.cpp` runs real mpv
+  against the real server on the host. Awaiting a pass on the unit.
 - [x] **BananaTube: the Pocket shell, the player OSD and a near-free idle (0.5.9).** Three tracks in one release.
   **Pocket shell:** the client wears the OS's own theme -- `#17140d` ground, butter ink and olive metadata, banana-gold
   focus, Pixelify Sans (Medium titles/wordmark, Regular body, Inter fallback), a crisp framed screen with the dot grid,

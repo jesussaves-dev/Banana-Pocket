@@ -19,6 +19,7 @@ namespace banana
 
 		const char* name() const override { return "EGL rotate"; }
 		bool rotated() const override { return true; }
+		bool acceptsShm() const override;
 		bool start(std::string& err) override;
 		void stop() override;
 		bool render(ClientBuffer& b, uint32_t& fb, std::string& err) override;

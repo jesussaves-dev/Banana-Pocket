@@ -1,5 +1,5 @@
 // banana-tube: a light YouTube search-and-play client for the Retroid Pocket Classic (SM4450). One SDL2 window
-// under cage (the kiosk compositor turns it with the panel, as the ports and RetroArch run); a search hits YouTube's
+// under banana-ui's compositor (turned with the panel, as the ports and RetroArch run); a search hits YouTube's
 // InnerTube API directly (with yt-dlp as a fallback), thumbnails are cached under /data/banana/cache/tube, and the
 // chosen video plays in an mpv child process driven over its JSON IPC socket. No browser, no Electron, no web view.
 //
@@ -16,8 +16,8 @@
 // Playback choices that matter on this SoC (measured on the unit):
 //   * Codec: YouTube offers AV1 first and the a613 has no AV1 decoder, so mpv rendered no frames. The format chain
 //     prefers H.264 (avc1) then VP9 and never av01.
-//   * Output: --vo=wlshm (software, shared memory). mpv's GPU output under cage renders a white frame
-//     intermittently here; the software output is stable and draws like banana-ui's own panel.
+//   * Output: --vo=wlshm (software, shared memory), a second client of banana-ui's compositor that covers this app's
+//     window while it is up. mpv's GPU output rendered a white frame intermittently here; the software output is stable.
 //   * Decode: --hwdec=auto-copy (a copy-back hwdec like v4l2m2m-copy), so a supported codec decodes on the GPU and
 //     the frames come back to system memory for wlshm; it falls back to software on its own.
 //   * Audio: ALSA "default" -> PipeWire -> the AudioReach frontend, S16,
@@ -49,6 +49,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -63,6 +64,8 @@
 // quality, so both survive a reboot
 #define RECENT_FILE "/data/banana/bananatube-recent.tsv"
 #define CONF_FILE "/data/banana/bananatube.conf"
+#define SUBS_FILE "/data/banana/bananatube-subs.tsv"
+#define DL_FILE "/data/banana/bananatube-downloads.tsv"
 
 // A stop asked from outside (the launcher's `kill` on the app's process group, a shutdown): the loop leaves and the
 // mpv child is reaped, so the menu's launcher always returns and the menu comes back.
@@ -87,9 +90,16 @@ namespace
 	// a secret and is not per-user; a failure just falls back to yt-dlp.
 	const char* INNERTUBE_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
 	const char* INNERTUBE_SEARCH = "https://www.youtube.com/youtubei/v1/search";
+	const char* INNERTUBE_BROWSE = "https://www.youtube.com/youtubei/v1/browse";
+	const char* DL_DIR = "/data/banana/downloads";
+	const char* CAP_DIR = "/data/banana/cache/tube/captions";
 
 	enum class Mode { KEYS, RESULTS, PLAYING };
-	enum class View { SEARCH, RECENT, CHANNELS, LOCAL };
+	enum class View { SEARCH, RECENT, CHANNELS, SUBS, OFFLINE, LOCAL };
+	// the tab strip, left to right
+	const View TABS[] = { View::SEARCH, View::RECENT, View::CHANNELS, View::SUBS, View::OFFLINE, View::LOCAL };
+	const char* const TAB_NAMES[] = { "Search", "Recent", "Channels", "Subs", "Offline", "Local" };
+	const int TAB_COUNT = 6;
 
 	// a SponsorBlock segment of the video playing: skipped (seeked past) once per playback
 	struct Skip { double s, e; std::string cat; bool done; };
@@ -99,7 +109,21 @@ namespace
 		std::string id, title, uploader, duration;
 		double resume = 0;		// where playback stopped, in seconds (0 = start; recent only)
 		bool local = false;		// id is a file on the card (the Local tab), not a YouTube id
+		std::string channelId;	// the uploader's browseId, what a subscription keeps
+		std::string age;		// "2 days ago" (Subscriptions only)
 	};
+
+	// a video on the Offline shelf: its picture and sound are separate files, so no ffmpeg merge is needed
+	enum class DlState { QUEUED, RUNNING, DONE, FAILED };
+	struct Dl
+	{
+		Item item;
+		DlState state = DlState::QUEUED;
+		double pct = 0;
+		int part = 0;			// 0 the picture, 1 the sound: yt-dlp's percentage starts over for each
+		std::string video, audio;
+	};
+	struct Sub { std::string id, name; };
 
 	// the on-screen keyboard: rows of keys, the last row the actions. A key is one UTF-8 string ("Shift" swaps the
 	// letters' case, so one list does both).
@@ -198,7 +222,62 @@ namespace
 		if (runs->isStr()) return runs->s;	// a bare string
 		return runs->arr.empty() ? "" : runs->arr[0]->str("text");
 	}
-	void collectRenderers(const banana::JVal* node, std::vector<Item>& out, int depth = 0)
+	// the channel a byline's first run links to
+	std::string channelIdOf(const banana::JVal* runs)
+	{
+		if (!runs || !runs->isArr() || runs->arr.empty()) return "";
+		const banana::JVal* be = objAt(objAt(runs->arr[0].get(), "navigationEndpoint"), "browseEndpoint");
+		return be ? be->str("browseId") : "";
+	}
+	const banana::JVal* findKey(const banana::JVal* n, const char* key, int depth = 0)
+	{
+		if (!n || depth > 10) return nullptr;
+		if (n->isObj())
+		{
+			if (const banana::JVal* v = n->get(key)) return v;
+			for (auto& m : n->obj) if (const banana::JVal* v = findKey(m.second.get(), key, depth + 1)) return v;
+		}
+		else if (n->isArr())
+			for (auto& e : n->arr) if (const banana::JVal* v = findKey(e.get(), key, depth + 1)) return v;
+		return nullptr;
+	}
+	// a channel page's videos are lockups, not videoRenderers
+	void lockupItem(const banana::JVal* lv, std::vector<Item>& out)
+	{
+		if (lv->str("contentType") != "LOCKUP_CONTENT_TYPE_VIDEO") return;
+		Item it;
+		it.id = lv->str("contentId");
+		const banana::JVal* meta = objAt(objAt(lv, "metadata"), "lockupMetadataViewModel");
+		if (const banana::JVal* t = objAt(meta, "title")) it.title = t->str("content");
+		if (const banana::JVal* b = findKey(objAt(lv, "contentImage"), "thumbnailBadgeViewModel")) it.duration = b->str("text");
+		const banana::JVal* rows = objAt(objAt(objAt(meta, "metadata"), "contentMetadataViewModel"), "metadataRows");
+		if (rows && rows->isArr())
+			for (auto& r : rows->arr)
+			{
+				const banana::JVal* parts = r->get("metadataParts");
+				if (!parts || !parts->isArr()) continue;
+				for (auto& q : parts->arr)
+				{
+					const banana::JVal* t = q->get("text");
+					std::string c = t ? t->str("content") : "";
+					if (c.find(" ago") != std::string::npos) it.age = c;
+				}
+			}
+		if (!it.id.empty() && !it.title.empty()) out.push_back(it);
+	}
+	// "3 days ago" in seconds, to sort a merged feed; what cannot be read sorts last
+	long ageSeconds(const std::string& a)
+	{
+		const long unknown = 1L << 40;
+		size_t i = a.find_first_of("0123456789");
+		if (i == std::string::npos) return unknown;
+		long n = strtol(a.c_str() + i, nullptr, 10);
+		auto has = [&](const char* u) { return a.find(u, i) != std::string::npos; };
+		long unit = has("second") ? 1 : has("minute") ? 60 : has("hour") ? 3600 : has("day") ? 86400
+			: has("week") ? 604800 : has("month") ? 2592000 : has("year") ? 31536000 : 0;
+		return unit ? n * unit : unknown;
+	}
+	void collectRenderers(const banana::JVal* node, std::vector<Item>& out, int depth = 0, bool lockups = false)
 	{
 		if (!node || depth > 12) return;
 		if (node->isObj())
@@ -211,20 +290,52 @@ namespace
 				it.title = t ? runText(t->get("runs")) : "";
 				if (it.title.empty() && t) it.title = t->str("simpleText");
 				it.uploader = runText(objAt(objAt(vr, "ownerText"), "runs"));
+				it.channelId = channelIdOf(objAt(objAt(vr, "ownerText"), "runs"));
 				if (it.uploader.empty())
 				{
 					const banana::JVal* ch = objAt(objAt(vr, "longBylineText"), "runs");
 					it.uploader = runText(ch);
 				}
+				if (it.channelId.empty()) it.channelId = channelIdOf(objAt(objAt(vr, "longBylineText"), "runs"));
+				if (const banana::JVal* pt = objAt(vr, "publishedTimeText")) it.age = pt->str("simpleText");
 				it.duration = objAt(vr, "lengthText") ? objAt(vr, "lengthText")->str("simpleText") : "";
 				if (!it.id.empty() && !it.title.empty()) out.push_back(it);
 			}
-			for (auto& m : node->obj) collectRenderers(m.second.get(), out, depth + 1);
+			if (lockups) if (const banana::JVal* lv = node->get("lockupViewModel")) lockupItem(lv, out);
+			for (auto& m : node->obj) collectRenderers(m.second.get(), out, depth + 1, lockups);
 		}
 		else if (node->isArr())
 		{
-			for (auto& e : node->arr) collectRenderers(e.get(), out, depth + 1);
+			for (auto& e : node->arr) collectRenderers(e.get(), out, depth + 1, lockups);
 		}
+	}
+	// a channel's newest uploads: InnerTube's browse endpoint on its Videos tab, no sign-in
+	std::vector<Item> innerTubeChannel(const Sub& sub, bool* ok)
+	{
+		std::vector<Item> out;
+		if (ok) *ok = false;
+		std::string body = "{\"context\":{\"client\":{\"clientName\":\"WEB\",\"clientVersion\":\"2.20240101.00.00\","
+			"\"hl\":\"en\",\"gl\":\"US\"}},\"browseId\":\"" + jsonEsc(sub.id) + "\",\"params\":\"EgZ2aWRlb3PyBgQKAjoA\"}";
+		std::string url = std::string(INNERTUBE_BROWSE) + "?key=" + INNERTUBE_KEY + "&prettyPrint=false";
+		bool httpOk = false;
+		std::string resp = curlBody(url, &body, &httpOk, 12);
+		if (!httpOk || resp.empty()) return out;
+		banana::JPtr doc = banana::parseJson(resp);
+		if (!doc) return out;
+		collectRenderers(doc.get(), out, 0, true);
+		if (out.size() > 12) out.resize(12);
+		for (Item& it : out) { it.uploader = sub.name; it.channelId = sub.id; }
+		if (ok) *ok = true;
+		return out;
+	}
+	// every channel's uploads as one list, newest first, each video once
+	std::vector<Item> mergeFeed(std::vector<Item> all)
+	{
+		std::stable_sort(all.begin(), all.end(), [](const Item& a, const Item& b) { return ageSeconds(a.age) < ageSeconds(b.age); });
+		std::set<std::string> seen;
+		std::vector<Item> out;
+		for (Item& it : all) if (out.size() < 60 && seen.insert(it.id).second) out.push_back(std::move(it));
+		return out;
 	}
 	std::vector<Item> innerTubeSearch(const std::string& q, bool* ok)
 	{
@@ -340,7 +451,31 @@ struct App
 	std::vector<Item> searchResults;	// the last search's hits, kept while another tab is up
 	std::vector<std::string> channels;	// the unique uploaders of those two lists (Channels tab)
 	std::vector<Item> localItems;		// the music and video folders' files (Local tab)
-	View view = View::SEARCH;			// the active tab: Search, Recent, Channels
+	std::vector<Sub> subs;				// the channels followed, on the card (no account)
+	std::vector<Item> feed;				// their newest uploads, merged (Subs tab)
+	std::vector<Item> feedFound;		// the worker's result, under searchLock
+	std::thread feedThread;
+	std::atomic<bool> feedBusy { false }, feedDone { false }, feedCancel { false };
+	bool feedFailed = false;			// under searchLock: a channel could not be reached
+	Uint32 feedAt = 0;					// when the feed last arrived
+	std::vector<Dl> dls;				// the Offline shelf and its queue
+	pid_t dlPid = -1;					// the one download running
+	int dlFd = -1;						// its progress
+	std::string dlBuf;
+	std::string dlId;					// the row it belongs to
+	std::string delArmId;				// X once arms a delete, X again on the same row does it
+	Uint32 delArmAt = 0;
+	std::vector<Item> queue;			// play next, in order
+	bool autoplay = true;				// the queue starts its next video by itself
+	bool mpvExitOk = false;				// mpv left on its own with no error: the video really ended
+	bool nextShown = false;				// "Up next" was shown near this video's end
+	bool captions = false;				// show captions (saved)
+	pid_t capPid = -1;					// the yt-dlp fetching them
+	std::string capId;					// the video they are for
+	std::string capFile;				// the .vtt on the card, once it is there
+	bool capLoaded = false;				// mpv has it
+	bool noPersist = false;				// the selftest must not write to the card
+	View view = View::SEARCH;			// the active tab
 	bool channelOpen = false;			// the Channels tab is showing one channel's videos
 	std::string channelName;			// that channel's name
 	int quality = 720;					// the playback quality cap in pixels (cycleQuality)
@@ -648,6 +783,7 @@ struct App
 		if (f.size() < 4 || f[0].empty()) return false;
 		it = Item { f[0], f[1], f[2], f[3] };
 		if (f.size() >= 5) it.resume = strtod(f[4].c_str(), nullptr);
+		if (f.size() >= 6) it.channelId = f[5];
 		return true;
 	}
 	void recentLoad()
@@ -672,8 +808,8 @@ struct App
 		FILE* f = fopen(tmp, "w");
 		if (!f) return;
 		for (const Item& it : recent)
-			fprintf(f, "%s\t%s\t%s\t%s\t%.1f\n", cleanField(it.id).c_str(), cleanField(it.title).c_str(),
-				cleanField(it.uploader).c_str(), cleanField(it.duration).c_str(), it.resume);
+			fprintf(f, "%s\t%s\t%s\t%s\t%.1f\t%s\n", cleanField(it.id).c_str(), cleanField(it.title).c_str(),
+				cleanField(it.uploader).c_str(), cleanField(it.duration).c_str(), it.resume, cleanField(it.channelId).c_str());
 		fflush(f);
 		fsync(fileno(f));
 		bool ok = !ferror(f) && fclose(f) == 0;
@@ -749,6 +885,8 @@ struct App
 		};
 		for (const Item& it : searchResults) add(it);
 		for (const Item& it : recent) add(it);
+		for (const Sub& s : subs)	// a followed channel stays listed, so it can always be unfollowed
+			if (std::find(channels.begin(), channels.end(), s.name) == channels.end()) channels.push_back(s.name);
 	}
 	void showChannels()
 	{
@@ -775,10 +913,12 @@ struct App
 		};
 		for (const Item& it : searchResults) add(it);
 		for (const Item& it : recent) add(it);
+		for (const Item& it : feed) add(it);
 		setResults(std::move(list));
 		sel = scroll = 0;
 		mode = Mode::RESULTS;
-		status = "Channel: " + name + "   " + std::to_string(results.size()) + " videos   B back";
+		status = "Channel: " + name + "   " + std::to_string(results.size()) + " videos" +
+			(subscribed(name) ? "   Subscribed" : "");
 		resetThumbs();
 	}
 	// every write to the shared results goes through here: the thumbnail worker copies the vector under this lock, so
@@ -853,14 +993,524 @@ struct App
 		status = localItems.empty() ? "" : std::to_string(localItems.size()) + " files on the card   A plays one";
 		resetThumbs();	// no network thumbnails: a file on the card has none
 	}
+	void showTab(int i)
+	{
+		switch (TABS[i])
+		{
+		case View::SEARCH: showSearchTab(); break;
+		case View::RECENT: showRecent(); break;
+		case View::CHANNELS: showChannels(); break;
+		case View::SUBS: showSubs(); break;
+		case View::OFFLINE: showOffline(); break;
+		case View::LOCAL: showLocal(); break;
+		}
+	}
 	void cycleTab(int dir)
 	{
-		int i = view == View::SEARCH ? 0 : view == View::RECENT ? 1 : view == View::CHANNELS ? 2 : 3;
-		i = (i + dir + 4) % 4;
-		if (i == 0) showSearchTab();
-		else if (i == 1) showRecent();
-		else if (i == 2) showChannels();
-		else showLocal();
+		int i = 0;
+		while (i < TAB_COUNT - 1 && TABS[i] != view) i++;
+		showTab((i + dir + TAB_COUNT) % TAB_COUNT);
+	}
+
+	// ---- children that outlast a frame (a download, a caption fetch) ------------------------------------------------
+	// Its own session, so it can be stopped whole; it dies with the app; nice, so it does not stutter the video.
+	static pid_t spawn(const std::vector<std::string>& args, int* outFd)
+	{
+		int fds[2] = { -1, -1 };
+		if (outFd && pipe2(fds, O_CLOEXEC)) return -1;
+		std::vector<char*> av;	// built before the fork: the child of a threaded process must not allocate
+		for (const std::string& a : args) av.push_back(const_cast<char*>(a.c_str()));
+		av.push_back(nullptr);
+		pid_t p = fork();
+		if (p == 0)
+		{
+			setsid();
+			prctl(PR_SET_PDEATHSIG, SIGTERM);
+			int nul = open("/dev/null", O_RDWR);
+			if (nul >= 0) { dup2(nul, 0); dup2(nul, 2); if (!outFd) dup2(nul, 1); }
+			if (outFd) dup2(fds[1], 1);
+			if (nice(10) == -1) { /* a full-priority download is still a download */ }
+			execvp(av[0], av.data());
+			_exit(127);
+		}
+		if (outFd)
+		{
+			close(fds[1]);
+			if (p < 0) { close(fds[0]); return -1; }
+			fcntl(fds[0], F_SETFL, O_NONBLOCK);
+			*outFd = fds[0];
+		}
+		return p;
+	}
+	static void stopChild(pid_t& p)
+	{
+		if (p <= 0) return;
+		kill(-p, SIGTERM);
+		for (int i = 0; i < 20; i++) { if (waitpid(p, nullptr, WNOHANG) == p) { p = -1; return; } usleep(25000); }
+		kill(-p, SIGKILL);
+		waitpid(p, nullptr, 0);
+		p = -1;
+	}
+
+	// ---- subscriptions ----------------------------------------------------------------------------------------------
+	void subsLoad()
+	{
+		FILE* f = fopen(SUBS_FILE, "r");
+		if (!f) return;
+		char line[1024];
+		while (fgets(line, sizeof line, f))
+		{
+			std::string s = line;
+			while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+			size_t t = s.find('\t');
+			if (t != std::string::npos && t > 0) subs.push_back(Sub { s.substr(0, t), s.substr(t + 1) });
+		}
+		fclose(f);
+	}
+	void subsSave()
+	{
+		if (noPersist) return;
+		const char* tmp = SUBS_FILE ".new";
+		FILE* f = fopen(tmp, "w");
+		if (!f) return;
+		for (const Sub& s : subs) fprintf(f, "%s\t%s\n", cleanField(s.id).c_str(), cleanField(s.name).c_str());
+		fflush(f);
+		fsync(fileno(f));
+		bool ok = !ferror(f) && fclose(f) == 0;
+		if (ok) rename(tmp, SUBS_FILE);
+		else unlink(tmp);
+	}
+	bool subscribed(const std::string& name) const
+	{
+		for (const Sub& s : subs) if (s.name == name) return true;
+		return false;
+	}
+	// the id a list row carries for this name; an old Recent row may have none
+	std::string channelIdFor(const std::string& name) const
+	{
+		for (const std::vector<Item>* l : { &searchResults, &recent, &feed, &results })
+			for (const Item& it : *l) if (it.uploader == name && !it.channelId.empty()) return it.channelId;
+		return "";
+	}
+	void toggleSub(const std::string& name)
+	{
+		markDirty();
+		for (size_t i = 0; i < subs.size(); i++)
+			if (subs[i].name == name)
+			{
+				subs.erase(subs.begin() + i);
+				subsSave();
+				feedAt = 0;
+				status = "Unsubscribed: " + name;
+				return;
+			}
+		std::string id = channelIdFor(name);
+		if (id.empty()) { status = "No channel id yet. Find " + name + " in a search first."; return; }
+		subs.push_back(Sub { id, name });
+		subsSave();
+		feedAt = 0;	// the next visit to the tab fetches it
+		status = "Subscribed: " + name;
+	}
+	void feedStart()
+	{
+		if (feedBusy || subs.empty()) return;
+		if (feedThread.joinable()) feedThread.join();
+		feedBusy = true;
+		feedDone = false;
+		std::vector<Sub> list = subs;
+		feedThread = std::thread([this, list]
+		{
+			std::vector<Item> all;
+			bool failed = false;
+			for (const Sub& s : list)
+			{
+				if (feedCancel) break;
+				bool ok = false;
+				std::vector<Item> got = innerTubeChannel(s, &ok);
+				if (!ok) failed = true;
+				all.insert(all.end(), got.begin(), got.end());
+			}
+			std::vector<Item> merged = mergeFeed(std::move(all));
+			{
+				std::lock_guard<std::mutex> l(searchLock);
+				feedFound = std::move(merged);
+				feedFailed = failed;
+			}
+			feedDone = true;
+		});
+	}
+	void pollFeed()
+	{
+		if (!feedDone.exchange(false)) return;
+		if (feedThread.joinable()) feedThread.join();
+		feedBusy = false;
+		markDirty();
+		bool failed;
+		{
+			std::lock_guard<std::mutex> l(searchLock);
+			failed = feedFailed;
+			if (!feedFound.empty() || !failed) feed = feedFound;	// no network must not empty what is there
+		}
+		feedAt = SDL_GetTicks();
+		if (view == View::SUBS && mode != Mode::PLAYING)
+		{
+			setResults(feed);
+			if (sel >= (int)results.size()) sel = scroll = 0;
+			status = std::to_string(feed.size()) + " videos from " + std::to_string(subs.size()) + " channels" +
+				(failed ? "   (some could not be reached)" : "");
+			resetThumbs();
+			prefetchThumbs();
+		}
+	}
+	void showSubs()
+	{
+		view = View::SUBS;
+		channelOpen = false;
+		setResults(feed);
+		sel = scroll = 0;
+		mode = Mode::RESULTS;
+		bool stale = !feedAt || SDL_GetTicks() - feedAt > 600000;
+		if (stale && !subs.empty()) feedStart();
+		status = subs.empty() ? "" : feedBusy ? "Fetching " + std::to_string(subs.size()) + " channels\u2026"
+			: std::to_string(feed.size()) + " videos from " + std::to_string(subs.size()) + " channels";
+		resetThumbs();
+		prefetchThumbs();
+	}
+
+	// ---- the Offline shelf ------------------------------------------------------------------------------------------
+	static bool parseDlLine(const std::string& s, Dl& d)
+	{
+		std::vector<std::string> f;
+		size_t p = 0;
+		while (p <= s.size())
+		{
+			size_t t = s.find('\t', p);
+			if (t == std::string::npos) { f.push_back(s.substr(p)); break; }
+			f.push_back(s.substr(p, t - p));
+			p = t + 1;
+		}
+		if (f.size() < 8 || f[0].empty()) return false;
+		d = Dl();
+		d.item.id = f[0]; d.item.title = f[1]; d.item.uploader = f[2]; d.item.duration = f[3]; d.item.channelId = f[4];
+		d.state = f[5] == "done" ? DlState::DONE : f[5] == "failed" ? DlState::FAILED : DlState::QUEUED;
+		d.video = f[6];
+		d.audio = f[7];
+		return true;
+	}
+	static std::string dlRow(const Dl& d)
+	{
+		const char* st = d.state == DlState::DONE ? "done" : d.state == DlState::FAILED ? "failed" : "queued";
+		return cleanField(d.item.id) + "\t" + cleanField(d.item.title) + "\t" + cleanField(d.item.uploader) + "\t" +
+			cleanField(d.item.duration) + "\t" + cleanField(d.item.channelId) + "\t" + st + "\t" +
+			cleanField(d.video) + "\t" + cleanField(d.audio);
+	}
+	void dlLoad()
+	{
+		FILE* f = fopen(DL_FILE, "r");
+		if (!f) return;
+		char line[4096];
+		while (fgets(line, sizeof line, f))
+		{
+			std::string s = line;
+			while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+			Dl d;
+			if (parseDlLine(s, d)) dls.push_back(d);
+		}
+		fclose(f);
+	}
+	void dlSave()
+	{
+		if (noPersist) return;
+		const char* tmp = DL_FILE ".new";
+		FILE* f = fopen(tmp, "w");
+		if (!f) return;
+		for (const Dl& d : dls) fprintf(f, "%s\n", dlRow(d).c_str());
+		fflush(f);
+		fsync(fileno(f));
+		bool ok = !ferror(f) && fclose(f) == 0;
+		if (ok) rename(tmp, DL_FILE);
+		else unlink(tmp);
+	}
+	Dl* dlFind(const std::string& id)
+	{
+		for (Dl& d : dls) if (d.item.id == id) return &d;
+		return nullptr;
+	}
+	static std::string dlFormat(int q)
+	{
+		const std::string h = std::to_string(q);
+		// separate streams, comma not plus: yt-dlp keeps two files and mpv plays them as a pair (--audio-file)
+		return "bestvideo[height<=" + h + "][vcodec^=avc1]/bestvideo[height<=" + h + "][vcodec^=vp9]"
+			"/bestvideo[height<=" + h + "][vcodec!*=av01]/best[height<=" + h + "][vcodec!*=av01],bestaudio[ext=m4a]/bestaudio";
+	}
+	// one line of yt-dlp's output: the progress template's "dl: 43.2%", or a finished file's path
+	static void dlLine(Dl& d, const std::string& ln)
+	{
+		if (ln.rfind("dl:", 0) == 0)
+		{
+			const char* c = ln.c_str() + 3;
+			while (*c == ' ') c++;
+			if (!isdigit((unsigned char)*c)) return;
+			double p = strtod(c, nullptr);
+			if (p + 5 < d.pct) d.part = 1;	// it started over: the picture is done, this is the sound
+			d.pct = p;
+		}
+		else if (!ln.empty() && ln[0] == '/') (d.video.empty() ? d.video : d.audio) = ln;
+	}
+	void dlStart(Dl& d)
+	{
+		mkdir(DL_DIR, 0755);
+		d.state = DlState::RUNNING;
+		d.pct = 0;
+		d.part = 0;
+		d.video.clear();
+		d.audio.clear();
+		dlBuf.clear();
+		dlId = d.item.id;
+		dlPid = spawn({ "yt-dlp", "--no-warnings", "--no-playlist", "--newline", "--continue", "--progress",
+			"--cache-dir", "/data/banana/bananatube",
+			"--progress-template", "download:dl:%(progress._percent_str)s",
+			"--print", "after_move:filepath",
+			"-f", dlFormat(quality),
+			"-o", std::string(DL_DIR) + "/%(id)s.%(format_id)s.%(ext)s",
+			"https://www.youtube.com/watch?v=" + d.item.id }, &dlFd);
+		if (dlPid < 0) { d.state = DlState::FAILED; dlFd = -1; dlId.clear(); dlSave(); }
+	}
+	void dlTick()
+	{
+		if (dlPid <= 0)
+		{
+			for (Dl& d : dls) if (d.state == DlState::QUEUED) { dlStart(d); markDirty(); break; }
+			return;
+		}
+		Dl* d = dlFind(dlId);
+		char b[1024];
+		ssize_t n;
+		int before = d ? (int)d->pct : 0;
+		while (dlFd >= 0 && (n = read(dlFd, b, sizeof b)) > 0)
+		{
+			dlBuf.append(b, (size_t)n);
+			size_t nl;
+			while ((nl = dlBuf.find('\n')) != std::string::npos)
+			{
+				if (d) dlLine(*d, dlBuf.substr(0, nl));
+				dlBuf.erase(0, nl + 1);
+			}
+		}
+		if (d && (int)d->pct != before && view == View::OFFLINE) markDirty();
+		int st = 0;
+		if (waitpid(dlPid, &st, WNOHANG) != dlPid) return;
+		dlPid = -1;
+		if (dlFd >= 0) { close(dlFd); dlFd = -1; }
+		dlId.clear();
+		if (!d) return;
+		bool ok = WIFEXITED(st) && WEXITSTATUS(st) == 0 && !d->video.empty();
+		d->state = ok ? DlState::DONE : DlState::FAILED;
+		dlSave();
+		if (ok && capPid <= 0) capStart(d->item.id);	// so captions work on the plane too
+		markDirty();
+		if (view == View::OFFLINE && mode == Mode::RESULTS) offlineRows();
+	}
+	void offlineRows()
+	{
+		std::vector<Item> v;
+		for (const Dl& d : dls) v.push_back(d.item);
+		setResults(std::move(v));
+		if (sel >= (int)results.size()) sel = results.empty() ? 0 : (int)results.size() - 1;
+	}
+	void showOffline()
+	{
+		view = View::OFFLINE;
+		channelOpen = false;
+		offlineRows();
+		sel = scroll = 0;
+		mode = Mode::RESULTS;
+		status = dls.empty() ? "" : std::to_string(dls.size()) + " on the shelf";
+		resetThumbs();
+		prefetchThumbs();
+	}
+	// START on a row: save it. A failed one goes back in the queue.
+	void saveRow(const Item& it)
+	{
+		markDirty();
+		if (it.local) { status = "Already a file on the card"; return; }
+		if (Dl* d = dlFind(it.id))
+		{
+			if (d->state == DlState::FAILED) { d->state = DlState::QUEUED; dlSave(); status = "Retrying: " + it.title; }
+			else status = d->state == DlState::DONE ? "Already saved" : "Already in the queue";
+			return;
+		}
+		Dl d;
+		d.item = it;
+		d.item.resume = 0;
+		dls.push_back(d);
+		dlSave();
+		status = "Saving: " + it.title;
+		if (view == View::OFFLINE) offlineRows();
+	}
+	// X on an Offline row, twice: the files go
+	void deleteRow(const Item& it, Uint32 now)
+	{
+		markDirty();
+		if (delArmId != it.id || now - delArmAt > 3000)
+		{
+			delArmId = it.id;
+			delArmAt = now;
+			status = "X again to delete: " + it.title;
+			return;
+		}
+		delArmId.clear();
+		if (dlId == it.id)
+		{
+			stopChild(dlPid);
+			if (dlFd >= 0) { close(dlFd); dlFd = -1; }
+			dlId.clear();
+		}
+		// the finished files and any .part of an unfinished one: all are named <id>.<format>.<ext>
+		if (DIR* dir = opendir(DL_DIR))
+		{
+			std::string prefix = it.id + ".";
+			while (dirent* e = readdir(dir))
+				if (strncmp(e->d_name, prefix.c_str(), prefix.size()) == 0)
+					unlink((std::string(DL_DIR) + "/" + e->d_name).c_str());
+			closedir(dir);
+		}
+		for (size_t i = 0; i < dls.size(); i++) if (dls[i].item.id == it.id) { dls.erase(dls.begin() + i); break; }
+		dlSave();
+		offlineRows();
+		status = "Deleted: " + it.title;
+	}
+
+	// ---- captions ---------------------------------------------------------------------------------------------------
+	// Fetched beside playback, never before it: a video must not wait on its subtitles. Kept on the card by video id.
+	static std::string capPath(const std::string& id)
+	{
+		for (const char* lang : { "en", "en-orig" })
+		{
+			std::string p = std::string(CAP_DIR) + "/" + id + "." + lang + ".vtt";
+			struct stat st;
+			if (!stat(p.c_str(), &st) && st.st_size > 0) return p;
+		}
+		return "";
+	}
+	void capStart(const std::string& id)
+	{
+		if (capPid > 0 && capId == id) return;
+		stopChild(capPid);
+		capId = id;
+		capFile = capPath(id);
+		if (!capFile.empty()) return;
+		capPid = spawn({ "timeout", "90", "yt-dlp", "--no-warnings", "--no-playlist", "--skip-download",
+			"--write-subs", "--write-auto-subs", "--sub-langs", "en,en-orig", "--sub-format", "vtt",
+			"--cache-dir", "/data/banana/bananatube",
+			"-o", std::string(CAP_DIR) + "/%(id)s.%(ext)s",
+			"https://www.youtube.com/watch?v=" + id }, nullptr);
+	}
+	void capTick()
+	{
+		if (capPid > 0)
+		{
+			if (waitpid(capPid, nullptr, WNOHANG) != capPid) return;
+			capPid = -1;
+			capFile = capPath(capId);
+			if (capFile.empty() && mode == Mode::PLAYING && captions && capId == playingId) showInd("No captions for this video", 1500);
+		}
+		// mpv drops a sub-add sent before the file is open; a time-pos reply says it is
+		if (mode != Mode::PLAYING || !captions || capLoaded || capFile.empty() || capId != playingId || !havePos || ipc < 0) return;
+		ipcSend("{\"command\":[\"sub-add\",\"" + jsonEsc(capFile) + "\",\"select\"]}");
+		capLoaded = true;
+		showInd("Captions on", 900);
+	}
+	void toggleCaptions()
+	{
+		captions = !captions;
+		qualitySave();
+		connectIpc();
+		ipcSend(std::string("{\"command\":[\"set_property\",\"sub-visibility\",") + (captions ? "true" : "false") + "]}");
+		if (!captions) { showInd("Captions off", 900); return; }
+		if (capLoaded) { showInd("Captions on", 900); return; }
+		if (playingItem.local) { showInd("No captions for a file on the card", 1500); return; }
+		showInd("Fetching captions\u2026", 1500);
+		capStart(playingItem.id);
+	}
+
+	// ---- play next --------------------------------------------------------------------------------------------------
+	int queuePos(const std::string& id) const
+	{
+		for (size_t i = 0; i < queue.size(); i++) if (queue[i].id == id) return (int)i + 1;
+		return 0;
+	}
+	void queueToggle(const Item& it)
+	{
+		markDirty();
+		for (size_t i = 0; i < queue.size(); i++)
+			if (queue[i].id == it.id)
+			{
+				queue.erase(queue.begin() + i);
+				status = "Removed from the queue: " + it.title;
+				return;
+			}
+		if (queue.size() >= 20) { status = "The queue is full"; return; }
+		queue.push_back(it);
+		status = "Queued " + std::to_string(queue.size()) + ": " + it.title;
+	}
+	void toggleAutoplay()
+	{
+		autoplay = !autoplay;
+		qualitySave();
+		markDirty();
+		const char* t = autoplay ? "Autoplay on: the queue plays by itself" : "Autoplay off: the queue waits";
+		if (mode == Mode::PLAYING) { connectIpc(); showInd(t, 1500); }
+		else status = t;
+	}
+	std::string upNext() const
+	{
+		if (!autoplay || queue.empty()) return "";
+		std::string t = queue[0].title.size() > 44 ? queue[0].title.substr(0, 42) + "\u2026" : queue[0].title;
+		return "Up next: " + t + (queue.size() > 1 ? "   +" + std::to_string(queue.size() - 1) : "");
+	}
+	// the video ended: the next one, if it is wanted. A crash or a failed stream is not an ending.
+	bool takeNext(Item& out)
+	{
+		if (!mpvExitOk || !autoplay || queue.empty()) return false;
+		out = queue[0];
+		queue.erase(queue.begin());
+		return true;
+	}
+	// A on a row (or the second tap)
+	void playRow(int i)
+	{
+		if (i < 0 || i >= (int)results.size()) return;
+		if (view == View::OFFLINE)
+		{
+			Dl* d = dlFind(results[i].id);
+			if (d && d->state != DlState::DONE)
+			{
+				status = d->state == DlState::FAILED ? "That one failed. START retries it." : "Not finished yet";
+				markDirty();
+				return;
+			}
+		}
+		Item it = results[i];	// play() can rebuild the list under a reference
+		for (size_t q = 0; q < queue.size(); q++) if (queue[q].id == it.id) { queue.erase(queue.begin() + q); break; }
+		play(it);
+	}
+	// X: follow a channel from its row, delete from the shelf, otherwise open the row's channel
+	void pressX(Uint32 now)
+	{
+		markDirty();
+		if (view == View::CHANNELS && !channelOpen)
+		{
+			if (sel >= 0 && sel < (int)channels.size()) toggleSub(channels[sel]);
+		}
+		else if (view == View::CHANNELS) toggleSub(channelName);
+		else if (sel < 0 || sel >= (int)results.size()) return;
+		else if (view == View::OFFLINE) deleteRow(results[sel], now);
+		else if (!results[sel].uploader.empty()) openChannel(results[sel].uploader);
+	}
+	bool onVideoRow() const
+	{
+		return mode == Mode::RESULTS && !(view == View::CHANNELS && !channelOpen) && sel >= 0 && sel < (int)results.size();
 	}
 	void qualityLoad()
 	{
@@ -872,16 +1522,20 @@ struct App
 			int q = 0;
 			if (sscanf(line, " quality = %d", &q) == 1 || sscanf(line, "quality = %d", &q) == 1)
 				if (q == 720 || q == 480 || q == 360) quality = q;
+			if (sscanf(line, " captions = %d", &q) == 1) captions = q != 0;
+			if (sscanf(line, " autoplay = %d", &q) == 1) autoplay = q != 0;
 		}
 		fclose(f);
 	}
 	void qualitySave()
 	{
+		if (noPersist) return;
 		// a temp file and a rename, like recentSave: a power cut mid-write must not leave a truncated cap behind
 		const char* tmp = CONF_FILE ".new";
 		FILE* f = fopen(tmp, "w");
 		if (!f) return;
-		fprintf(f, "# banana-tube: the playback quality cap in pixels (Select on the results cycles it)\nquality = %d\n", quality);
+		fprintf(f, "# banana-tube: the playback quality cap in pixels (Select on the results cycles it)\nquality = %d\n"
+			"captions = %d\nautoplay = %d\n", quality, captions ? 1 : 0, autoplay ? 1 : 0);
 		fflush(f);
 		fsync(fileno(f));
 		bool ok = !ferror(f) && fclose(f) == 0;
@@ -899,6 +1553,8 @@ struct App
 				: view == View::CHANNELS && !channelOpen ? std::to_string(channels.size()) + " channels"
 				: view == View::CHANNELS ? "Channel: " + channelName
 				: view == View::LOCAL ? std::to_string(localItems.size()) + " files"
+				: view == View::SUBS ? std::to_string(feed.size()) + " videos"
+				: view == View::OFFLINE ? std::to_string(dls.size()) + " on the shelf"
 				: std::to_string(results.size()) + " results";
 			status = who + "   SEL " + std::to_string(quality) + "p (next video)";
 		}
@@ -1127,12 +1783,25 @@ struct App
 		// yt-dlp resolves the stream here, so mpv needs no Lua hook of its own (the image's mpv has none); a file on the
 		// card is already its own URL, and has no SponsorBlock to ask about
 		std::vector<std::string> urls;
+		segs.clear();
+		lastSkip = -1;
+		const Dl* saved = it.local ? nullptr : dlFind(it.id);
+		if (saved && saved->state != DlState::DONE) saved = nullptr;
 		if (it.local) urls = { it.id };
+		else if (saved)	// on the shelf: no network needed, whichever tab it was picked from
+		{
+			urls = { saved->video };
+			if (!saved->audio.empty()) urls.push_back(saved->audio);
+		}
 		else
 		{
 			if (!resolveStream(it.id, urls)) { status = "Could not load " + it.title; return; }
 			sbFetch(it.id);
 		}
+		capLoaded = false;
+		capFile.clear();
+		nextShown = false;
+		if (captions && !it.local) capStart(it.id);
 		std::string url = urls[0];
 		const char* argv[] = {
 			"mpv",
@@ -1153,13 +1822,17 @@ struct App
 			// back to its default when the family is not installed.
 			"--osd-color=#ffefb2", "--osd-border-color=#17140d", "--osd-back-color=#201b11",
 			"--osd-font-provider=none", "--osd-fonts-dir=/usr/share/banana/rnds/fonts", "--osd-font=Pixelify Sans",
+			// captions arrive later, over IPC (capTick); the same face as the OSD, and libass needs the same help
+			"--sub-font-provider=none", "--sub-fonts-dir=/usr/share/banana/rnds/fonts", "--sub-font=Pixelify Sans",
+			"--sub-font-size=44", "--sub-color=#ffefb2", "--sub-border-color=#17140d", "--sub-auto=no",
 			"--fullscreen", "--keep-open=no", "--force-window=yes",
 			"--msg-level=all=warn",
 		};
 		// the start-of-playback card: the video, the cap, and the whole pad map (mpv's only OSD here)
 		std::string title = it.title.size() > 52 ? it.title.substr(0, 50) + "\u2026" : it.title;
 		std::string osdMsg = "--osd-playing-msg=" + title + "   " + std::to_string(quality) +
-			"p\nA pause   B stop   D-pad seek   L/R chapter   L2/R2 hold   Y quality   SEL where   START full";
+			"p\nA pause   B stop   D-pad seek   L/R chapter   L2/R2 hold   Y quality   SEL where   START captions";
+		if (!upNext().empty()) osdMsg += "\n" + upNext();
 		// a DASH pair: the video is the file, the audio its own stream
 		std::string audio = urls.size() > 1 ? "--audio-file=" + urls[1] : std::string();
 		std::vector<char*> av;
@@ -1173,6 +1846,7 @@ struct App
 		if (pid == 0)
 		{
 			setsid();
+			prctl(PR_SET_PDEATHSIG, SIGTERM);	// its own session: the launcher's group kill cannot reach it if the app dies
 			execvp("mpv", av.data());
 			_exit(127);
 		}
@@ -1218,7 +1892,7 @@ struct App
 		if (mpv <= 0) return false;
 		int st = 0;
 		pid_t r = waitpid(mpv, &st, WNOHANG);
-		if (r == mpv || (r < 0 && errno == ECHILD)) { mpv = -1; if (ipc >= 0) { close(ipc); ipc = -1; } unlink(IPC_SOCK); return false; }
+		if (r == mpv || (r < 0 && errno == ECHILD)) { mpvExitOk = r == mpv && WIFEXITED(st) && WEXITSTATUS(st) == 0; mpv = -1; if (ipc >= 0) { close(ipc); ipc = -1; } unlink(IPC_SOCK); return false; }
 		return true;
 	}
 	void logLine(const std::string& s)
@@ -1267,7 +1941,7 @@ struct App
 			{
 				if (sel >= 0 && sel < static_cast<int>(channels.size())) openChannel(channels[sel]);
 			}
-			else if (sel >= 0 && sel < static_cast<int>(results.size())) play(results[sel]);
+			else playRow(sel);
 		}
 		else if (mode == Mode::PLAYING)
 		{
@@ -1373,7 +2047,7 @@ struct App
 	SDL_Rect queryRect(int W, int H) const { return SDL_Rect { W * 15 / 100, H * 95 / 1000, W * 81 / 100, H * 7 / 100 }; }
 	SDL_Rect tabRect(int W, int H, int i) const
 	{
-		int gap = W * 15 / 1000, tw = (W * 92 / 100 - 3 * gap) / 4;
+		int gap = W * 1 / 100, tw = (W * 92 / 100 - (TAB_COUNT - 1) * gap) / TAB_COUNT;
 		return SDL_Rect { W * 4 / 100 + i * (tw + gap), H * 175 / 1000, tw, H * 65 / 1000 };
 	}
 
@@ -1418,12 +2092,11 @@ struct App
 			return;
 		}
 		if (mode != Mode::PLAYING)
-			for (int i = 0; i < 4; i++)
+			for (int i = 0; i < TAB_COUNT; i++)
 				if (inRect(tabRect(W, H, i), x, y))
 				{
-					static const char* names[] = { "search", "recent", "channels", "local" };
-					tapLog(std::string("tap -> tab ") + names[i]);
-					if (i == 0) showSearchTab(); else if (i == 1) showRecent(); else if (i == 2) showChannels(); else showLocal();
+					tapLog(std::string("tap -> tab ") + TAB_NAMES[i]);
+					showTab(i);
 					return;
 				}
 		if (mode == Mode::KEYS)
@@ -1462,7 +2135,7 @@ struct App
 					char b[64];
 					snprintf(b, sizeof b, "tap -> result %d (sel %d)", idx, sel);
 					tapLog(b);
-					if (idx == sel) play(results[idx]);	// a tap on the focused row plays it
+					if (idx == sel) playRow(idx);	// a tap on the focused row plays it
 					else sel = idx;						// a first tap just focuses
 					return;
 				}
@@ -1692,6 +2365,9 @@ struct App
 
 		uint32_t lastRepeat = 0;
 		int heldX = 0, heldY = 0;
+		// A and SELECT each have a hold, so on a row they act on release: a tap is a tap, 500 ms is the hold
+		Uint32 aDownAt = 0, selDownAt = 0;
+		const Uint32 HOLD_MS = 500;
 
 		for (bool alive = true; alive && !g_stop && !quit;)
 		{
@@ -1708,30 +2384,24 @@ struct App
 				{
 					switch (ev.cbutton.button)
 					{
-					case SDL_CONTROLLER_BUTTON_A: activate(); break;
+					case SDL_CONTROLLER_BUTTON_A:
+						if (onVideoRow()) aDownAt = std::max<Uint32>(1, SDL_GetTicks());
+						else activate();
+						break;
 					case SDL_CONTROLLER_BUTTON_B: back(); break;
 					case SDL_CONTROLLER_BUTTON_X:	// the player's SponsorBlock undo; a backspace on the keys; a channel on the results
 						if (mode == Mode::PLAYING) { connectIpc(); sbUndo(); }
 						else if (mode == Mode::KEYS) { if (!query.empty()) query.pop_back(); }
-						else if (!results.empty() && sel < static_cast<int>(results.size()))
-						{
-							if (!results[sel].uploader.empty()) openChannel(results[sel].uploader);
-						}
-						else page(-1);
+						else pressX(SDL_GetTicks());
 						break;
 					case SDL_CONTROLLER_BUTTON_Y: if (mode == Mode::RESULTS) { view = View::SEARCH; channelOpen = false; setResults(searchResults); mode = Mode::KEYS; status = ""; } else if (mode == Mode::KEYS) startSearch(); else if (mode == Mode::PLAYING) reloadQuality(); break;
 					case SDL_CONTROLLER_BUTTON_START:
-						if (mode == Mode::PLAYING) { connectIpc(); ipcSend("{\"command\":[\"cycle\",\"fullscreen\"]}"); }
+						if (mode == Mode::PLAYING) toggleCaptions();
+						else if (onVideoRow()) saveRow(results[sel]);
 						else startSearch();
 						break;
-					case SDL_CONTROLLER_BUTTON_BACK:	// Select: where playback is, or the quality cap
-						if (mode == Mode::PLAYING)
-						{
-							connectIpc();
-							if (havePos && dur > 0) showInd(whereTag(pos) + "\n" + std::to_string(quality) + "p", 2200);
-							else showInd("Loading\u2026", 900);
-						}
-						else cycleQuality();
+					case SDL_CONTROLLER_BUTTON_BACK:	// Select: acts on release, see selDownAt
+						selDownAt = std::max<Uint32>(1, SDL_GetTicks());
 						break;
 					case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
 						if (mode == Mode::PLAYING) { connectIpc(); ipcSend("{\"command\":[\"add\",\"chapter\",-1]}"); }
@@ -1746,6 +2416,22 @@ struct App
 					case SDL_CONTROLLER_BUTTON_DPAD_LEFT: move(-1, 0); break;
 					case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: move(1, 0); break;
 					default: break;
+					}
+				}
+				else if (ev.type == SDL_CONTROLLERBUTTONUP)
+				{
+					if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_A && aDownAt) { aDownAt = 0; if (mode == Mode::RESULTS) activate(); }
+					else if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_BACK && selDownAt)
+					{
+						selDownAt = 0;
+						if (mode == Mode::PLAYING)	// where playback is, and what follows it
+						{
+							connectIpc();
+							std::string next = upNext();
+							if (havePos && dur > 0) showInd(whereTag(pos) + "\n" + std::to_string(quality) + "p" + (next.empty() ? "" : "\n" + next), 2200);
+							else showInd("Loading\u2026", 900);
+						}
+						else cycleQuality();
 					}
 				}
 				else if (ev.type == SDL_KEYDOWN)
@@ -1768,6 +2454,12 @@ struct App
 			}
 
 			Uint32 now = SDL_GetTicks();
+			if (aDownAt && now - aDownAt >= HOLD_MS)
+			{
+				aDownAt = 0;
+				if (onVideoRow()) queueToggle(results[sel]);
+			}
+			if (selDownAt && now - selDownAt >= HOLD_MS) { selDownAt = 0; toggleAutoplay(); }
 			if (pad)
 			{
 				int dx = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) - SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_LEFT);
@@ -1798,7 +2490,15 @@ struct App
 			if (mode == Mode::PLAYING) sbTick(now);
 
 			pollSearch();
+			pollFeed();
+			dlTick();
+			capTick();
 			pollTouch();
+			if (mode == Mode::PLAYING && havePos && dur > 0 && dur - pos < 15 && !nextShown && !upNext().empty())
+			{
+				nextShown = true;
+				showInd(upNext(), 4000);
+			}
 			if (mode == Mode::PLAYING && !mpvRunning())
 			{
 				saveProgress(true);	// a finished video starts from the top next time
@@ -1806,6 +2506,14 @@ struct App
 				mode = Mode::RESULTS;
 				status = "Playback ended (B to go back)";
 				markDirty();
+				Item next;
+				if (takeNext(next))
+				{
+					status = "Up next: " + next.title;	// play() blocks on the stream lookup: say so first
+					draw();
+					SDL_RenderPresent(ren);
+					play(next);
+				}
 			}
 
 			{
@@ -1818,6 +2526,11 @@ struct App
 			SDL_Delay(8);
 		}
 		stopPlayback();
+		stopChild(capPid);
+		stopChild(dlPid);	// its .part stays: the row is still queued and picks up on the next start
+		if (dlFd >= 0) { close(dlFd); dlFd = -1; }
+		feedCancel = true;
+		if (feedThread.joinable()) feedThread.join();
 		if (searchThread.joinable()) searchThread.join();
 		{ std::lock_guard<std::mutex> l(thumbMx); thumbStop = true; }
 		thumbCv.notify_all();
@@ -1854,11 +2567,11 @@ struct App
 			{
 				int W = size.first, H = size.second;
 				SDL_Rect fr = frameRect(W, H), back = backRect(W, H), q = queryRect(W, H), hint = hintRect(W, H);
-				SDL_Rect t0 = tabRect(W, H, 0), t3 = tabRect(W, H, 3);
+				SDL_Rect t0 = tabRect(W, H, 0), t3 = tabRect(W, H, TAB_COUNT - 1);
 				ok = ok && fr.x >= 0 && fr.y >= 0 && fr.x + fr.w <= W && fr.y + fr.h <= H;
 				ok = ok && back.x >= fr.x && q.x + q.w <= fr.x + fr.w;
 				ok = ok && back.y + back.h <= t0.y && q.y + q.h <= t0.y;
-				for (int i = 0; i < 3; i++)
+				for (int i = 0; i < TAB_COUNT - 1; i++)
 				{
 					SDL_Rect a = tabRect(W, H, i), b = tabRect(W, H, i + 1);
 					ok = ok && a.x + a.w <= b.x;
@@ -1890,6 +2603,24 @@ struct App
 				TTF_SizeUTF8(fs, "18 results   SEL 720p", &w, &h);
 				ok = ok && w <= 1240 * 92 / 100;
 				ok = ok && 1080 * 245 / 1000 + TTF_FontHeight(fs) <= contentTop(1080);
+				for (int i = 0; i < TAB_COUNT; i++)	// the six tab names, at the size they are drawn
+				{
+					TTF_SizeUTF8(fs, TAB_NAMES[i], &w, &h);
+					ok = ok && w + 1240 / 100 <= tabRect(1240, 1080, i).w;
+				}
+				for (const char* s : { "No subscriptions yet. X on a channel follows it.", "Nothing saved yet. START on a video saves it." })
+				{
+					TTF_SizeUTF8(fm, s, &w, &h);
+					ok = ok && w <= 1240 * 86 / 100;
+				}
+				// the widest row of hint chips stays inside the frame
+				int x = 1240 * 4 / 100;
+				for (const char* s : { "A", "Play", "Hold A", "Queue", "START", "Save", "X", "Channel" })
+				{
+					TTF_SizeUTF8(fs, s, &w, &h);
+					x += w + 1240 * 3 / 100;
+				}
+				ok = ok && x <= 1240 * 98 / 100;
 			}
 			if (fm) TTF_CloseFont(fm);
 			if (fs) TTF_CloseFont(fs);
@@ -1992,6 +2723,85 @@ struct App
 			bool ok2 = !channelOpen && view == View::CHANNELS && mode == Mode::RESULTS;
 			mode = sm; view = sv; searchResults = s0; results = s1; recent = s2; channelOpen = s3; channelName = s4;
 			printf("bananatube selftest channels: %s\n", ok1 && ok2 ? "ok" : "fail");
+		}
+		{
+			// a channel page's lockups, a byline's channel id, and a merged feed newest first with each video once
+			const char* page = "{\"a\":[{\"lockupViewModel\":{\"contentId\":\"L1\",\"contentType\":\"LOCKUP_CONTENT_TYPE_VIDEO\","
+				"\"contentImage\":{\"x\":{\"overlays\":[{\"thumbnailBottomOverlayViewModel\":{\"badges\":[{\"thumbnailBadgeViewModel\":{\"text\":\"1:27\"}}]}}]}},"
+				"\"metadata\":{\"lockupMetadataViewModel\":{\"title\":{\"content\":\"Hi\"},\"metadata\":{\"contentMetadataViewModel\":{\"metadataRows\":"
+				"[{\"metadataParts\":[{\"text\":{\"content\":\"52K views\"}},{\"text\":{\"content\":\"1 day ago\"}}]}]}}}}}},"
+				"{\"lockupViewModel\":{\"contentId\":\"P1\",\"contentType\":\"LOCKUP_CONTENT_TYPE_PLAYLIST\"}}]}";
+			banana::JPtr d1 = banana::parseJson(page);
+			std::vector<Item> g;
+			if (d1) collectRenderers(d1.get(), g, 0, true);
+			bool ok = g.size() == 1 && g[0].id == "L1" && g[0].title == "Hi" && g[0].duration == "1:27" && g[0].age == "1 day ago";
+			std::vector<Item> none;
+			if (d1) collectRenderers(d1.get(), none);
+			ok = ok && none.empty();	// a search does not take them
+			banana::JPtr d2 = banana::parseJson("{\"videoRenderer\":{\"videoId\":\"V\",\"title\":{\"simpleText\":\"T\"},"
+				"\"ownerText\":{\"runs\":[{\"text\":\"C\",\"navigationEndpoint\":{\"browseEndpoint\":{\"browseId\":\"UC1\"}}}]}}}");
+			std::vector<Item> g2;
+			if (d2) collectRenderers(d2.get(), g2);
+			ok = ok && g2.size() == 1 && g2[0].channelId == "UC1";
+			Item a, b, c, dup;
+			a.id = "a"; a.age = "2 weeks ago"; b.id = "b"; b.age = "3 hours ago"; c.id = "c"; c.age = "Streamed 1 day ago";
+			dup.id = "b"; dup.age = "3 hours ago";
+			std::vector<Item> m = mergeFeed({ a, b, c, dup });
+			ok = ok && m.size() == 3 && m[0].id == "b" && m[1].id == "c" && m[2].id == "a";
+			printf("bananatube selftest feed: %s\n", ok ? "ok" : "fail");
+		}
+		{
+			noPersist = true;
+			// following: an id is needed, a second press undoes it, and a followed channel stays listed
+			std::vector<Item> sr = searchResults, rc = recent;
+			searchResults.clear(); recent.clear();
+			Item v; v.id = "v"; v.uploader = "Chan"; v.channelId = "UC9";
+			toggleSub("Nobody");
+			bool ok = subs.empty();
+			searchResults = { v };
+			toggleSub("Chan");
+			ok = ok && subs.size() == 1 && subs[0].id == "UC9" && subscribed("Chan");
+			searchResults.clear();
+			buildChannels();
+			ok = ok && channels.size() == 1 && channels[0] == "Chan";
+			toggleSub("Chan");
+			ok = ok && subs.empty();
+			searchResults = sr; recent = rc;
+			buildChannels();
+			printf("bananatube selftest subs: %s\n", ok ? "ok" : "fail");
+		}
+		{
+			// the shelf: a row survives the file, a run in progress comes back queued, progress reads both streams
+			Dl d, back;
+			d.item.id = "x"; d.item.title = "A\tB"; d.state = DlState::DONE; d.video = "/d/x.137.mp4"; d.audio = "/d/x.140.m4a";
+			bool ok = parseDlLine(dlRow(d), back) && back.state == DlState::DONE && back.item.title == "A B" && back.audio == "/d/x.140.m4a";
+			d.state = DlState::RUNNING;
+			ok = ok && parseDlLine(dlRow(d), back) && back.state == DlState::QUEUED;
+			Dl p;
+			dlLine(p, "dl: 43.2%"); ok = ok && p.pct > 43 && p.part == 0;
+			dlLine(p, "dl:100.0%"); dlLine(p, "dl:  1.0%"); ok = ok && p.part == 1 && p.pct < 2;
+			dlLine(p, "dl:N/A%"); ok = ok && p.pct < 2;
+			dlLine(p, "/d/x.137.mp4"); dlLine(p, "/d/x.140.m4a"); ok = ok && p.video == "/d/x.137.mp4" && p.audio == "/d/x.140.m4a";
+			ok = ok && dlFormat(480).find("height<=480") != std::string::npos && dlFormat(480).find(",bestaudio") != std::string::npos;
+			printf("bananatube selftest offline: %s\n", ok ? "ok" : "fail");
+		}
+		{
+			// the queue: in order, a toggle, and only an ending that was an ending moves it on
+			Item a, b, out; a.id = "a"; a.title = "A"; b.id = "b"; b.title = "B";
+			queue.clear();
+			queueToggle(a); queueToggle(b);
+			bool ok = queuePos("a") == 1 && queuePos("b") == 2;
+			queueToggle(a);
+			ok = ok && queue.size() == 1 && queuePos("b") == 1;
+			queueToggle(a);	// b, a
+			autoplay = true; mpvExitOk = false;
+			ok = ok && !takeNext(out) && queue.size() == 2;
+			autoplay = false; mpvExitOk = true;
+			ok = ok && !takeNext(out) && upNext().empty();
+			autoplay = true;
+			ok = ok && upNext().find("Up next: B") == 0 && takeNext(out) && out.id == "b" && queue.size() == 1;
+			queue.clear();
+			printf("bananatube selftest queue: %s\n", ok ? "ok" : "fail");
 		}
 		const char* sample = "{\"contents\":{\"x\":{\"contents\":[{\"videoRenderer\":{\"videoId\":\"V1\","
 			"\"title\":{\"runs\":[{\"text\":\"Hello World\"}]},\"ownerText\":{\"runs\":[{\"text\":\"Chan\"}]},"
@@ -2155,29 +2965,28 @@ struct App
 		drawText(shown, fBig, query.empty() ? sk.soft : sk.ink, queryBox.x + W * 2 / 100,
 			queryBox.y + (queryBox.h - qh) / 2, queryBox.w - W * 4 / 100);
 
-		// the four tabs; the active one is gold, counts ride inline when they fit
+		// the tabs; the active one is gold, counts ride inline when they fit
 		if (mode != Mode::PLAYING)
 		{
-			static const char* tabNames[] = { "Search", "Recent", "Channels", "Local" };
-			for (int i = 0; i < 4; i++)
+			for (int i = 0; i < TAB_COUNT; i++)
 			{
 				SDL_Rect tr = tabRect(W, H, i);
-				bool on = i == 0 ? view == View::SEARCH : i == 1 ? view == View::RECENT : i == 2 ? view == View::CHANNELS : view == View::LOCAL;
-				bool hot = (i == 1 && !recent.empty()) || (i == 2 && !channels.empty()) || (i == 3 && !localItems.empty());
-				std::string label = tabNames[i];
-				std::string count = i == 1 && !recent.empty() ? std::to_string(recent.size())
-					: i == 2 && !channels.empty() ? std::to_string(channels.size())
-					: i == 3 && !localItems.empty() ? std::to_string(localItems.size()) : "";
-				if (!count.empty())
+				View v = TABS[i];
+				bool on = v == view;
+				size_t n = v == View::RECENT ? recent.size() : v == View::CHANNELS ? channels.size() : v == View::SUBS ? subs.size()
+					: v == View::OFFLINE ? dls.size() : v == View::LOCAL ? localItems.size() : 0;
+				std::string label = TAB_NAMES[i];
+				if (n)
 				{
 					int cw = 0, chh = 0;
-					TTF_SizeUTF8(fMed, (label + " " + count).c_str(), &cw, &chh);
-					if (cw + W * 2 / 100 <= tr.w) label += " " + count;
+					std::string withCount = label + " " + std::to_string(n);
+					TTF_SizeUTF8(fSmall, withCount.c_str(), &cw, &chh);
+					if (cw + W * 2 / 100 <= tr.w) label = withCount;
 				}
 				box(tr.x, tr.y, tr.w, tr.h, on ? sk.gold : sk.card, on ? sk.goldHi : sk.line, sk.bw);
 				int tw = 0, th = 0;
-				TTF_SizeUTF8(fMed, label.c_str(), &tw, &th);
-				drawText(label, fMed, on ? sk.bg : hot ? sk.ink : sk.soft, tr.x + (tr.w - tw) / 2,
+				TTF_SizeUTF8(fSmall, label.c_str(), &tw, &th);
+				drawText(label, fSmall, on ? sk.bg : n ? sk.ink : sk.soft, tr.x + (tr.w - tw) / 2,
 					tr.y + (tr.h - th) / 2);
 			}
 		}
@@ -2207,13 +3016,14 @@ struct App
 	{
 		struct Hint { const char* key; const char* label; };
 		static const Hint keysH[] = { { "A", "Type" }, { "B", "Back" }, { "Y", "Search" }, { "L/R", "Tab" } };
-		static const Hint resultsH[] = { { "A", "Play" }, { "B", "Back" }, { "Y", "Search" }, { "L/R", "Tab" } };
-		static const Hint channelListH[] = { { "A", "Open" }, { "B", "Back" }, { "Y", "Search" }, { "L/R", "Tab" } };
-		static const Hint channelH[] = { { "A", "Play" }, { "B", "Back" }, { "L/R", "Tab" } };
+		static const Hint resultsH[] = { { "A", "Play" }, { "Hold A", "Queue" }, { "START", "Save" }, { "X", "Channel" } };
+		static const Hint channelListH[] = { { "A", "Open" }, { "X", "Subscribe" }, { "B", "Back" }, { "L/R", "Tab" } };
+		static const Hint channelH[] = { { "A", "Play" }, { "Hold A", "Queue" }, { "START", "Save" }, { "X", "Subscribe" } };
+		static const Hint offlineH[] = { { "A", "Play" }, { "Hold A", "Queue" }, { "START", "Retry" }, { "X", "Delete" } };
 		bool channelList = view == View::CHANNELS && !channelOpen;
 		const Hint* hs = mode == Mode::KEYS ? keysH : channelList ? channelListH
-			: view == View::CHANNELS ? channelH : resultsH;
-		int n = view == View::CHANNELS && channelOpen ? 3 : 4;
+			: view == View::CHANNELS ? channelH : view == View::OFFLINE ? offlineH : resultsH;
+		int n = 4;
 		int chipH = H * 42 / 1000, padX = W * 15 / 1000;
 		int x = W * 4 / 100, y = hintTop(H) + (hintH(H) - chipH) / 2;
 		for (int i = 0; i < n; i++)
@@ -2286,6 +3096,9 @@ struct App
 			const char* none = searching ? "Searching\u2026"
 				: view == View::RECENT ? "Nothing played yet. Play a video and it lands here."
 				: view == View::LOCAL ? "No music or video files on the card."
+				: view == View::SUBS ? (subs.empty() ? "No subscriptions yet. X on a channel follows it."
+					: feedBusy ? "Fetching\u2026" : "Nothing from your channels. Check the network.")
+				: view == View::OFFLINE ? "Nothing saved yet. START on a video saves it."
 				: "No results. B for the keyboard.";
 			drawText(none, fMed, sk.soft, W * 6 / 100, top, W * 86 / 100);
 			return;
@@ -2334,10 +3147,28 @@ struct App
 				box(tr.x + 4, tr.y + 4, rw + 12, rh + 4, sk.gold, SDL_Color { 0, 0, 0, 0 }, 0);
 				drawText(rs, fSmall, sk.bg, tr.x + 10, tr.y + 6);
 			}
+			// its place in the queue, on the picture's top-right corner
+			if (int qp = queuePos(it.id))
+			{
+				std::string qs = "Q" + std::to_string(qp);
+				int qw = 0, qh = 0;
+				TTF_SizeUTF8(fSmall, qs.c_str(), &qw, &qh);
+				box(tr.x + tr.w - qw - 16, tr.y + 4, qw + 12, qh + 4, sk.gold, SDL_Color { 0, 0, 0, 0 }, 0);
+				drawText(qs, fSmall, sk.bg, tr.x + tr.w - qw - 10, tr.y + 6);
+			}
 			int textX = tr.x + tr.w + W * 2 / 100;
 			int textW = W * 94 / 100 - textX;
 			drawText(it.title, fMed, on ? sk.goldHi : sk.ink, textX, y + cardH * 12 / 100, textW);
-			drawText(it.uploader, fSmall, sk.soft, textX, y + cardH * 55 / 100, textW);
+			std::string sub = it.uploader;
+			if (view == View::SUBS && !it.age.empty()) sub += "   " + it.age;
+			if (const Dl* d = it.local ? nullptr : dlFind(it.id))
+			{
+				char pct[48];
+				if (d->state == DlState::RUNNING) snprintf(pct, sizeof pct, "%s %d%%", d->part ? "Sound" : "Picture", (int)d->pct);
+				else snprintf(pct, sizeof pct, "%s", d->state == DlState::DONE ? "Saved" : d->state == DlState::FAILED ? "Failed" : "Queued");
+				sub = view == View::OFFLINE ? std::string(pct) + "   " + sub : sub + "   " + pct;
+			}
+			drawText(sub, fSmall, sk.soft, textX, y + cardH * 55 / 100, textW);
 		}
 	}
 
@@ -2396,8 +3227,8 @@ struct App
 			int tx = ar.x + ar.w + W * 2 / 100;
 			int tw = W * 94 / 100 - tx;
 			drawText(name, fMed, on ? sk.goldHi : sk.ink, tx, y + cardH * 12 / 100, tw);
-			drawText(std::to_string(seen.size()) + (seen.size() == 1 ? " video" : " videos"), fSmall, sk.soft,
-				tx, y + cardH * 55 / 100, tw);
+			drawText(std::to_string(seen.size()) + (seen.size() == 1 ? " video" : " videos") +
+				(subscribed(name) ? "   Subscribed" : ""), fSmall, sk.soft, tx, y + cardH * 55 / 100, tw);
 		}
 	}
 
@@ -2415,8 +3246,11 @@ int main(int argc, char** argv)
 	curl_global_init(CURL_GLOBAL_DEFAULT);
 	mkdir("/data/banana/cache", 0755);
 	mkdir(CACHE_DIR, 0755);
+	mkdir(CAP_DIR, 0755);
 	app.recentLoad();
 	app.qualityLoad();
+	app.subsLoad();
+	app.dlLoad();
 	app.buildChannels();
 	int rc = app.run();
 	curl_global_cleanup();

@@ -118,6 +118,7 @@ namespace banana
 		PFNEGLDESTROYSYNCKHRPROC destroySync = nullptr;
 		PFNEGLDUPNATIVEFENCEFDANDROIDPROC dupFence = nullptr;
 		bool fenceOk = false;	// 3F: EGL_ANDROID_native_fence_sync is available (else glFinish)
+		bool shmOk = false;		// GL_EXT_texture_format_BGRA8888: wl_shm's byte order can be uploaded as it is
 		int fenceFd = -1;		// the rendered slot's GPU sync file, taken by the compositor
 		GLuint program = 0, vbo = 0;
 		GLint aPos = -1, aUv = -1, uTex = -1;
@@ -192,13 +193,54 @@ namespace banana
 			out = { &b, img, tex };
 			return true;
 		}
+		// A wl_shm source: a plain texture, sized once. wl_shm's XRGB is B,G,R,X in memory, which is GL's BGRA.
+		bool makeShmSource(ClientBuffer& b, Source& out, std::string& err)
+		{
+			GLuint tex = 0;
+			glGenTextures(1, &tex);
+			glBindTexture(GL_TEXTURE_2D, tex);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, (GLsizei)b.w, (GLsizei)b.h, 0, GL_BGRA_EXT, GL_UNSIGNED_BYTE, nullptr);
+			// the player's frame is already the window's size, but a letterboxed one is scaled: linear, not blocks
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			if (glGetError() != GL_NO_ERROR)
+			{
+				glBindTexture(GL_TEXTURE_2D, 0);
+				glDeleteTextures(1, &tex);
+				err = "allocating the shm texture failed";
+				return false;
+			}
+			out = { &b, EGL_NO_IMAGE_KHR, tex };
+			return true;
+		}
+		// The pixels of a newly attached wl_shm buffer into its texture. Once here the client's memory is not needed.
+		bool uploadShm(ClientBuffer& b, Source& s, std::string& err)
+		{
+			if (!b.shmDirty) return true;
+			if (!b.shm) { err = "the shm buffer is gone"; return false; }
+			wl_shm_buffer_begin_access(b.shm);	// a client that truncated its pool must not SIGBUS the menu
+			const auto* px = (const uint8_t*)wl_shm_buffer_get_data(b.shm);
+			glBindTexture(GL_TEXTURE_2D, s.tex);
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+			if (b.stride == b.w * 4)
+				glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, (GLsizei)b.w, (GLsizei)b.h, GL_BGRA_EXT, GL_UNSIGNED_BYTE, px);
+			else	// GLES2 has no row length: a padded buffer goes up a row at a time
+				for (uint32_t y = 0; y < b.h; y++)
+					glTexSubImage2D(GL_TEXTURE_2D, 0, 0, (GLint)y, (GLsizei)b.w, 1, GL_BGRA_EXT, GL_UNSIGNED_BYTE, px + (size_t)y * b.stride);
+			wl_shm_buffer_end_access(b.shm);
+			b.shmDirty = false;
+			if (glGetError() != GL_NO_ERROR) { err = "uploading the shm frame failed"; return false; }
+			return true;
+		}
 		// The cached baseline: one EGLImage/texture per wl_buffer, bound once.
 		Source* source(ClientBuffer& b, std::string& err)
 		{
 			for (Source& s : sources)
 				if (s.b == &b) return &s;
 			Source s;
-			if (!makeSource(b, s, err, false)) return nullptr;
+			if (b.shmSource ? !makeShmSource(b, s, err) : !makeSource(b, s, err, false)) return nullptr;
 			b.eglImage = s.image;
 			b.tex = s.tex;
 			sources.push_back(s);
@@ -664,6 +706,8 @@ namespace banana
 		im->fenceOk = hasExt(eglExt, "EGL_KHR_fence_sync") && hasExt(eglExt, "EGL_ANDROID_native_fence_sync") &&
 		              im->createSync && im->destroySync && im->dupFence && im->d->fenceSupported();
 		logf("3F: native fence %s", im->fenceOk ? "on" : "unavailable (glFinish)");
+		im->shmOk = hasExt(glExt, "GL_EXT_texture_format_BGRA8888");
+		logf("wl_shm sources %s", im->shmOk ? "on" : "unavailable (no BGRA textures)");
 
 		std::string serr;
 		GLuint vs = compile(GL_VERTEX_SHADER,
@@ -757,6 +801,8 @@ namespace banana
 
 	bool EglPresenter::scanning() const { return impl && impl->current; }
 
+	bool EglPresenter::acceptsShm() const { return impl && impl->shmOk && impl->diag == DiagVariant::None; }
+
 	bool EglPresenter::render(ClientBuffer& b, uint32_t& fb, std::string& err)
 	{
 		Impl* im = impl;
@@ -768,7 +814,7 @@ namespace banana
 		}
 		Impl::Source fresh = {};
 		Impl::Source* src = nullptr;
-		if (im->freshSource)
+		if (im->freshSource && !b.shmSource)
 		{
 			if (!im->sourceFresh(b, fresh, err)) return false;
 			src = &fresh;
@@ -782,9 +828,10 @@ namespace banana
 		if (!s)
 		{
 			err = "no free scanout slot";
-			if (im->freshSource) im->dropFresh(fresh);
+			if (src == &fresh) im->dropFresh(fresh);
 			return false;
 		}
+		if (b.shmSource && !im->uploadShm(b, *src, err)) return false;
 		s->state = Impl::Rendering;
 		glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
 		glViewport(0, 0, im->sw, im->sh);
@@ -837,7 +884,7 @@ namespace banana
 			tracef("frame %u: sync done serial=%llu fence=%d", im->frames + 1, (unsigned long long)b.serial, im->fenceFd);
 		GLenum e = glGetError();
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		if (im->freshSource) im->dropFresh(fresh);	// only after glFinish: the GPU is done reading it
+		if (src == &fresh) im->dropFresh(fresh);	// only after glFinish: the GPU is done reading it
 		if (e != GL_NO_ERROR)
 		{
 			s->state = Impl::Free;	// no GPU work remains after glFinish
@@ -849,7 +896,7 @@ namespace banana
 		im->rendered = s;
 		if (++im->frames <= 3 || im->frames % 60 == 0) logf("frame %u: slot fb=%u", im->frames, s->fb);
 		im->dump(*s);
-		if (!im->freshSource) im->dumpPair(*s, src->tex, (int)b.w, (int)b.h);	// a fresh source is already gone
+		if (src != &fresh) im->dumpPair(*s, src->tex, (int)b.w, (int)b.h);	// a fresh source is already gone
 		fb = s->fb;
 		return true;
 	}
