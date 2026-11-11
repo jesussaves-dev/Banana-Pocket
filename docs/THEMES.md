@@ -67,6 +67,10 @@ script.
 The Retroid Pocket Classic has **one** screen: the canvas is 640 units wide and as tall as the panel allows
 (about 557), and a theme draws every view on `top`. A `bottom` block is ignored.
 
+`"canvas": { "w": 310 }` gives a theme its own width instead. It is drawn at a whole number of device pixels per unit
+(the 1240 px panel at 310 is exactly 4), so with `crisp` every art pixel is the same size, and the height is what the
+panel leaves (270). `W` and `H` read the real size. `street.json` (Banana Street) uses it.
+
 ## Values: literals, expressions, templates
 
 Any property can be:

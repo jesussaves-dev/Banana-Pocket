@@ -338,6 +338,23 @@ for size in 640x557; do
     done
     # golden: the layout theme's key screens too
     for s in home lib launch; do golden "layout-$s" "$OUT/$size-layout-$s.png"; done
+    # Banana Street: a layout theme on its own 310-wide canvas ("canvas"), drawn at the handheld's real 1240x1080 so
+    # the whole-pixel scale (exactly 4) is the one the panel gets. Walk one shop, open it, move down the shelf.
+    stlog=$OUT/$size-street.log
+    sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/street.json|" "$FX/data/settings.conf"
+    "$HERE/banana-ui" --headless "$OUT/$size-street-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+        --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "home 0; wait 1000; shot home; press right; wait 1000; shot home2; press a; wait 1000; shot lib; press down; wait 600; shot lib2" \
+        2> "$stlog" || { echo "FAIL $size: banana-ui (street) exited $?"; fail=1; }
+    sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    grep -q "theme:" "$stlog" && { echo "FAIL $size: the street theme: $(grep 'theme:' "$stlog" | head -3)"; fail=1; }
+    grep -q "press down: used, view 1 sys 1 game 1" "$stlog" || { echo "FAIL $size: the street's shelf (down: the next game)"; fail=1; }
+    for s in home home2 lib lib2; do
+        f=$OUT/$size-street-$s.png
+        [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
+        [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ] || { echo "FAIL $size: $f is blank"; fail=1; }
+    done
+    for s in home lib; do golden "street-$s" "$OUT/$size-street-$s.png"; done
     # The one panel offers the layout themes only: a colour theme (Dark/Light) is forced to the Pocket layout there,
     # so they were rows that changed nothing. From a stored dark the Theme row reads Pocket, and stepping right
     # picks the next layout (not Light) -- which the value it writes proves.

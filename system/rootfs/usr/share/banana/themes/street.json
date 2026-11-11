@@ -1,0 +1,204 @@
+{
+  // Banana Street, phase 1: the street on a 310-wide canvas, which the handheld's 1240 px panel draws at exactly
+  // 4 device px per unit, so every art pixel is the same size. Built from flat rectangles and the system icons only:
+  // the baked shop art, the bitmap font and the transitions come in later phases (see the plan).
+  "name": "Banana Street (preview)",
+  "author": "BananaOS",
+  "base": "dark",
+  "accent": "#ffd21e",
+  "font": "pixel",
+  "crisp": true,
+  "canvas": { "w": 310 },
+
+  "vars": {
+    "ink": "#2b1a33", "dk": "#5a3a4a", "paper": "#fff3cf", "paperLo": "#d8c49a",
+    "skyH": "#25286f", "skyM": "#7a3f9a", "skyL": "#f0785f",
+    "far": "#5a3f88", "near": "#3e2c64", "nearLo": "#2e2050",
+    "wallA": "#e8a25c", "wallB": "#c9614a", "mortar": "#8a3a40",
+    "awnA": "#e84a5f", "awnB": "#3fa7a0", "awnC": "#7a5cc7",
+    "gold": "#ffd21e", "goldLo": "#d08a14", "lit": "#ffc94a", "litLo": "#e09a3a",
+    "road": "#5b5670", "roadHi": "#7f7898", "roadLo": "#3a3550",
+    "hud": "#2c2050", "hudLo": "#1a1230",
+    "hi": "=gold"
+  },
+
+  // the street: left and right walk one shop; the library is one shelf, left and right a page of it
+  "input": { "library": { "up": "prev", "down": "next", "left": "prev:5", "right": "next:5" } },
+  "behavior": { "launchMs": 700, "scrollMs": 110, "cues": { "insert": 450 } },
+
+  "components": {
+    // a button and what it does: the key on a paper chip
+    "pill": {
+      "type": "group", "layout": "row", "gap": 3, "align": "center", "h": 11,
+      "children": [
+        { "type": "group", "layout": "row", "padding": 2, "h": 11, "align": "center", "fill": "=paper", "border": 1, "borderColor": "=ink",
+          "children": [ { "type": "text", "text": "{item.key}", "size": 7, "color": "=ink" } ] },
+        { "type": "text", "text": "{item.label}", "size": 8, "color": "=paper" }
+      ]
+    },
+    // a cobbled band of the road: `with` gives its top, height and speed (units moved per shop)
+    "band": {
+      "type": "group", "x": "=-mod(round(scroll * speed), cell * 2)", "y": "=top", "w": 360, "h": "=bh", "clip": true,
+      "children": [
+        { "type": "rect", "x": 0, "y": 0, "w": 360, "h": "=bh", "fill": "=roadLo" },
+        { "type": "list", "source": "range", "count": 24, "direction": "row", "x": 0, "y": 0, "w": 360, "h": "=bh",
+          "itemW": "=cell", "itemH": "=bh", "gap": 0, "scrollMode": "none",
+          "item": { "type": "group", "w": "=cell", "h": "=bh", "children": [
+            { "type": "rect", "x": 1, "y": 1, "w": "=cell - 2", "h": "=bh - 2", "fill": "=mod(i, 3) == 0 ? roadHi : road" },
+            { "type": "rect", "x": 1, "y": 1, "w": "=cell - 2", "h": 1, "fill": "=roadHi" }
+          ] } }
+      ]
+    }
+  },
+
+  "screens": {
+    "all": { "top": [
+      // the clock and the battery, each on a small panel over the sky
+      { "type": "rect", "x": 4, "y": 4, "w": 34, "h": 13, "fill": "=hud", "border": 1, "borderColor": "=gold" },
+      { "type": "text", "x": 4, "w": 34, "y": 6, "align": "center", "text": "{clock}", "size": 8, "color": "=paper" },
+      { "type": "rect", "right": 4, "y": 4, "w": 34, "h": 13, "fill": "=hud", "border": 1, "borderColor": "=gold", "visible": "=battery >= 0" },
+      { "type": "text", "right": 4, "w": 34, "y": 6, "align": "center", "text": "{battery}%", "size": 8,
+        "color": "=battery < 20 ? '#ff6a6a' : paper", "visible": "=battery >= 0" }
+    ] },
+
+    "home": {
+      "top": [
+        // the sky, stepped in 4-unit bands the way a scanline gradient looks
+        { "type": "list", "source": "range", "count": 46, "direction": "column", "x": 0, "y": 0, "w": 310, "h": 184,
+          "itemH": 4, "gap": 0, "scrollMode": "none",
+          "item": { "type": "rect", "w": 310, "h": 4,
+                    "fill": "=i < 23 ? mix(skyH, skyM, i / 22) : mix(skyM, skyL, (i - 23) / 22)" } },
+
+        // two layers of town behind the shops, slower than the street
+        { "type": "group", "x": "=-mod(round(scroll * 14), 160)", "y": 0, "w": 480, "h": 184, "children": [
+          { "type": "list", "source": "range", "count": 12, "direction": "row", "x": 0, "y": 0, "w": 480, "h": 184,
+            "itemW": 40, "gap": 0, "scrollMode": "none",
+            "item": { "type": "rect", "x": 0, "y": "=pick(mod(i, 4), 70, 98, 84, 110)", "w": "=pick(mod(i, 3), 40, 30, 36)", "h": 120, "fill": "=far" } } ] },
+        { "type": "group", "x": "=-mod(round(scroll * 36), 128)", "y": 0, "w": 480, "h": 184, "children": [
+          { "type": "list", "source": "range", "count": 15, "direction": "row", "x": 0, "y": 0, "w": 480, "h": 184,
+            "itemW": 32, "gap": 0, "scrollMode": "none",
+            "item": { "type": "group", "w": 32, "h": 184, "children": [
+              { "type": "rect", "x": 0, "y": "=pick(mod(i, 4), 96, 112, 88, 104)", "w": 30, "h": 100, "fill": "=near" },
+              { "type": "rect", "x": 26, "y": "=pick(mod(i, 4), 96, 112, 88, 104)", "w": 4, "h": 100, "fill": "=nearLo" },
+              { "type": "rect", "x": 6, "y": "=pick(mod(i, 4), 104, 120, 96, 112)", "w": 3, "h": 4, "fill": "=lit" },
+              { "type": "rect", "x": 16, "y": "=pick(mod(i, 4), 114, 128, 106, 122)", "w": 3, "h": 4, "fill": "=lit" }
+            ] } } ] },
+
+        // the shops: each system one shopfront, 104 units apart, placed from the eased selection
+        { "type": "list", "source": "systems", "direction": "free", "x": 0, "y": 0, "w": 310, "h": 184, "range": 3,
+          "item": {
+            "type": "group", "x": "=107 + round(pos * 104)", "y": 0, "w": 104, "h": 184,
+            "children": [
+              // roofs: a cornice, a stepped gable, a flat top, a marquee
+              { "type": "rect", "x": -3, "y": 60, "w": 102, "h": 7, "fill": "=wallB", "border": 1, "borderColor": "=ink", "visible": "=mod(i, 4) == 0" },
+              { "type": "rect", "x": 18, "y": 36, "w": 60, "h": 16, "fill": "=wallA", "border": 1, "borderColor": "=ink", "visible": "=mod(i, 4) == 1" },
+              { "type": "rect", "x": 34, "y": 26, "w": 28, "h": 11, "fill": "=wallA", "border": 1, "borderColor": "=ink", "visible": "=mod(i, 4) == 1" },
+              { "type": "rect", "x": 10, "y": 46, "w": 76, "h": 13, "fill": "=dk", "border": 1, "borderColor": "=ink", "visible": "=mod(i, 4) == 3" },
+              { "type": "list", "source": "range", "count": 9, "direction": "row", "x": 15, "y": 51, "w": 72, "h": 3, "itemW": 8, "gap": 0,
+                "scrollMode": "none", "visible": "=mod(i, 4) == 3",
+                "item": { "type": "rect", "w": 3, "h": 3, "fill": "=mod(i, 2) ? lit : gold" } },
+
+              // the wall and its mortar lines
+              { "type": "rect", "x": 0, "y": "=pick(mod(i, 4), 66, 50, 74, 58)", "w": 96, "h": "=pick(mod(i, 4), 112, 128, 104, 120)",
+                "fill": "=mod(i, 2) ? wallB : wallA", "border": 1, "borderColor": "=ink" },
+              { "type": "list", "source": "range", "count": 12, "direction": "column", "x": 2, "y": "=pick(mod(i, 4), 70, 54, 78, 62)", "w": 92, "h": 48,
+                "itemH": 6, "gap": 0, "scrollMode": "none", "clip": true,
+                "item": { "type": "rect", "x": 0, "y": 5, "w": 92, "h": 1, "fill": "=mortar" } },
+
+              // the sign: the system's name, gold on the selected shop
+              { "type": "rect", "x": 6, "y": "=pick(mod(i, 4), 74, 58, 82, 66)", "w": 84, "h": 18, "fill": "=sel ? gold : paper", "border": 1, "borderColor": "=ink" },
+              { "type": "text", "x": 8, "w": 80, "y": "=pick(mod(i, 4), 79, 63, 87, 71)", "align": "center", "text": "{item.name}", "size": 8, "color": "=ink" },
+
+              // the awning, striped in the shop's colour
+              { "type": "rect", "x": -1, "y": 108, "w": 98, "h": 2, "fill": "=ink" },
+              { "type": "rect", "x": 0, "y": 110, "w": 96, "h": 10, "fill": "=item.games > 0 ? paper : paperLo" },
+              { "type": "list", "source": "range", "count": 6, "direction": "row", "x": 0, "y": 110, "w": 96, "h": 10, "itemW": 16, "gap": 0, "scrollMode": "none",
+                "item": { "type": "rect", "w": 8, "h": 10, "fill": "=awnA" } },
+
+              // the shopfront: the display window with the system's icon, its game count, and the door
+              { "type": "rect", "x": 3, "y": 120, "w": 90, "h": 58, "fill": "=dk", "border": 1, "borderColor": "=ink" },
+              { "type": "rect", "x": 6, "y": 126, "w": 46, "h": 46, "fill": "=lit", "border": 1, "borderColor": "=ink", "visible": "=item.games > 0" },
+              { "type": "image", "src": "{item.icon}", "fit": "pixel", "x": 13, "y": 132, "w": 32, "h": 32, "visible": "=item.games > 0" },
+              { "type": "rect", "x": 34, "y": 160, "w": 17, "h": 11, "fill": "=paper", "border": 1, "borderColor": "=ink", "visible": "=item.games > 0" },
+              { "type": "text", "x": 34, "w": 17, "y": 162, "align": "center", "text": "{item.games}", "size": 7, "color": "=ink", "visible": "=item.games > 0" },
+              { "type": "image", "src": "fav.png", "fit": "pixel", "x": 8, "y": 128, "w": 8, "h": 8, "visible": "=item.fav" },
+              { "type": "rect", "x": 58, "y": 126, "w": 32, "h": 52, "fill": "=wallB", "border": 1, "borderColor": "=ink" },
+              { "type": "rect", "x": 63, "y": 130, "w": 22, "h": 18, "fill": "=lit", "border": 1, "borderColor": "=ink" },
+              { "type": "rect", "x": 84, "y": 152, "w": 3, "h": 3, "fill": "=gold" },
+              // no games yet: the shutter is down
+              { "type": "list", "source": "range", "count": 11, "direction": "column", "x": 5, "y": 122, "w": 86, "h": 55,
+                "itemH": 5, "gap": 0, "scrollMode": "none", "visible": "=item.games == 0",
+                "item": { "type": "rect", "w": 86, "h": 4, "fill": "=mod(i, 2) ? roadHi : road" } },
+              { "type": "rect", "x": 24, "y": 140, "w": 48, "h": 13, "fill": "=paper", "border": 1, "borderColor": "=ink", "visible": "=item.games == 0" },
+              { "type": "text", "x": 24, "w": 48, "y": 143, "align": "center", "text": "Closed", "size": 8, "color": "=ink", "visible": "=item.games == 0" },
+
+              // the street lamp between this shop and the next
+              { "type": "rect", "x": 99, "y": 96, "w": 2, "h": 82, "fill": "=ink" },
+              { "type": "rect", "x": 96, "y": 87, "w": 8, "h": 10, "fill": "=lit", "border": 1, "borderColor": "=ink" }
+            ]
+          } },
+
+        // the road: four cobbled bands, faster toward the viewer, which fakes depth
+        { "type": "rect", "x": 0, "y": 178, "w": 310, "h": 1, "fill": "=paper" },
+        { "use": "band", "with": { "top": 179, "bh": 7, "cell": 14, "speed": 104 } },
+        { "use": "band", "with": { "top": 186, "bh": 10, "cell": 18, "speed": 125 } },
+        { "use": "band", "with": { "top": 196, "bh": 13, "cell": 24, "speed": 150 } },
+        { "use": "band", "with": { "top": 209, "bh": 17, "cell": 30, "speed": 187 } },
+        { "type": "rect", "x": 0, "y": 202, "w": 310, "h": 2, "fill": "=paperLo" },
+
+        // the walker: Banana's bunch in front of the selected shop's door, bobbing while the street holds still
+        { "type": "image", "src": "banana.png", "fit": "pixel", "x": 167, "y": "=158 + (scroll == cursor ? round(pulse(time, 1200)) : 0)", "w": 22, "h": 22 },
+
+        // what's selected, on a panel at the bottom
+        { "type": "rect", "x": 0, "y": 224, "w": 310, "h": 46, "fill": "=hud", "border": 1, "borderColor": "=gold" },
+        { "type": "rect", "x": 1, "y": 225, "w": 308, "h": 1, "fill": "=hudLo" },
+        { "type": "text", "x": 8, "y": 228, "w": 170, "text": "{sys.name}", "size": 16, "color": "=gold" },
+        { "type": "text", "right": 8, "y": 230, "w": 120, "align": "right",
+          "text": "=(sys.games == 0 ? 'Closed' : sys.games == 1 ? '1 game' : sys.games + ' games') + '  ' + (cursor + 1) + '/' + count",
+          "size": 8, "color": "=paper" },
+        { "type": "text", "right": 8, "y": 242, "w": 130, "align": "right", "visible": "=sys.hasResume", "text": "Last: {sys.resumeTitle}", "size": 8, "color": "=paperLo" },
+        { "type": "list", "source": "hints", "direction": "row", "x": 8, "y": 256, "w": 294, "h": 11, "gap": 6, "flow": true, "scrollMode": "none",
+          "justify": "between", "item": { "use": "pill" } }
+      ]
+    },
+
+    "library": {
+      "top": [
+        { "type": "rect", "fill": "=wallB" },
+        { "type": "list", "source": "range", "count": 24, "direction": "column", "x": 0, "y": 22, "w": 310, "h": 228, "itemH": 10, "gap": 0, "scrollMode": "none",
+          "item": { "type": "rect", "y": 9, "w": 310, "h": 1, "fill": "=mortar" } },
+        { "type": "rect", "x": 0, "y": 0, "w": 310, "h": 21, "fill": "=hud", "border": 1, "borderColor": "=gold" },
+        // between the clock and the battery (drawn over every view)
+        { "type": "image", "src": "{sys.icon}", "fit": "pixel", "x": 44, "y": 3, "w": 16, "h": 16 },
+        { "type": "text", "x": 64, "y": 5, "w": 160, "text": "{sys.name}", "size": 10, "color": "=gold" },
+        { "type": "text", "right": 42, "y": 7, "w": 40, "align": "right", "text": "{cursor + 1}/{count}", "size": 8, "color": "=paper" },
+
+        // the box on the counter
+        { "type": "rect", "x": 10, "y": 30, "w": 86, "h": 108, "fill": "=ink" },
+        { "type": "image", "src": "{game.art}", "fallback": "{sys.icon}", "fit": "cover", "x": 12, "y": 32, "w": 82, "h": 104, "placeholder": "=awnC" },
+        { "type": "text", "x": 10, "w": 86, "y": 70, "align": "center", "text": "{empty.title}", "size": 8, "color": "=paper", "visible": "=empty" },
+
+        // the receipt: what the shelf knows about the game
+        { "type": "rect", "x": 8, "y": 146, "w": 90, "h": 92, "fill": "=paper" },
+        { "type": "text", "x": 14, "y": 152, "text": "Receipt", "size": 8, "color": "=ink" },
+        { "type": "rect", "x": 14, "y": 164, "w": 78, "h": 1, "fill": "=ink" },
+        { "type": "text", "x": 14, "y": 170, "w": 78, "text": "{game.sub}", "size": 7, "color": "=dk", "wrap": true, "maxLines": 6 },
+
+        // the shelf
+        { "type": "list", "source": "games", "direction": "column", "x": 106, "y": 27, "w": 198, "h": 220, "itemH": 18, "gap": 2,
+          "scrollMode": "edge", "clip": true,
+          "item": { "type": "group", "w": 198, "h": 18, "children": [
+            { "type": "rect", "x": 4, "y": 1, "w": 192, "h": 15, "fill": "=dk", "border": 1, "borderColor": "=ink", "visible": "=!sel" },
+            { "type": "rect", "x": 0, "y": 0, "w": 198, "h": 17, "fill": "=gold", "border": 1, "borderColor": "=ink", "visible": "=sel" },
+            { "type": "rect", "x": "=sel ? 3 : 6", "y": 3, "w": 5, "h": 11, "fill": "=pick(mod(i, 3), awnA, awnB, awnC)" },
+            { "type": "text", "x": "=sel ? 12 : 15", "y": 5, "w": 176, "text": "{item.title}", "size": 8, "color": "=sel ? ink : paper" },
+            { "type": "image", "src": "fav.png", "fit": "pixel", "right": 4, "y": 5, "w": 8, "h": 8, "visible": "=item.fav" }
+          ] } },
+
+        { "type": "rect", "x": 0, "y": 250, "w": 310, "h": 20, "fill": "=hud" },
+        { "type": "list", "source": "hints", "direction": "row", "x": 8, "y": 255, "w": 294, "h": 11, "gap": 6, "flow": true, "scrollMode": "none",
+          "justify": "between", "item": { "use": "pill" } }
+      ]
+    }
+  }
+}

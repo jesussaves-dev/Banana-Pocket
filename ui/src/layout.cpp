@@ -293,6 +293,20 @@ namespace banana
 			else cues.emplace_back("insert", 560);
 			debug = doc->flag("debug");
 			crisp = doc->flag("crisp");
+			// "canvas": { "w": 310 }: the theme's own layout width. It is drawn at a whole number of device px per
+			// layout px (the panel's 1240 at 310 is exactly 4), so every art pixel of a hard-edged theme is the same
+			// size; W and H take up what's left (270 high on the handheld). Touches already go through s.
+			if (const JVal* cv = doc->get("canvas"))
+			{
+				const float pw = W * s, ph = H * s, cw = cv->isObj() ? (float)cv->num("w", 0) : 0;
+				if (cw >= 160 && cw <= pw)
+				{
+					s = std::floor(pw / cw);
+					W = pw / s;
+					H = ph / s;
+				}
+				else err("canvas: { \"w\": 160 to the panel's width }");
+			}
 			const JVal* sc = doc->get("screens");
 			for (auto& e : sc->obj)
 			{
