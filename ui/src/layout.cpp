@@ -30,6 +30,16 @@ namespace banana
 		}
 	}
 
+	// the time of day the street is drawn at, from the local hour; BANANA_PHASE pins it (tests, previews)
+	static std::string dayPhase()
+	{
+		if (const char* e = getenv("BANANA_PHASE")) if (*e) return e;
+		time_t now = time(nullptr);
+		struct tm t;
+		localtime_r(&now, &t);
+		return t.tm_hour >= 5 && t.tm_hour < 8 ? "dawn" : t.tm_hour < 17 && t.tm_hour >= 8 ? "day" : t.tm_hour >= 17 && t.tm_hour < 20 ? "dusk" : "night";
+	}
+
 	bool isLayoutTheme(const std::string& path)
 	{
 		if (path.empty()) return false;
@@ -80,6 +90,7 @@ namespace banana
 		std::vector<rnds::SysInfo> systems;
 		std::vector<rnds::GameInfo> games;
 		std::string clock, date;
+		std::string phase = "day";		// the street's time of day: dawn, day, dusk, night (dayPhase())
 		long clockMinute = -1;			// the wall minute clock/date were built for (see update(): once a minute, not a pass)
 		double now = 0, last = 0, start = -1;
 		double movedAt = -1e9, enteredAt = -1e9;
@@ -365,6 +376,8 @@ namespace banana
 			if (f == "id") out = EV(si.id);
 			else if (f == "name") out = EV(si.name);
 			else if (f == "maker") out = EV(si.maker);
+			// the first system of its maker's run on the shelf: where a theme puts a block's street sign
+			else if (f == "newBlock") out = EV(index <= 0 || index > (int)systems.size() || systems[index - 1].maker != si.maker ? 1.0 : 0.0);
 			else if (f == "color" || f == "accent") out = EV(hex(si.accent));
 			else if (f == "icon") out = EV(si.icon);
 			else if (f == "games") out = EV((double)si.games);
@@ -425,6 +438,7 @@ namespace banana
 			if (n == "W") { out = EV((double)W); return true; }
 			if (n == "H") { out = EV((double)H); return true; }
 			if (n == "clock") { out = EV(clock); return true; }
+			if (n == "phase") { out = EV(phase); return true; }
 			if (n == "date") { out = EV(date); return true; }
 			if (n == "battery")
 			{
@@ -1457,6 +1471,15 @@ namespace banana
 		if (mView == Menu::HOME)
 		{
 			if (n == 0) return false;
+			// the next maker's first system, or back to the first of this run (from its first: the previous run's)
+			if (act == "nextBlock" || act == "prevBlock")
+			{
+				auto mk = [&](int i) -> const std::string& { return d->systems[i].maker; };
+				int to = c;
+				if (act == "nextBlock") { while (to < n - 1 && mk(to) == mk(c)) to++; if (mk(to) == mk(c)) return false; }
+				else { if (to > 0 && mk(to - 1) != mk(to)) to--; while (to > 0 && mk(to - 1) == mk(to)) to--; }
+				return move(to);
+			}
 			if (act == "open")
 			{
 				if (d->systems[c].app) { int g = src->openLibrary(c); mGame = g; d->rebuild(); launch(g); return true; }
@@ -1558,7 +1581,7 @@ namespace banana
 		// the clock and the date change once a minute, but update() runs every pass (60/s while the menu animates):
 		// build the status text only when the minute turns
 		long minute = (long)(time(nullptr) / 60);
-		if (minute != d->clockMinute) { d->clockMinute = minute; d->clock = src->clockText(); d->date = src->dateText(); }
+		if (minute != d->clockMinute) { d->clockMinute = minute; d->clock = src->clockText(); d->date = src->dateText(); d->phase = dayPhase(); }
 		float to = (float)d->cursor();
 		float k = 1 - (float)std::exp(-dt / std::max(1.0, d->scrollMs));
 		d->scroll += (to - d->scroll) * k;

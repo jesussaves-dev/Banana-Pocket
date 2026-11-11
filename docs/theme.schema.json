@@ -421,8 +421,8 @@
     },
     "buttonAction": {
       "type": "string",
-      "description": "prev, next, prev:5 (move N), first, last, open, back, fav, resume, prevSystem, nextSystem, or none. START (Settings) and SELECT (search) stay Banana's.",
-      "examples": ["prev", "next", "prev:5", "first", "last", "open", "back", "fav", "resume", "prevSystem", "nextSystem", "none"]
+      "description": "prev, next, prev:5 (move N), first, last, open, back, fav, resume, prevSystem, nextSystem, prevBlock, nextBlock (home: the next maker's first system / back to the first of this maker's run), or none. START (Settings) and SELECT (search) stay Banana's.",
+      "examples": ["prev", "next", "prev:5", "first", "last", "open", "back", "fav", "resume", "prevSystem", "nextSystem", "prevBlock", "nextBlock", "none"]
     },
     "hintItem": {
       "description": "A hint button: [key, label] or { \"key\", \"label\" }.",

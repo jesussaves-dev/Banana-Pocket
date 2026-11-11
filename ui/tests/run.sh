@@ -342,13 +342,17 @@ for size in 640x557; do
     # the whole-pixel scale (exactly 4) is the one the panel gets. Walk one shop, open it, move down the shelf.
     stlog=$OUT/$size-street.log
     sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/street.json|" "$FX/data/settings.conf"
-    "$HERE/banana-ui" --headless "$OUT/$size-street-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+    # The time of day is pinned (BANANA_PHASE) so the art, and the golden, don't follow the clock. L and R jump a maker's
+    # block: from Game Boy Advance (Nintendo) to Ports (the next maker), and back to the first of the Nintendo block.
+    BANANA_PHASE=dusk "$HERE/banana-ui" --headless "$OUT/$size-street-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
         --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
-        --script "home 0; wait 1000; shot home; press right; wait 1000; shot home2; press a; wait 1000; shot lib; press down; wait 600; shot lib2" \
+        --script "home 0; wait 1000; shot home; press right; wait 1000; shot home2; press r; wait 600; press l; wait 600; press a; wait 1000; shot lib; press down; wait 600; shot lib2" \
         2> "$stlog" || { echo "FAIL $size: banana-ui (street) exited $?"; fail=1; }
     sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
     grep -q "theme:" "$stlog" && { echo "FAIL $size: the street theme: $(grep 'theme:' "$stlog" | head -3)"; fail=1; }
     grep -q "press down: used, view 1 sys 1 game 1" "$stlog" || { echo "FAIL $size: the street's shelf (down: the next game)"; fail=1; }
+    grep -q "press r: used, view 0 sys 4 " "$stlog" || { echo "FAIL $size: the street's R (the next maker's block): $(grep 'press r' "$stlog")"; fail=1; }
+    grep -q "press l: used, view 0 sys 1 " "$stlog" || { echo "FAIL $size: the street's L (back to the block's first): $(grep 'press l' "$stlog")"; fail=1; }
     for s in home home2 lib lib2; do
         f=$OUT/$size-street-$s.png
         [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }

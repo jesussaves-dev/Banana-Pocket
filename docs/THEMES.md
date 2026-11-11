@@ -99,6 +99,7 @@ Colours are `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, `rgb(...)`, `rgba(...)`, `t
 | `view` | `"home"`, `"library"` or `"launch"` |
 | `W`, `H`, `screen` | the screen's size in units (640 wide, as tall as the panel allows), and its index: 0 for the screen (the engine's `top`); 1 is the second `bottom` screen, unused on this handheld |
 | `time` | ms since the menu started. Using it redraws continuously at `behavior.fps`, so use it only for things that really move all the time |
+| `phase` | the time of day for a street-style theme's art: `"dawn"` (5-8), `"day"` (8-17), `"dusk"` (17-20) or `"night"`, from the local hour, read when the clock's minute turns. `BANANA_PHASE` pins it (tests, previews) |
 | `clock`, `date` | `"13:01"` / `"01:01 PM"` (Settings' clock), `"10/02"` |
 | `battery`, `charging`, `batteryMode` | percent (-1 unknown), 1 on the charger, `"icon"` / `"text"` (Settings) |
 | `online`, `motion`, `brand` | Wi-Fi up, the screen's bob (always on), the version string |
@@ -109,7 +110,7 @@ Colours are `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, `rgb(...)`, `rgba(...)`, `t
 | `launch.progress`, `launch.t` | 0..1 and ms through the launch view |
 | `empty`, `empty.title`, `empty.hint` | a library with no games, and what to say about it |
 | `systems.count`, `games.count` | |
-| `sys.*` | the selected system: `id name maker color icon games played time achA achB achLabel achProgress fav app hasResume resumeTitle resumeEyebrow resumeArt resumeBox resumeCart resumeLabel index` |
+| `sys.*` | the selected system (`newBlock`: the first of its maker's run on the shelf): `id name maker newBlock color icon games played time achA achB achLabel achProgress fav app hasResume resumeTitle resumeEyebrow resumeArt resumeBox resumeCart resumeLabel index` |
 | `game.*` | the selected game (library and launch): `title sub plays last time art box cart label icon achA achB achLabel achProgress fav index systemId systemName` |
 | `item.*`, `i`, `n`, `sel`, `rel`, `pos`, `first`, `last`, `ix`, `iy` | inside a list item: its own system's or game's fields (as above; `key label` for hints), its index, the count, whether it is selected, its distance from the selection (`rel` whole, `pos` eased), and where the list put it |
 | your `vars`, a component's `with` | |
@@ -193,7 +194,8 @@ selects it, and tapping the selected one again opens it.
 
 `input.<view>.<button>` (`home` and `library`; buttons `left right up down a b x y l r`) is one of: `prev`, `next`
 (`prev:5` moves 5: a grid's rows), `first`, `last`, `open` (home: the system, or starts an app; library: the game),
-`back`, `fav`, `resume` (home: the system's last game), `prevSystem`, `nextSystem`, `none`. START (Settings) and
+`back`, `fav`, `resume` (home: the system's last game), `prevSystem`, `nextSystem`, `prevBlock`, `nextBlock` (home: the
+next maker's first system, or back to the first of this maker's run), `none`. START (Settings) and
 SELECT (search) stay Banana's. The defaults: home left/right/up/down/L/R move, A opens, X
 resumes, Y stars; library left/right move, up/down move 10, L/R change system, A plays, B goes back, Y stars.
 
