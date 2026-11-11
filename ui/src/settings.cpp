@@ -447,6 +447,13 @@ namespace banana
 			it.names.clear(); it.values.clear();
 			std::string style = themeStyle(getConfValue(it.file, it.key, "dark"));
 			for (auto& t : userThemes()) if (t.style == style) { it.names.push_back(t.name); it.values.push_back(t.value); }
+			{
+				// the theme in use, when it isn't one of those (a "file:" theme) but can be read: listed, so the row
+				// shows it and is never empty
+				std::string cur = getConfValue(it.file, it.key, "dark");
+				std::string nm = themeValue(cur, "name");
+				if (!nm.empty() && std::find(it.values.begin(), it.values.end(), cur) == it.values.end()) { it.names.push_back(nm); it.values.push_back(cur); }
+			}
 			it.help = "The look of the menu, drawn from a theme's .json: the Pocket layout and its colour variations. Your own go in banana/themes on the card (banana/themes/README.txt says how).";
 			std::string v = getConfValue(it.file, it.key, "dark");
 			if (v == "dark" || v == "light" || v == "carts")
@@ -497,7 +504,7 @@ namespace banana
 		if (it.kind != Item::CHOICE && it.kind != Item::PERCENT) return;
 		// the schema's default (settings_defaults.cpp), else the row's first choice
 		std::string def = settingDefault(it.key);
-		if (def.empty()) def = it.values[0];
+		if (def.empty() && !it.values.empty()) def = it.values[0];
 		// the system's defaults where the data partition has none yet
 		if (it.file == data + "/bananad.conf") def = getConfValue("/etc/banana/bananad.conf", it.key, def);
 		if (it.file == data + "/settings.conf") def = getConfValue("/etc/banana/settings.conf", it.key, def);
@@ -790,6 +797,7 @@ namespace banana
 			return it.key == "reboot" ? REBOOT : POWEROFF;
 		}
 		int n = (int)it.values.size();
+		if (n == 0) return NONE;
 		int at = it.at + dir;
 		if (it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME || it.kind == Item::PERCENT) at = std::min(n - 1, std::max(0, at));	// a slider stops at its ends
 		else at = (at + n) % n;
@@ -1550,7 +1558,8 @@ namespace banana
 	{
 		const Item& it = items[i];
 		std::string v;
-		if (it.kind == Item::CHOICE || it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME || it.kind == Item::PERCENT) v = it.names[it.at];
+		if (it.kind == Item::CHOICE || it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME || it.kind == Item::PERCENT)
+			v = it.at >= 0 && it.at < (int)it.names.size() ? it.names[it.at] : "";
 		else if (it.kind == Item::ACTION) v = armed == i ? tr("Press A again") : "";
 		else if (it.kind == Item::INFO) v = "";
 		// a page's row: Network the network it is on; Update the packages waiting on the card; the others nothing

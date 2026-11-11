@@ -394,6 +394,25 @@ for size in 640x557; do
     grep -q 'pause ticket: card 16,16 1208x1048' "$stlog" || { echo "FAIL $size: the ticket's card: $(grep 'pause ticket' "$stlog")"; fail=1; }
     golden "street-phonebook" "$OUT/$size-street-phonebook.png"
     golden "street-ticket" "$OUT/$size-street-ticket.png"
+    # the other SNES neighborhoods (street-*.json, generated from street.json by tools/gen-street.py): each draws its
+    # street, a shop, the workshop and the ticket with no theme error. Loaded as "file:" themes, which the Theme row
+    # lists (it used to be empty for one, and the workshop crashed reading it).
+    for hood in harbor blossom sundown oldtown; do
+        hlog=$OUT/$size-street-$hood.log
+        sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/street-$hood.json|" "$FX/data/settings.conf"
+        BANANA_PHASE=day "$HERE/banana-ui" --headless "$OUT/$size-street-$hood-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+            --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+            --script "home 0; wait 800; shot home; press a; wait 900; shot lib; press b; wait 600; press start; wait 300; press a; shot workshop; pause ticket 1" \
+            2> "$hlog" || { echo "FAIL $size: banana-ui ($hood) exited $?"; fail=1; }
+        grep -q "theme:" "$hlog" && { echo "FAIL $size: the $hood theme: $(grep 'theme:' "$hlog" | head -3)"; fail=1; }
+        for s in home lib workshop ticket; do
+            f=$OUT/$size-street-$hood-$s.png
+            [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
+            [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ] || { echo "FAIL $size: $f is blank"; fail=1; }
+        done
+        golden "street-$hood-home" "$OUT/$size-street-$hood-home.png"
+    done
+    sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
     # The one panel offers the layout themes only: a colour theme (Dark/Light) is forced to the Pocket layout there,
     # so they were rows that changed nothing. From a stored dark the Theme row reads Pocket, and stepping right
     # picks the next layout (not Light) -- which the value it writes proves.

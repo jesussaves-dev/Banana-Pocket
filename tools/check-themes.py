@@ -138,6 +138,58 @@ def selftest():
     return 0 if ok1 and ok2 and ok3 else 1
 
 
+PHASES = ("dawn", "day", "dusk", "night")
+WORKSHOP = ("workshop.png", "drawer.png", "drawer-on.png", "sheet.png", "book.png", "ticket.png")
+WALKER = ["mascot-%s%d.png" % (f, k) for f in "rl" for k in range(6)]	# the image path picks these by expression
+
+
+def snes_checks(path, themes_dir):
+    """An SNES theme's baked art: every image its "src" names under {art}, for each time of day it has (the folders
+    present, or the one a neighborhood fixes), the walker's poses, and the panels Settings, the keyboard and the pause
+    menu draw. A neighborhood generated from street.json must also still match it (tools/gen-street.py)."""
+    text = open(path, encoding="utf-8").read()
+    doc = json.loads(strip_comments(text))
+    if str(doc.get("style", "")).lower() != "snes":
+        return []
+    errors = []
+    art = (doc.get("vars") or {}).get("art", "")
+    ws = doc.get("workshop", "")
+    for f in WORKSHOP:
+        if not ws or not os.path.isfile(os.path.join(themes_dir, ws, f)):
+            errors.append("workshop: no %s in %s" % (f, ws or "(no \"workshop\")"))
+    srcs = re.findall(r'"src":\s*"([^"]*)"', text)
+    phased = any("{phase}" in s for s in srcs)
+    phases = [ph for ph in PHASES if os.path.isdir(os.path.join(themes_dir, art, ph))]
+    if phased and not phases:
+        errors.append("art: no time-of-day folders in %s" % art)
+    for src in srcs:
+        if "{art}" not in src:
+            continue
+        s = src.replace("{art}", art)
+        for ph in (phases if "{phase}" in s else [None]):
+            t = s.replace("{phase}", ph) if ph else s
+            if "{" in t:
+                if "mascot-" in t:	# the walker: every pose, both ways
+                    d = t[:t.index("mascot-")].rstrip("/")
+                    errors += ["art: no %s/%s" % (d, w) for w in WALKER if not os.path.isfile(os.path.join(themes_dir, d, w))]
+                continue
+            if not os.path.isfile(os.path.join(themes_dir, t)):
+                errors.append("art: no %s" % t)
+    base = os.path.basename(path)
+    m = re.match(r"street-(\w+)\.json$", base)
+    if m:
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("gen_street", os.path.join(os.path.dirname(os.path.abspath(__file__)), "gen-street.py"))
+            gen = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(gen)
+            if m.group(1) in gen.HOODS and gen.theme_text(themes_dir, m.group(1)) != text:
+                errors.append("out of date with street.json: run tools/gen-street.py")
+        except Exception as e:	# (PIL missing: the art check above still ran)
+            errors.append("could not regenerate it to compare: %s" % e)
+    return sorted(set(errors))
+
+
 def main(argv):
     if "--selftest" in argv:
         return selftest()
@@ -157,6 +209,8 @@ def main(argv):
     failed = 0
     for name in files:
         errors = check(os.path.join(themes_dir, name), schema)
+        if not errors:
+            errors = snes_checks(os.path.join(themes_dir, name), themes_dir)
         if errors:
             failed += 1
             print("FAIL %s" % name)

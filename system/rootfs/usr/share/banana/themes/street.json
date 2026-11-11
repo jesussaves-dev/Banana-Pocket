@@ -3,7 +3,7 @@
   // exactly 4 device px per unit. The art is baked by tools/gen-street.py to the Super NES's rules (15-bit colour,
   // shading ramps, scanline skies) for each time of day: "phase" (dawn, day, dusk, night) picks the folder. The system
   // icons, names and counts stay live, so a new system needs no new art. Text is Banana's own pixel faces at 12 / 24.
-  "name": "Banana Street (preview)",
+  "name": "Banana Street",
   "author": "BananaOS",
   "style": "snes",
   "base": "dark",
@@ -19,6 +19,7 @@
     "ink": "#2b1a33", "dk": "#5a3a4a", "paper": "#fff3cf", "paperLo": "#d8c49a",
     "awnA": "#e84a5f", "awnB": "#3fa7a0", "awnC": "#7a5cc7",
     "gold": "#ffd21e", "goldLo": "#d08a14", "hudLo": "#1a1230",
+    "goldTop": "#fff6c8", "goldHi": "#ffe873", "goldDeep": "#8a4a10",
     "hi": "=gold"
   },
 
@@ -124,7 +125,7 @@
         // what's selected, on a panel at the bottom
         { "type": "image", "src": "{art}/hud.png", "fit": "pixel", "x": 0, "y": 224, "w": 310, "h": 46 },
         { "type": "text", "x": 8, "y": 226, "w": 176, "text": "{sys.name}", "font": "banana-title", "size": 24, "color": "=gold",
-          "gradient": { "stops": ["#fff6c8", "#fff6c8", "#ffe873", "=gold", "=gold", "=goldLo", "#8a4a10", "#8a4a10"] },
+          "gradient": { "stops": ["=goldTop", "=goldTop", "=goldHi", "=gold", "=gold", "=goldLo", "=goldDeep", "=goldDeep"] },
           "outline": { "width": 1, "color": "=hudLo" } },
         { "type": "text", "size": 12, "right": 8, "y": 228, "w": 120, "align": "right",
           "text": "=(sys.games == 0 ? 'Closed' : sys.games == 1 ? '1 game' : sys.games + ' games') + '  ' + (cursor + 1) + '/' + count",
