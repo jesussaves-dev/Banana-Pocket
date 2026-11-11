@@ -35,7 +35,7 @@ release. Next:
     **29 mA** with two spurious wakes in it, and the short ones 32–36 mA (too brief to read). A bound UDC is **not**
     what keeps the controller or its PHY clocks alive -- the hook earns nothing and is a candidate to drop.
   - **Measured 2026-11-11: the SoC never reaches low power, and the ADSP is the prime suspect.** With a `qcom,rpmh-stats`
-    node in the device tree (branch `dts/rpmh-stats`, not merged), a 76-minute `deep` sleep with the sound server stopped
+    node in the device tree, a 76-minute `deep` sleep with the sound server stopped
     drew about 32 mA, and `aosd`, `cxsd` and `ddr` in `debugfs/qcom_stats` stayed at **0**. APSS and WPSS slept the whole
     time; the ADSP's counters never moved, its last sleep being about when the sound card comes up at boot. A second
     sleep with the sound server down and the LPASS macros runtime-suspended first made no difference, so it is not
