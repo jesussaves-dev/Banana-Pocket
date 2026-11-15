@@ -400,6 +400,9 @@ namespace banana
 	bool Display::restore()
 	{
 		if (fd < 0) return false;
+		// cleared whatever the outcome: a restore that fails leaves the commits to fail as they did before sleepOff
+		// existed, rather than holding a resident game's frames back for good
+		off = false;
 		bool ok = drmSetMaster(fd) == 0;
 		if (panel.atomic) { if (!atomicModeset(panel)) ok = false; }
 		else if (drmModeSetCrtc(fd, panel.crtc, panel.buf[panel.front].fb, 0, 0, &panel.conn, 1, (drmModeModeInfo*)panel.mode) != 0)
@@ -414,6 +417,39 @@ namespace banana
 			applyGamma();
 		}
 		return ok;
+	}
+
+	bool Display::sleepOff()
+	{
+		if (fd < 0 || !panel.atomic || !panel.crtc) return false;
+		uint32_t active = propId(panel.crtc, DRM_MODE_OBJECT_CRTC, "ACTIVE");
+		if (!active) return false;
+		// a flip still in flight would make the modeset wait on it anyway; read its event now so it does not count
+		// against the first commit after the wake
+		for (int i = 0; pending && i < 10; i++)
+		{
+			pollfd pf = { fd, POLLIN, 0 };
+			if (poll(&pf, 1, 20) > 0 && (pf.revents & POLLIN)) handleEvents();
+		}
+		// blocking on purpose: bananad suspends right after this handler, and the panel has to be off by then
+		AtomicBuf& r = atomicBuf;
+		r.clear();
+		r.add(panel.crtc, active, 0);
+		drm_mode_atomic req = {};
+		req.flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
+		req.count_objs = (uint32_t)r.groups;
+		req.objs_ptr = (uint64_t)(uintptr_t)r.objs;
+		req.count_props_ptr = (uint64_t)(uintptr_t)r.counts;
+		req.props_ptr = (uint64_t)(uintptr_t)r.props;
+		req.prop_values_ptr = (uint64_t)(uintptr_t)r.vals;
+		if (drmIoctl(fd, DRM_IOCTL_MODE_ATOMIC, &req) != 0)
+		{
+			fprintf(stderr, "kms: panel off before sleep failed (%s)\n", strerror(errno));
+			return false;
+		}
+		pending = 0;
+		off = true;
+		return true;
 	}
 
 	void Display::setWarmth(int level)
@@ -487,6 +523,7 @@ namespace banana
 
 	void Display::close()
 	{
+		off = false;
 		if (fd < 0) return;
 		Panel& pn = panel;
 		freeBuf(pn.buf[0]); freeBuf(pn.buf[1]); freeBuf(pn.black); freeBuf(pn.card[0]); freeBuf(pn.card[1]);
@@ -510,7 +547,7 @@ namespace banana
 
 	bool Display::present(const uint32_t* screen, const Damage& dmg)
 	{
-		if (fd < 0 || pending) return false;
+		if (fd < 0 || pending || off) return false;
 		bool any = false;
 		Panel& pn = panel;
 		// the hidden buffer missed what changed since it was shown: this frame's part and the last frame's
@@ -577,7 +614,7 @@ namespace banana
 	// path passes the panel size for both and is pixel-identical to before.
 	bool Display::commitFrame(Panel& pn, uint32_t primaryFb, uint32_t srcW, uint32_t srcH, uint32_t overlayFb, int fenceFd)
 	{
-		if (fd < 0 || pending || !pn.atomic) return false;
+		if (fd < 0 || pending || !pn.atomic || off) return false;
 		AtomicBuf& r = atomicBuf;
 		r.clear();
 		auto addp = [&](uint32_t obj, uint32_t prop, uint64_t v) { r.add(obj, prop, v); };

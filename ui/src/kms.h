@@ -78,6 +78,11 @@ namespace banana
 		// after a resume or a lost master: show the current buffers again. False when another master still holds the
 		// panel (a game's compositor letting go): the caller retries
 		bool restore();
+		// before a sleep: the CRTC inactive (DPMS off), so a resume the kernel takes on its own -- the phantom wakes
+		// bananad sends straight back to sleep -- does not light the panel with the last frame. Nothing is committed
+		// until restore() turns it on again.
+		bool sleepOff();
+		bool isOff() const { return off; }
 		// the night light: 0 off, 1 warm, 2 warmer. A gamma LUT on the panel, so it covers a game too (set from the
 		// menu, which holds the master; the kernel keeps the LUT across the compositor hand-over)
 		void setWarmth(int level);
@@ -150,6 +155,7 @@ namespace banana
 			uint32_t mode_blob = 0;
 		};
 		int fd = -1, W = 0, H = 0, pending = 0;
+		bool off = false;	// sleepOff() until restore()
 		AtomicBuf atomicBuf;	// the flip path's request, reused every frame
 		static constexpr unsigned kMaxLut = 1024;
 		drm_color_lut lutScratch[kMaxLut];	// colorRebuild's staging, so a rebuild allocates only the kernel's blobs

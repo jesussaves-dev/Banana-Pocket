@@ -448,6 +448,7 @@ static int wake_key_press(void)
  * straight back to sleep, without running anything again. */
 static void shutdown_now(const char *why);
 static int battery_discharging_pct(void);
+static int battery_pct_any(void);
 static long battery_charge_uah(void);
 static int sleep_fallback;		/* 0 as configured; 1 devices one at a time; 2 also s2idle (a suspend failed) */
 
@@ -531,6 +532,25 @@ static int ui_release_wait(double *ms)
 		if (!strstr(s, "open") && !strstr(s, "releasing")) { *ms = (mono() - t) * 1000; return 1; }
 		if (mono() - t > 2.0) { *ms = (mono() - t) * 1000; return 0; }
 		sleep_us(20000);
+	}
+}
+
+/* The menu's other handover: after SIGHUP it turns the CRTC off (Display::sleepOff) and answers in
+ * /run/banana/panel-state, which this side set to "asked" before the signal. The sound-state wait above cannot stand
+ * in for it: with nothing playing the sound device is already closed, so that wait returns before the menu has even
+ * read the signal, and a menu frozen with its panel still on is the one a phantom wake lights. 1 = off (ms),
+ * 0 = the menu could not, -1 = no answer in 500 ms (a menu from before this). */
+static int ui_panel_off_wait(double *ms)
+{
+	double t = mono();
+	for (;;) {
+		char s[32] = "";
+		read_str("/run/banana/panel-state", s, sizeof s);
+		*ms = (mono() - t) * 1000;
+		if (!strcmp(s, "off")) return 1;
+		if (!strcmp(s, "off failed")) return 0;
+		if (mono() - t > 0.5) return -1;
+		sleep_us(10000);
 	}
 }
 
@@ -683,16 +703,26 @@ static void suspend_now(const char *why)
 	/* the menu's ambient loop, if any: stop it and have it release the DSP before the ADSP sleeps (SIGHUP). Wait for
 	 * the close it publishes to /run/banana/sound-state instead of guessing at a delay -- a PCM close still in flight
 	 * when the DSP goes under is the one thing the overnight hang of 03:40 was seen doing (logs/sleep-state says
-	 * "releasing (handover)" at the write of mem); then darken the panel and mute the codec so nothing flashes or pops */
-	if (!game && !skip("ui")) {
+	 * "releasing (handover)" at the write of mem); then darken the panel and mute the codec so nothing flashes or pops.
+	 * With a game resident the menu is still the display's owner when its compositor shows the game (the same test as
+	 * the SIGUSR1 after the wake), so it turns the panel off then too; the sound handover is the menu's alone. */
+	if (!skip("ui") && (!game || compositor_on())) {
 		pid_t u = ui_pid();
 		if (u > 0) {
+			write_file("/run/banana/panel-state", "asked");
 			kill(u, SIGHUP);
-			double ms = 0;
-			int rel = ui_release_wait(&ms);
-			if (rel == 1) sleep_log("menu: released the sound device in %.0f ms", ms);
-			else if (rel == 0) sleep_log("menu: the sound device was still open %.0f ms after the handover: sleeping anyway", ms);
-			else sleep_us(200000);	/* a menu from before sound-state: the old fixed wait */
+			double pms = 0;
+			int poff = ui_panel_off_wait(&pms);
+			if (poff == 1) sleep_log("menu: panel off in %.0f ms", pms);
+			else if (poff == 0) sleep_log("menu: could not turn the panel off: a phantom wake may light it");
+			else sleep_log("menu: no answer about the panel after %.0f ms", pms);
+			if (!game) {
+				double ms = 0;
+				int rel = ui_release_wait(&ms);
+				if (rel == 1) sleep_log("menu: released the sound device in %.0f ms", ms);
+				else if (rel == 0) sleep_log("menu: the sound device was still open %.0f ms after the handover: sleeping anyway", ms);
+				else sleep_us(200000);	/* a menu from before sound-state: the old fixed wait */
+			}
 		}
 	}
 	if (!skip("mute")) sleep_quiet_begin();
@@ -702,7 +732,7 @@ static void suspend_now(const char *why)
 	wake_only_power();	/* the power key (and the cable) may bring it back (see its comment) */
 	double t_prep = mono();
 	if (cfg.sleep_skip[0]) sleep_log("sleep %s: skipping '%s' (debug)", why, cfg.sleep_skip);
-	int cycles = 0, rtc_wakes = 0, failures = 0, spurious = 0;
+	int cycles = 0, rtc_wakes = 0, failures = 0, spurious = 0, phantoms = 0;
 	int plugged0 = charger_online();
 	int pct0 = battery_discharging_pct();	/* -1 on the charger: a draining sleep is the one worth measuring */
 	long q0 = battery_charge_uah();
@@ -789,12 +819,28 @@ static void suspend_now(const char *why)
 			sleep_log("the charger was unplugged: back to sleep");
 			continue;
 		}
-		if (spurious < 3 && !woke_key && !woke_cable) {
-			spurious++;
-			sleep_log("wake with no key or cable (spurious): back to sleep (%d/3)", spurious);
-			continue;
+		/* Two kinds of phantom. One comes seconds after the suspend (the pwrkey glitch above): those are bounded, so a
+		 * press the key check missed still gets the handheld up by the fourth. The other comes after a long sleep,
+		 * about hourly, with the kernel counting no wakeup event (the battery gauge's notifications are the suspect:
+		 * one per percent fits the hour; the percentage is logged to check). Staying awake after the third of those
+		 * lit the panel for five minutes several times a night, so a slow one always goes back to sleep. */
+		if (!woke_key && !woke_cable) {
+			double slept = (b1.tv_sec - b0.tv_sec) + (b1.tv_nsec - b0.tv_nsec) / 1e9;
+			int pct = battery_pct_any();
+			if (slept >= 60) {
+				phantoms++;
+				sleep_log("wake with no key or cable after %.0f s asleep, battery %d%%: back to sleep (slow phantom %d)",
+				    slept, pct, phantoms);
+				continue;
+			}
+			if (spurious < 3) {
+				spurious++;
+				sleep_log("wake with no key or cable after %.1f s asleep, battery %d%%: back to sleep (%d/3)",
+				    slept, pct, spurious);
+				continue;
+			}
 		}
-		woke = woke_key ? "power button" : "charger";
+		woke = woke_key ? "power button" : woke_cable ? "charger" : "phantom, the fourth in a row";
 		break;
 	}
 	/* awake: the game and the menu first. A fallback (devices one at a time, or s2idle) was for this sleep: the
@@ -834,7 +880,7 @@ static void suspend_now(const char *why)
 		if (asleep >= 180 && q0 > 0 && q1 > 0)
 			snprintf(pw, sizeof pw, ", battery %d%% -> %d%% (%.0f mAh in %.1f h, %.0f mA%s)", pct0, pct1,
 				(q0 - q1) / 1000.0, asleep / 3600.0, (q0 - q1) / 1000.0 / (asleep / 3600.0),
-				spurious ? "" : ", no stray wake");
+				spurious || phantoms ? "" : ", no stray wake");
 		else
 			snprintf(pw, sizeof pw, ", battery %d%% -> %d%%", pct0, pct1);
 	}
@@ -2082,7 +2128,7 @@ static int ra_cmd(const char *cmd)
 static void handle(const struct input_event *e)
 {
 	double now = mono();
-	if (e->type == EV_KEY) { last_input = now; undim(); if (panel_blanked) { panel_blanked = 0; backlights_power(1); } }
+	if (e->type == EV_KEY) { last_input = now; undim(); if (panel_blanked) { panel_blanked = 0; backlights_power(1); pid_t u = ui_pid(); if (u > 0 && (!pid_of("/run/banana/game.pid") || compositor_on())) kill(u, SIGUSR1); } }
 	if (e->type == EV_SW && e->code == SW_HEADPHONE_INSERT) {
 		if (headphones != e->value) {
 			/* unplugged while a game runs: it would blast the speaker, so pause it; plugging back in does not
@@ -2164,6 +2210,27 @@ static long battery_charge_uah(void)
 		snprintf(p, sizeof p, "/sys/class/power_supply/%s/charge_counter", e->d_name);
 		r = (long)read_int(p, -1);
 		break;
+	}
+	closedir(d);
+	return r;
+}
+
+/* the gauge's percentage whatever the charger is doing, for the logs; -1 with no battery */
+static int battery_pct_any(void)
+{
+	DIR *d = opendir("/sys/class/power_supply");
+	if (!d) return -1;
+	struct dirent *e;
+	int r = -1;
+	while (r < 0 && (e = readdir(d))) {
+		if (e->d_name[0] == '.') continue;
+		char p[320], s[32];
+		snprintf(p, sizeof p, "/sys/class/power_supply/%s/type", e->d_name);
+		read_str(p, s, sizeof s);
+		if (strcmp(s, "Battery")) continue;
+		snprintf(p, sizeof p, "/sys/class/power_supply/%s/capacity", e->d_name);
+		read_str(p, s, sizeof s);
+		if (s[0]) r = atoi(s);
 	}
 	closedir(d);
 	return r;

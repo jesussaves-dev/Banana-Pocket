@@ -20,7 +20,9 @@ if [ "$1" != --inside ]; then
  * test can tell bananad waited for the note (not a fixed delay) */
 static void state(const char *s) { FILE *f = fopen("/run/banana/sound-state", "w"); if (f) { fputs(s, f); fclose(f); } }
 static void on(int s) { FILE *f = fopen("/run/test/ui-signals", "a"); if (f) { fprintf(f, "SIGUSR1\n"); fclose(f); } }
-static void onhup(int s) { usleep(50000); state("closed (test)\n"); }
+/* and it turns the panel off first, answering in panel-state */
+static void panel(const char *s) { FILE *f = fopen("/run/banana/panel-state", "w"); if (f) { fputs(s, f); fclose(f); } }
+static void onhup(int s) { panel("off"); usleep(50000); state("closed (test)\n"); }
 int main(void) { signal(SIGUSR1, on); signal(SIGHUP, onhup); state("open (test)\n"); for (;;) pause(); }
 EOF
     mkdir -p /data 2>/dev/null || true

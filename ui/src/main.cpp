@@ -1268,7 +1268,7 @@ int main(int argc, char** argv)
 		// the next frame is drawn while the last one's flips are still pending (present copies it out, so the canvas is
 		// free again at once), and handed over when the panel has flipped: drawing and the wait
 		// for the panel's vblank overlap instead of adding up to two refreshes a frame
-		if (want && disp.isOpen() && !drawn && !comp.gameActive() && !comp.clientOnScreen() && nowMs() >= quietUntil)
+		if (want && disp.isOpen() && !disp.isOff() && !drawn && !comp.gameActive() && !comp.clientOnScreen() && nowMs() >= quietUntil)
 		{
 			double t0 = nowMs();
 			{
@@ -1280,7 +1280,7 @@ int main(int argc, char** argv)
 			drawn = true;
 			dirty = false;
 		}
-		if (drawn && disp.isOpen() && !disp.flipPending() && !comp.gameActive() && !comp.clientOnScreen())
+		if (drawn && disp.isOpen() && !disp.isOff() && !disp.flipPending() && !comp.gameActive() && !comp.clientOnScreen())
 		{
 			double t0 = nowMs();
 			bool flipped = disp.present(be.pixels(), be.takeDamage());
@@ -1388,7 +1388,16 @@ int main(int argc, char** argv)
 				while (read(sigPipe[0], &c, 1) == 1)
 				{
 					if (c == SIGTERM || c == SIGINT) quit = true;
-					if (c == SIGHUP) { logf("SIGHUP: handing the sound device over"); sound.release(); }	// bananad is about to sleep
+					if (c == SIGHUP)	// bananad is about to sleep
+					{
+						// the panel off first: the sound-state bananad waits on is written after it, so the CRTC is
+						// inactive by the time it suspends, and a wake it sends straight back to sleep stays dark
+						bool off = disp.isOff() || (disp.isOpen() && disp.sleepOff());
+						logf("SIGHUP: panel %s", off ? "off" : "off failed");
+						if (FILE* pf = fopen("/run/banana/panel-state", "w")) { fputs(off ? "off" : "off failed", pf); fclose(pf); }
+						// with a game resident (bananad asks then only to turn the panel off) the sound is the game's
+						if (gamePid <= 0) { logf("SIGHUP: handing the sound device over"); sound.release(); }
+					}
 					// after a wake: the kernel has the panels showing our buffers again; a redraw brings the clock and
 					// the battery up to date (no modeset: that would run the panels' power-on sequence once more)
 					if (c == SIGUSR1)
