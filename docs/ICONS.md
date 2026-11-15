@@ -10,6 +10,9 @@ system (or one per kind), named in `ui/assets/rnds/systems.cfg`.
 - `ui/assets/rnds/icons/` — the working set ([Ben Jelter's Console Icon Pack](https://benjelter.itch.io/console-icon-pack)
   plus the overrides). This is what the build
   installs to `/usr/share/banana/rnds/icons`. It is regenerated on import, so treat it as output, not source.
+- `tools/icons/sheet_icons.py` — cuts the system and UI icons from the painted sprite sheets in `tools/icons/sheets/`
+  (keyed, box-reduced to 32×32, one-pixel drop shadow) into both folders above. Edit a sheet or the `CELLS` table and
+  rerun it rather than editing those PNGs. It writes only what `systems.cfg` names, and leaves `apps` alone.
 - `tools/gen-icons.py` — draws some of the simple ones (`pcengine`, `atari2600`, `sega32x`, `segacd`, `ngp`,
   `wonderswan`, `atarilynx`) as reproducible 32×32 pixel art. Run it to rewrite those; it does **not** touch the
   overrides.
