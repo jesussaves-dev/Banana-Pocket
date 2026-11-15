@@ -561,6 +561,54 @@ def win(c, x, y, w, h, alpha=.92):
     for a, b in ((x + 3, y + 3), (x + w - 4, y + 3), (x + 3, y + h - 4), (x + w - 4, y + h - 4)): c.R(a, b, 1, 1, "gold0")
 
 
+# the battery is a banana that ripens as the charge drops: yellow and clean when full, then spotted, then brown
+BATT_BROWN = (0, .12, .3, .55, .82)	# how far the skin has turned, stage 0 (full) .. 4 (nearly empty)
+BATT_SPOTS = ((), ((9, 6),), ((5, 5), (9, 6), (13, 4)), ((4, 4), (6, 6), (9, 6), (11, 7), (13, 4)),
+              ((4, 4), (5, 6), (7, 5), (9, 7), (10, 5), (12, 6), (14, 4)))
+
+
+def battery(p, stage):
+    """A banana 18 x 10 lying on its back, stem at the left. The skin shades top to bottom on its own ramp, moved
+    toward brown by stage, with darker spots for the later stages."""
+    W, H = 18, 10
+    skin = mix("#ffd21e", "#7a4a1a", BATT_BROWN[stage])
+    ramp = [mix(skin, "#fff6c8", .5), mix(skin, "#ffeeb0", .2), skin, mix(skin, "#3a1f6a", .3), mix(skin, "#241050", .5)]
+    spot = mix(skin, "#2a140c", .7)
+    g = [[-1] * W for _ in range(H)]
+    for x in range(2, W - 1):
+        t = (x - 2) / (W - 4)
+        cy = 2.2 + 4.4 * math.sin(math.pi * t) ** .8	# the ends turn up
+        hw = .6 + 1.7 * math.sin(math.pi * min(1, t * 1.05)) ** .7
+        for y in range(H):
+            d = (y + .5 - cy) / hw
+            if abs(d) <= 1: g[y][x] = 0 if d < -.55 else 1 if d < -.1 else 2 if d < .4 else 3 if d < .8 else 4
+    c = Canvas(W, H, p)
+    for y in range(H):
+        for x in range(W):
+            if g[y][x] >= 0: c.R(x, y, 1, 1, ramp[g[y][x]])
+            elif any(0 <= x + dx < W and 0 <= y + dy < H and g[y + dy][x + dx] >= 0 for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+                c.R(x, y, 1, 1, "ink")
+    for sx, sy in BATT_SPOTS[stage]:
+        if g[sy][sx] >= 0: c.R(sx, sy, 1, 1, spot)
+    # the stem and the dark tip
+    c.R(0, 0, 3, 3, "ink"); c.R(1, 1, 1, 1, mix("#8a9a3a", skin, BATT_BROWN[stage]))
+    c.R(W - 2, 2, 1, 1, "ink")
+    return c
+
+
+def bolt(p):
+    """On the charger: a bolt 7 x 11, drawn over the banana's right end."""
+    W, H = 7, 11
+    rows = ("...##..", "..##...", "..##...", ".##....", ".####..", "...##..", "...#...", "..##...", "..#....")
+    on = {(x, y + 1) for y, r in enumerate(rows) for x, ch in enumerate(r) if ch == "#"}
+    c = Canvas(W, H, p)
+    for y in range(H):
+        for x in range(W):
+            if (x, y) in on: c.R(x, y, 1, 1, "#fff6c8" if y < 5 else "#ffe873")
+            elif any((x + dx, y + dy) in on for dx in (-1, 0, 1) for dy in (-1, 0, 1)): c.R(x, y, 1, 1, "ink")
+    return c
+
+
 def panel(p, w, h):
     c = Canvas(w, h, p)
     win(c, 0, 0, w, h)
@@ -722,7 +770,8 @@ def main():
         for k, c in {"workshop": workshop(p), "drawer": drawer(p, False), "drawer-on": drawer(p, True), "sheet": sheet(p),
                      "book": book(p), "ticket": ticket(p),
                      "hud": panel(p, 310, 46), "chip52": panel(p, 52, 14), "chip34": panel(p, 34, 14), "interior": interior(p),
-                     "row": row(p, False), "rowsel": row(p, True)}.items():
+                     "row": row(p, False), "rowsel": row(p, True), "chip24": panel(p, 24, 14), "bolt": bolt(p),
+                     **{"batt%d" % s: battery(p, s) for s in range(len(BATT_BROWN))}}.items():
             c.save(os.path.join(out, k + ".png")); n += 1
         if name != "banana": write_theme(root, name)
     print("gen-street: %d images in %s, %d neighborhood themes" % (n, os.path.join(root, "street"), len(PALETTES) - 1))

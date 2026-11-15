@@ -13,9 +13,11 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
 - **The SNES style: what is left after 0.7.0.** The plan is the "Banana Street" page (plan artifact); tasks 1-7 are done.
   - Still drawn the Classic way in the SNES style: the Wi-Fi network list, Updates, first-time setup and Save states
     pages; the volume/brightness pill; the battery and charger notices. Touch does nothing in the SNES workshop.
-  - Not built yet: SNES-style menu sounds; the banana battery icon (ripe to brown as the charge drops); box art dithered
-    to the palette, with a setting for the original art; a closed shop's hint naming the folder for that system's games;
-    the reverse mosaic on wake (decoration only, after the panel is restored).
+  - Not built yet: SNES-style menu sounds; box art dithered to the palette, with a setting for the original art; a closed
+    shop's hint naming the folder for that system's games; the reverse mosaic on wake (decoration only, after the panel
+    is restored).
+  - Done since 0.7.1: the battery is a banana that ripens to brown as the charge drops (five stages from
+    `tools/gen-street.py`), a bolt over it on the charger; Settings > Battery picks the banana alone or with its percent.
   - A Genesis style needs only a theme with `"style": "genesis"`: the Style row lists the styles of the themes present.
 
 - **Bluetooth: designed, not built (2026-11-08).** Stack chosen by request: a bespoke `banana-bt` over the kernel
