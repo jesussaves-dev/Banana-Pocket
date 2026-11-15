@@ -597,9 +597,9 @@ def battery(p, stage):
 
 
 def bolt(p):
-    """On the charger: a bolt 7 x 11, drawn over the banana's right end."""
-    W, H = 7, 11
-    rows = ("...##..", "..##...", "..##...", ".##....", ".####..", "...##..", "...#...", "..##...", "..#....")
+    """On the charger: a bolt 7 x 10, centred over the banana (10 high: inside the status chip's border)."""
+    W, H = 7, 10
+    rows = ("...##..", "..##...", ".##....", ".####..", "...##..", "...#...", "..##...", "..#....")
     on = {(x, y + 1) for y, r in enumerate(rows) for x, ch in enumerate(r) if ch == "#"}
     c = Canvas(W, H, p)
     for y in range(H):

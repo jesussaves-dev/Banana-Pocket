@@ -61,12 +61,12 @@
       { "type": "image", "src": "{art}/chip52.png", "fit": "pixel", "x": 4, "y": 4, "w": 52, "h": 14 },
       { "type": "text", "size": 12, "x": 4, "w": 52, "y": 5, "align": "center", "text": "{clock}", "color": "=paper" },
       // the battery: a banana that ripens to brown as the charge drops (tools/gen-street.py), alone or with its percent
-      // (Settings > Battery), and a bolt over its tip on the charger
+      // (Settings > Battery), and a bolt over its middle on the charger
       { "type": "image", "src": "{art}/chip{batteryMode == 'text' ? 52 : 24}.png", "fit": "pixel", "right": 4, "y": 4,
         "w": "=batteryMode == 'text' ? 52 : 24", "h": 14, "visible": "=battery >= 0" },
       { "type": "image", "src": "{art}/batt{battery >= 70 ? 0 : battery >= 45 ? 1 : battery >= 25 ? 2 : battery >= 10 ? 3 : 4}.png",
         "fit": "pixel", "right": "=batteryMode == 'text' ? 33 : 7", "y": 6, "w": 18, "h": 10, "visible": "=battery >= 0" },
-      { "type": "image", "src": "{art}/bolt.png", "fit": "pixel", "right": "=batteryMode == 'text' ? 31 : 5", "y": 5, "w": 7, "h": 11,
+      { "type": "image", "src": "{art}/bolt.png", "fit": "pixel", "right": "=batteryMode == 'text' ? 38 : 12", "y": 6, "w": 7, "h": 10,
         "visible": "=battery >= 0 && charging" },
       { "type": "text", "size": 12, "right": 5, "w": 28, "y": 5, "align": "center", "text": "{battery}%",
         "color": "=battery < 20 && !charging ? '#ff6a6a' : paper", "visible": "=battery >= 0 && batteryMode == 'text'" },

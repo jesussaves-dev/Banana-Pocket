@@ -613,8 +613,8 @@ namespace banana
 		sImg("notice.png", x0, y0);
 		// the street's banana at twice its size, as ripe as the charge (the same stages as the status bar's)
 		int stage = percent < 0 || percent >= 70 ? 0 : percent >= 45 ? 1 : percent >= 25 ? 2 : percent >= 10 ? 3 : 4;
-		sImgScaled("batt" + std::to_string(stage) + ".png", x0 + 10, y0 + 14, 2);
-		if (charging) sImgScaled("bolt.png", x0 + 34, y0 + 13, 2);
+		sImgScaled("batt" + std::to_string(stage) + ".png", x0 + 11, y0 + 14, 2);		// 36 x 20, centred left of the text
+		if (charging) sImgScaled("bolt.png", x0 + 22, y0 + 14, 2);				// 14 x 20, centred over it
 		const float tx = x0 + 58, tw = w - 58 - 8;
 		std::string t = sFit(tr(title), tw);
 		sText(t, tx + 1, y0 + 7, sInk);
