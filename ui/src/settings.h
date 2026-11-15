@@ -78,7 +78,7 @@ namespace banana
 
 		// a notice over the screen being drawn (between the backend's beginScreen and endScreen): the battery icon at
 		// percent, a title and a line or two, in the bubble style near the bottom of the panel
-		void notice(const std::string& title, const std::string& body, int percent);
+		void notice(const std::string& title, const std::string& body, int percent, bool charging = false);
 		// the volume or brightness keys' level: a small bubble near the bottom of the panel, its label, the percent and
 		// a bar (drawn like notice)
 		void level(const std::string& label, int percent);
@@ -133,6 +133,19 @@ namespace banana
 		void renderPhoneBook();					// the keyboard (search, passwords) as the phone book, book.png
 		void renderTicket(const PauseView& v);	// the pause menu as a ticket, ticket.png
 		bool phoneBookTouch(float x, float y, int& row, int& col, int& button);	// x, y in the 640 space
+		// the workshop's own pages (Wi-Fi, Updates, setup, Save states) on the ledger, ledger.png: a status line, up to
+		// LEDGER_VIS rows of a label and a value, the help under them and the buttons
+		struct SRow { std::string label, value; bool arrows = false, accent = false, lock = false; int bars = -1; };
+		struct SChip { std::string key, label; };
+		static constexpr int LEDGER_VIS = 9;
+		static int ledgerFirst(int sel, int n);
+		void renderLedger(const std::string& title, const std::string& count, const std::string& status, const std::vector<SRow>& rows,
+			int sel, const std::string& empty, const std::string& help, bool helpIsMessage, const std::vector<SChip>& left, const SChip& right);
+		void levelSnes(const std::string& label, int percent);	// the pill, pill.png
+		void noticeSnes(const std::string& title, const std::string& body, int percent, bool charging);	// notice.png
+		Result snesTouch(float cx, float cy);	// the end of a touch on a SNES page; cx, cy in the 640 space
+		int ledgerRowAt(float uy, int sel, int n) const;	// the row under uy (units), or -1
+		void sImgScaled(const std::string& file, float x, float y, float k);
 		void sWrap(const std::string& t, float x, float y, float width, int lines, const rnds::Color& c);
 		void sArrows(float right, float y, float valueW, const rnds::Color& c);
 		std::string rowHelp();			// the selected row's help (some say where things are now)

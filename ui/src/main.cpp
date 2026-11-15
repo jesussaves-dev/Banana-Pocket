@@ -579,7 +579,7 @@ int main(int argc, char** argv)
 	{
 		double t = nowMs();
 		if (low.showing(t)) settingsView.notice(low.title, low.body, low.percent);
-		else if (plug.showing(t)) settingsView.notice(plug.title, plug.body, plug.percent);
+		else if (plug.showing(t)) settingsView.notice(plug.title, plug.body, plug.percent, plug.seen == 1);
 		else if (osdUntil > t) settingsView.level(osdLabel, osdPercent);
 		else if (pause.open) settingsView.pauseMenu(pause.view);
 		else settingsView.drawToast(t);	// the achievement toasts, over whatever page is up

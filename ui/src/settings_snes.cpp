@@ -1,4 +1,5 @@
-// banana-ui: Settings in the SNES style -- the workshop, the phone book (the keyboard) and the ticket (the pause menu).
+// banana-ui: Settings in the SNES style -- the workshop, its pages on the ledger (Wi-Fi, Updates, setup, Save states),
+// the phone book (the keyboard), the ticket (the pause menu), and the pill and notices over any screen.
 // The workshop: the groups are drawers down the left (the open one pulled
 // out, gold), the selected group's rows on a sheet of paper on the right, the buttons along the bottom. Same rows,
 // values, input and saving as the Classic screen (settings.cpp); only the drawing differs. It is laid out on the
@@ -71,8 +72,13 @@ namespace banana
 		return "";
 	}
 
-	// one of the theme's baked panels, a texel a unit
+	// one of the theme's baked panels, a texel a unit (k units a texel: the notice's banana)
 	void Settings::sImg(const std::string& file, float x, float y)
+	{
+		sImgScaled(file, x, y, 1);
+	}
+
+	void Settings::sImgScaled(const std::string& file, float x, float y, float k)
 	{
 		if (snesArt.empty()) return;
 		std::string key = "art:" + snesArt + "/" + file;
@@ -84,7 +90,7 @@ namespace banana
 			if (!b.empty()) c.tex = be->upload(b, false);
 			it = cache.emplace(key, c).first;
 		}
-		if (it->second.tex) be->draw(it->second.tex, x * u, y * u, it->second.tex->w * u, it->second.tex->h * u, Color(1, 1, 1, 1));
+		if (it->second.tex) be->draw(it->second.tex, x * u, y * u, it->second.tex->w * u * k, it->second.tex->h * u * k, Color(1, 1, 1, 1));
 	}
 
 	// a button and what it does: the key on a paper chip, the label beside it
@@ -403,5 +409,216 @@ namespace banana
 		const bool change = v.sel >= 0 && v.sel < n && v.rows[v.sel].arrows;
 		if (change) sChip("<>", tr("Change"), tx + 12 + sChipWidth("A", tr("Choose")), by);
 		sChip("B", tr("Resume"), tx + tw - 6 - sChipWidth("B", tr("Resume")), by);
+	}
+
+	// ---- the ledger: the workshop's own pages -------------------------------------------------------------------
+	// the sheet's place on the pegboard, and its rows: LEDGER_VIS of them 16 apart under the status line
+	static const float LX = 4, LY = 24, LW = 302, LROW = LY + 24, LPITCH = 16;
+
+	int Settings::ledgerFirst(int sel, int n)
+	{
+		return std::max(0, std::min(sel - LEDGER_VIS / 2, n - LEDGER_VIS));
+	}
+
+	int Settings::ledgerRowAt(float uy, int sel, int n) const
+	{
+		if (uy < LROW - 2) return -1;
+		int r = (int)std::floor((uy - (LROW - 2)) / LPITCH);
+		int i = ledgerFirst(sel, n) + r;
+		return r < LEDGER_VIS && i < n ? i : -1;
+	}
+
+	void Settings::renderLedger(const std::string& title, const std::string& count, const std::string& status, const std::vector<SRow>& rows,
+		int sel, const std::string& empty, const std::string& help, bool helpIsMessage, const std::vector<SChip>& left, const SChip& right)
+	{
+		const Color ink = sInk;
+		be->beginScreen();
+		sFill(0, 0, 310, 270, sDim);
+		sImg("workshop.png", 0, 0);
+		// the header: the page, and on the right how many
+		float cw = sText(count, 0, 0, sPaper, true);
+		std::string t = sFit(title, 290 - cw - (cw > 0 ? 8 : 0));
+		sText(t, 10, 6, ink);
+		sText(t, 9, 5, sGold);
+		if (cw > 0) sText(count, 301 - cw, 5, sPaper);
+
+		// the sheet: where things stand over the rule, the rows under it
+		sImg("ledger.png", LX, LY);
+		sText(sFit(status, LW - 16), LX + 8, LY + 5, ink);
+		const int n = (int)rows.size(), first = ledgerFirst(sel, n);
+		for (int i = first; i < std::min(n, first + LEDGER_VIS); i++)
+		{
+			const SRow& r = rows[i];
+			const float y = LROW + (i - first) * LPITCH;
+			const bool on = i == sel;
+			if (on)
+			{
+				sFill(LX + 3, y - 2, LW - 6, 15, sGold);
+				sFill(LX + 3, y - 2, LW - 6, 1, Color(1, 1, 1, 0.55f));
+			}
+			const Color c = r.accent ? sRed : on ? ink : sDim, faint = on ? Color(ink.r, ink.g, ink.b, 0.25f) : sMuted;
+			float rx = LX + LW - 8;
+			if (r.bars >= 0)
+			{
+				// the signal: three steps, the lit ones in ink
+				for (int k = 0; k < 3; k++) sFill(rx - 11 + k * 4, y + 8 - 3 * k, 3, 3 + 3 * k, k < r.bars ? ink : faint);
+				rx -= 17;
+			}
+			if (r.lock)
+			{
+				// a padlock 7 x 9: the shackle, then the body
+				sFill(rx - 5, y + 1, 3, 1, c); sFill(rx - 6, y + 2, 1, 3, c); sFill(rx - 2, y + 2, 1, 3, c);
+				sFill(rx - 7, y + 5, 7, 5, c);
+				rx -= 13;
+			}
+			float vroom = 0;
+			if (!r.value.empty())
+			{
+				const bool arrows = r.arrows && on;
+				std::string v = sFit(r.value, 150 - (arrows ? 13 : 0));
+				float vw = sText(v, 0, 0, c, true);
+				if (arrows) { sArrows(rx, y, vw, ink); sText(v, rx - 6 - vw, y, c); vroom = vw + 13; }
+				else { sText(v, rx - vw, y, c); vroom = vw; }
+				vroom += 8;
+			}
+			sText(sFit(r.label, rx - vroom - (LX + 8)), LX + 8, y, on ? ink : sDim);
+		}
+		if (rows.empty() && !empty.empty()) sWrap(empty, LX + 8, LROW, LW - 16, 3, sDim);
+		// a page that scrolls: a stepped mark at the end of the rule where there is more
+		if (first > 0) for (int k = 0; k < 3; k++) sFill(LX + LW - 12 - k, LY + 14 - k, 1 + 2 * k, 1, sDim);
+		if (first + LEDGER_VIS < n) for (int k = 0; k < 3; k++) sFill(LX + LW - 12 - k, LY + 161 + k, 1 + 2 * k, 1, sDim);
+
+		// under the rule: what A does here, or what went wrong
+		sWrap(help, LX + 8, LY + 171, LW - 16, 4, helpIsMessage ? sRed : sDim);
+
+		// the buttons
+		float x = 8;
+		for (const SChip& c : left) { sChip(c.key, c.label, x, 254); x += sChipWidth(c.key, c.label) + 8; }
+		if (!right.key.empty()) sChip(right.key, right.label, 302 - sChipWidth(right.key, right.label), 254);
+		be->endScreen();
+	}
+
+	// ---- touch on the SNES pages ----------------------------------------------------------------------------------
+	Settings::Result Settings::snesTouch(float cx, float cy)
+	{
+		const float ux = downX * s / u, uy = downY * s / u, uup = cy * s / u;
+		(void)cx;
+		const bool swipe = std::fabs(uup - uy) > 10;
+		// the button bar: B on the left half, A on the right
+		if (uy >= 250)
+		{
+			const Key k = ux < 155 ? Key::B : Key::A;
+			switch (page)
+			{
+			case NETWORKS: return pressNetworks(k);
+			case UPDATES: return pressUpdates(k);
+			case SETUP: return pressSetup(k);
+			case STATES: return pressStates(k);
+			default: break;
+			}
+			if (inGroups) return pressGroups(k);
+			return k == Key::B ? press(Key::B) : change(1);
+		}
+		if (page != LIST)
+		{
+			int n = 0, *cur = nullptr;
+			Result (Settings::*pressIt)(Key) = nullptr;
+			switch (page)
+			{
+			case NETWORKS: n = (int)nets.size(); cur = &nsel; pressIt = &Settings::pressNetworks; break;
+			case UPDATES: n = (int)pkgs.size() + 1; cur = &usel; pressIt = &Settings::pressUpdates; break;
+			case SETUP: n = 5; cur = &wsel; pressIt = &Settings::pressSetup; break;
+			case STATES: n = (int)states.size(); cur = &ssel; pressIt = &Settings::pressStates; break;
+			default: return NONE;
+			}
+			if (n <= 0) return NONE;
+			auto pick = [&](int i) {
+				*cur = i;
+				armed = -1;
+				if (page == NETWORKS) ntop = std::max(0, std::min(nsel, std::max(0, n - ROWS)));	// (the Classic window, kept in step)
+				if (page == SETUP) message.clear();
+				return MOVED;
+			};
+			if (swipe) return pick(std::max(0, std::min(n - 1, *cur + (uup < uy ? LEDGER_VIS : -LEDGER_VIS))));
+			int i = ux >= LX && ux < LX + LW ? ledgerRowAt(uy, *cur, n) : -1;
+			if (i < 0) return NONE;
+			if (i != *cur) return pick(i);
+			return (this->*pressIt)(Key::A);
+		}
+
+		// the workshop: a drawer opens its group (an open one shuts), a row on the sheet is chosen, then changed
+		const int ng = std::min<int>((int)groups.size(), 8);
+		const int g = std::max(0, std::min(inGroups ? gsel : groupOf(sel), ng - 1));
+		const int gb = groupStart(g), ge = groupEnd(g);
+		if (ux < 127 && !swipe)
+		{
+			int i = (int)std::floor((uy - 26) / 28);
+			if (uy < 26 || i >= ng || uy - 26 - i * 28 > 26) return NONE;
+			if (inGroups && i != gsel) { gsel = i; return MOVED; }
+			if (!inGroups && i == g) return press(Key::B);
+			inGroups = true; gsel = i;
+			return pressGroups(Key::A);
+		}
+		const float sx = 132, sy = 24, sw = 170;
+		if (ux < sx || ux >= sx + sw) return NONE;
+		if (swipe)
+		{
+			if (inGroups) return NONE;
+			sel = std::max(gb, std::min(ge - 1, sel + (uup < uy ? 10 : -10)));
+			armed = -1;
+			return MOVED;
+		}
+		const int vis = 10;
+		int first = inGroups ? gb : std::max(gb, std::min(sel - vis / 2, ge - vis));
+		first = std::max(gb, first);
+		int r = (int)std::floor((uy - (sy + 22)) / 16), i = first + r;
+		if (uy < sy + 22 || r >= vis || i >= ge) return NONE;
+		if (inGroups) { pressGroups(Key::A); sel = i; armed = -1; return MOVED; }
+		if (i != sel) { sel = i; armed = -1; return MOVED; }
+		// the chosen row: on a value, its left half steps back and the right forward; a page or an action just goes
+		const Item::Kind kd = items[i].kind;
+		const bool stepped = kd == Item::CHOICE || kd == Item::BRIGHTNESS || kd == Item::VOLUME || kd == Item::PERCENT;
+		return change(stepped && ux < sx + sw / 2 ? -1 : 1);
+	}
+
+	// ---- over any screen: the volume/brightness pill and the battery's notices -------------------------------------
+	void Settings::levelSnes(const std::string& label, int percent)
+	{
+		static const char* const VOL[12] = { "............", ".....#......", "....##...#..", "...###....#.", "####.#..#..#", "#..#.#...#.#",
+			"#..#.#...#.#", "####.#..#..#", "...###....#.", "....##...#..", ".....#......", "............" };
+		static const char* const MUTE[12] = { "............", ".....#......", "....##......", "...###.#...#", "####.#..#.#.", "#..#.#...#..",
+			"#..#.#...#..", "####.#..#.#.", "...###.#...#", "....##......", ".....#......", "............" };
+		static const char* const SUN[12] = { ".....##.....", ".#...##...#.", "..#......#..", "....####....", "...######...", "##.######.##",
+			"##.######.##", "...######...", "....####....", "..#......#..", ".#...##...#.", ".....##....." };
+		percent = std::min(100, std::max(0, percent));
+		const bool sun = label == "Brightness", mute = !sun && percent <= 0;
+		const float w = 124, h = 22, x0 = (310 - w) / 2, y0 = 4;
+		rememberCard(x0 * u / s, y0 * u / s, w * u / s, h * u / s);
+		sImg("pill.png", x0, y0);
+		const char* const* ic = sun ? SUN : mute ? MUTE : VOL;
+		for (int r = 0; r < 12; r++)
+			for (int c = 0; c < 12; c++)
+				if (ic[r][c] == '#') sFill(x0 + 7 + c, y0 + 5 + r, 1, 1, mute ? sRed : sPaper);
+		// ten steps like the workshop's sliders, then the percent
+		for (int k = 0; k < 10; k++)
+			sFill(x0 + 25 + k * 5, y0 + 6, 4, 10, k < (percent + 5) / 10 ? sGold : Color(sPaper.r, sPaper.g, sPaper.b, 0.2f));
+		std::string t = std::to_string(percent) + "%";
+		sText(t, x0 + w - 7 - sText(t, 0, 0, sGold, true), y0 + 5, sGold);
+	}
+
+	void Settings::noticeSnes(const std::string& title, const std::string& body, int percent, bool charging)
+	{
+		const float x0 = 14, y0 = 196, w = 282, h = 48;
+		rememberCard(x0 * u / s, y0 * u / s, w * u / s, h * u / s);
+		sImg("notice.png", x0, y0);
+		// the street's banana at twice its size, as ripe as the charge (the same stages as the status bar's)
+		int stage = percent < 0 || percent >= 70 ? 0 : percent >= 45 ? 1 : percent >= 25 ? 2 : percent >= 10 ? 3 : 4;
+		sImgScaled("batt" + std::to_string(stage) + ".png", x0 + 10, y0 + 14, 2);
+		if (charging) sImgScaled("bolt.png", x0 + 34, y0 + 13, 2);
+		const float tx = x0 + 58, tw = w - 58 - 8;
+		std::string t = sFit(tr(title), tw);
+		sText(t, tx + 1, y0 + 7, sInk);
+		sText(t, tx, y0 + 6, percent >= 0 && percent <= 10 && !charging ? Color(1.0f, 0.42f, 0.42f, 1) : sGold);
+		sWrap(tr(body), tx, y0 + 21, tw, 2, sPaper);
 	}
 }

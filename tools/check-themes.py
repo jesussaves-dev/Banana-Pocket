@@ -139,7 +139,8 @@ def selftest():
 
 
 PHASES = ("dawn", "day", "dusk", "night")
-WORKSHOP = ("workshop.png", "drawer.png", "drawer-on.png", "sheet.png", "book.png", "ticket.png")
+WORKSHOP = ("workshop.png", "drawer.png", "drawer-on.png", "sheet.png", "book.png", "ticket.png", "ledger.png", "pill.png", "notice.png",
+            "batt0.png", "bolt.png")
 WALKER = ["mascot-%s%d.png" % (f, k) for f in "rl" for k in range(6)]	# the image path picks these by expression
 
 

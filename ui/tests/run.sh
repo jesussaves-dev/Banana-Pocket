@@ -394,6 +394,22 @@ for size in 640x557; do
     grep -q 'pause ticket: card 16,16 1208x1048' "$stlog" || { echo "FAIL $size: the ticket's card: $(grep 'pause ticket' "$stlog")"; fail=1; }
     golden "street-phonebook" "$OUT/$size-street-phonebook.png"
     golden "street-ticket" "$OUT/$size-street-ticket.png"
+    # the workshop's own pages on the ledger (ledger.png), all by touch: the Network drawer (124,248 in layout px),
+    # again to open it, its Network row (300,142), again to open the networks; then the first-time setup, and over the
+    # street the volume's pill and the charger's notice (`level`, `plug`: test only)
+    sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/street.json|" "$FX/data/settings.conf"
+    BANANA_PHASE=dusk BANANA_RA_CHECK=0 BANANA_WIFI="$HERE/tests/fake-wifi.sh" FAKE_WIFI_CONF="$FX/data/wifi.conf" "$HERE/banana-ui" --headless "$OUT/$size-street-" \
+        --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "home 0; wait 600; press start; wait 200; touch 124 248; touch 124 248; touch 300 142; touch 300 142; wait 2500; shot ledger-wifi; \
+            press b; press b; press b; setup; wait 200; shot ledger-setup; press b; wait 300; level Volume 60; shot pill; plug 80 battery; plug 81 charging; shot plug" \
+        2>> "$stlog" || { echo "FAIL $size: banana-ui (ledger) exited $?"; fail=1; }
+    sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    grep -q "plug: notice Charging" "$stlog" || { echo "FAIL $size: the charger's notice"; fail=1; }
+    for s in ledger-wifi ledger-setup pill plug; do
+        f=$OUT/$size-street-$s.png
+        [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
+        golden "street-$s" "$f"
+    done
     # the other SNES neighborhoods (street-*.json, generated from street.json by tools/gen-street.py): each draws its
     # street, a shop, the workshop and the ticket with no theme error. Loaded as "file:" themes, which the Theme row
     # lists (it used to be empty for one, and the workshop crashed reading it).

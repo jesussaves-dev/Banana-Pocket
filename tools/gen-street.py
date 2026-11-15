@@ -670,6 +670,18 @@ def sheet(p):
     return c
 
 
+def ledger(p):
+    """The workshop's own pages in the SNES style (Wi-Fi, Updates, first-time setup, Save states): a wide sheet of paper
+    on the pegboard, the sheet's rules at the top (under the status line) and over the help."""
+    w, h = 302, 224
+    c = Canvas(w + 3, h + 3, p)
+    c.R(3, 3, w, h, "shadow", .5)
+    c.vgrad(0, 0, w, h, "paper0", "paper2")
+    for i in range(8, w - 8, 3): c.R(i, 19, 2, 1, "ink")
+    for i in range(8, w - 8, 3): c.R(i, 167, 2, 1, "dk2")
+    return c
+
+
 def book(p):
     """Search and typing in the SNES style: the phone book, open on the pegboard; a red cover round a ruled page."""
     w, h = 302, 224
@@ -768,7 +780,8 @@ def main():
         p = palette(base, (hood["phases"] or ["day"])[0])
         p.update(wall=hood["wall"], back=hood["back"])
         for k, c in {"workshop": workshop(p), "drawer": drawer(p, False), "drawer-on": drawer(p, True), "sheet": sheet(p),
-                     "book": book(p), "ticket": ticket(p),
+                     "book": book(p), "ticket": ticket(p), "ledger": ledger(p),
+                     "pill": panel(p, 124, 22), "notice": panel(p, 282, 48),
                      "hud": panel(p, 310, 46), "chip52": panel(p, 52, 14), "chip34": panel(p, 34, 14), "interior": interior(p),
                      "row": row(p, False), "rowsel": row(p, True), "chip24": panel(p, 24, 14), "bolt": bolt(p),
                      **{"batt%d" % s: battery(p, s) for s in range(len(BATT_BROWN))}}.items():

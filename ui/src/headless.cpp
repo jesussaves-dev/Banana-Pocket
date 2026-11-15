@@ -41,6 +41,10 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 		{ lib.setOverride(s, r, c, sh, f); };
 	settings.setFrameSystems(lib.frameSystems());
 	LowBattery low;
+	PlugNotice plug;		// the charger's notice, from the `plug` command (test only)
+	std::string osdLabel;	// the volume/brightness pill, from the `level` command (test only)
+	int osdPercent = 0;
+	double osdUntil = 0;
 	IdleGuard guard;	// the burn-in guard's logic, driven by the `guard`/`idle` script commands (test only)
 	guard.configure(atoi(getConfValue(o.data + "/bananad.conf", "dim_minutes", "2").c_str()),
 		atoi(getConfValue(o.data + "/bananad.conf", "dim_percent", "30").c_str()));
@@ -53,6 +57,8 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 		// overlay took its own time for the same reason
 		double t = nowMs();
 		if (low.showing(t)) settings.notice(low.title, low.body, low.percent);
+		else if (plug.showing(t)) settings.notice(plug.title, plug.body, plug.percent, plug.seen == 1);
+		else if (osdUntil > t) settings.level(osdLabel, osdPercent);
 		else settings.drawToast(t);
 	};
 	// the menu's start-up, timed before any script command: its constructor (the theme's build) ran above, the first
@@ -96,6 +102,22 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 			cs >> lib.testPower.percent >> ch;
 			lib.testPower.charging = ch == "charging";
 			if (low.check(lib.power(), shutdownPercent(o.data), now)) logf("battery %d%%: notice %s", lib.testPower.percent, low.showing(now) ? low.title.c_str() : "hidden");
+		}
+		else if (op == "plug")
+		{
+			// plug <percent> <charging|battery>: the charger going in or out (the first one only sets what was seen)
+			Library::Power p;
+			std::string ch;
+			cs >> p.percent >> ch;
+			p.charging = ch == "charging";
+			if (plug.check(p, nowMs())) logf("plug: notice %s", plug.title.c_str());
+		}
+		else if (op == "level")
+		{
+			// level <Volume|Brightness> <percent>: the keys' pill, as bananad's SIGUSR2 brings it up
+			cs >> osdLabel >> osdPercent;
+			osdUntil = nowMs() + 1500;
+			logf("level: %s %d%%", osdLabel.c_str(), osdPercent);
 		}
 		else if (op == "resume")
 		{

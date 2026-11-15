@@ -999,10 +999,10 @@ namespace banana
 	Settings::Result Settings::touch(float x, float y, bool down)
 	{
 		float cx = x / s, cy = y / s;
-		if (snes && page == LIST) return NONE;	// (the workshop has no touch targets yet)
 		if (down) { downX = cx; downY = cy; downOnRow = true; return NONE; }
 		if (!downOnRow) return NONE;
 		downOnRow = false;
+		if (snes && page != KEYBOARD) return snesTouch(cx, cy);	// (the phone book's keys are touchKeyboard's)
 		if (page == NETWORKS) return touchNetworks(cx, cy);
 		if (page == KEYBOARD) return touchKeyboard(cx, cy);
 		if (page == SETUP)
@@ -1298,8 +1298,9 @@ namespace banana
 		return true;
 	}
 
-	void Settings::notice(const std::string& title, const std::string& body, int percent)
+	void Settings::notice(const std::string& title, const std::string& body, int percent, bool charging)
 	{
+		if (snes && !snesArt.empty()) { noticeSnes(title, body, percent, charging); return; }
 		SPal p = pal(light);
 		rememberCard(40, 344, 560, 104);
 		box("bubble", false, 40, 344, 560, 104);
@@ -1405,6 +1406,7 @@ namespace banana
 			"#..#.#...#..", "####.#..#.#.", "...###.#...#", "....##......", ".....#......", "............" };
 		static const char* const SUN[12] = { ".....##.....", ".#...##...#.", "..#......#..", "....####....", "...######...", "##.######.##",
 			"##.######.##", "...######...", "....####....", "..#......#..", ".#...##...#.", ".....##....." };
+		if (snes && !snesArt.empty()) { levelSnes(label, percent); return; }
 		percent = std::min(100, std::max(0, percent));
 		bool sun = label == "Brightness";
 		const Color light = Color::hex(0xf1ede2), bar = Color::hex(0xffe68a), off = Color::hex(0x3a3540), red = Color::hex(0xff8a96);
@@ -2076,6 +2078,25 @@ namespace banana
 		if (help.empty())
 			help = !wifiEnabled ? "Wi-Fi is switched off. X switches it on and searches."
 				: "A joins the network chosen, with its password typed on the keyboard (or by touch). X searches again, Y forgets a saved network, and L/R move a saved one up or down the list wpa_supplicant tries. Passwords are kept in banana/wifi.conf on the card.";
+		if (snes)
+		{
+			std::vector<SRow> rows;
+			for (const wifi::Network& n : nets)
+			{
+				SRow r;
+				r.label = n.ssid;
+				r.value = tr(n.current ? "Connected" : n.ssid == joining ? "Joining" : n.saved ? "Saved" : "");
+				r.lock = n.secured || n.unsupported;
+				r.bars = n.bars();
+				rows.push_back(r);
+			}
+			std::string act = !cur || cur->current || cur->unsupported || !joining.empty() ? "" : cur->secured ? "Password" : "Join";
+			renderLedger(tr("Networks"), scanning && nets.empty() ? tr("Searching...") : std::to_string(nets.size()) + tr(nets.size() == 1 ? " network" : " networks"),
+				tr(st), rows, nsel,
+				tr(!wifiEnabled ? "Wi-Fi is off. X switches it on and searches." : scanning ? "Searching..." : scannedOnce ? "No networks found. X searches again." : ""),
+				tr(help), !message.empty(), { { "B", tr("Back") }, { "X", tr(wifiEnabled ? "Search" : "Switch on") } }, { act.empty() ? "" : "A", tr(act) });
+			return;
+		}
 		help = st + ". " + help;
 
 		be->beginScreen();
@@ -2300,6 +2321,30 @@ namespace banana
 		else if (ustatus.compare(0, 10, "downloaded") == 0) help = "The package is in banana/updates now; A on it writes it to the other slot.";
 		else if (pkgs.empty()) help = "No packages on the card yet. A on \"Check for updates\" downloads the newest from GitHub over Wi-Fi; or put a banana-" + (board.empty() ? std::string("<board>") : board) + "-<version>.update.tar in banana/updates (File sharing can copy it over Wi-Fi).";
 		else help = "A on a package writes it to the other slot and checks it; the running version stays until the restart. Packages are in banana/updates on the card.";
+		if (snes)
+		{
+			std::vector<SRow> rows;
+			SRow check;
+			check.label = tr("Check for updates");
+			check.value = checking ? ustatus : tr("Wi-Fi");
+			rows.push_back(check);
+			for (size_t i = 0; i < pkgs.size(); i++)
+			{
+				const Pkg& k = pkgs[i];
+				SRow r;
+				r.label = "Banana " + k.version;
+				r.accent = armed == 1000 + (int)i + 1;
+				r.value = tr(r.accent ? "Press A again" : k.board == "universal" ? "for both handhelds"
+					: k.board == board || board.empty() ? "for the " + k.board : "not for this handheld");
+				rows.push_back(r);
+			}
+			std::string act = updated ? "Restart" : (applying || checking) ? "" : usel == 0 ? "Check" : pkgs.empty() ? "" : armed == 1000 + usel ? "Confirm" : "Update";
+			std::vector<SChip> left;
+			if (!applying && !checking) left.push_back({ "B", tr("Back") });
+			renderLedger(tr("Update packages"), std::to_string(pkgs.size()) + tr(pkgs.size() == 1 ? " package" : " packages"), st, rows, usel, "",
+				tr(help), false, left, { act.empty() ? "" : "A", tr(act) });
+			return;
+		}
 		help = st + ". " + help;
 
 		// the state and what an update does, in the strip
@@ -2482,6 +2527,24 @@ namespace banana
 			: states.empty()
 				? "No save states for this game yet. RetroArch writes one when a game quits (Quick resume) and when you save to a slot in-game; they are in banana/states on the card."
 				: "A on a state deletes it (press A again to confirm); Y keeps a copy of it beside the others as a backup. RetroArch loads the game's own state when it starts again (Quick resume).";
+		if (snes)
+		{
+			std::vector<SRow> rows;
+			for (size_t i = 0; i < states.size(); i++)
+			{
+				SRow r;
+				r.label = states[i].label;
+				r.accent = armed == 2000 + (int)i;
+				r.value = r.accent ? tr("Press A again") : states[i].detail;
+				rows.push_back(r);
+			}
+			std::vector<SChip> left = { { "B", tr("Back") } };
+			if (!states.empty()) left.push_back({ "Y", tr("Copy") });
+			renderLedger(tr("Save states"), states.empty() ? "" : std::to_string(states.size()) + tr(states.size() == 1 ? " state" : " states"),
+				gameTitle, rows, ssel, tr("No save states for this game."), tr(help), !message.empty(), left,
+				{ states.empty() ? "" : "A", tr(armed == 2000 + ssel ? "Confirm" : "Delete") });
+			return;
+		}
 		help = gameTitle + " \xc2\xb7 " + help;
 
 		be->beginScreen();
@@ -2845,6 +2908,22 @@ namespace banana
 			"Covers, title screens, genres and years for the games on the card, from libretro's free collections: no account. A starts it (Wi-Fi first); it keeps going while you finish the setup, and the menu shows the art as it comes. Settings > System > Box art runs it again for new games.",
 			"Everything here is in the settings too (Start in the menu), and this setup is under System > First-time setup. A finishes." };
 		std::string help = message.empty() ? helps[wsel] : message;
+		const char* act = wsel == 4 ? "Finish" : wsel == 1 ? "Next zone" : wsel == 3 ? (scraping() ? "Running" : "Start") : "Open";
+		if (snes)
+		{
+			std::vector<SRow> rows;
+			for (int r = 0; r < 5; r++)
+			{
+				SRow row;
+				row.label = tr(names[r]);
+				row.value = status[r];
+				row.arrows = r == 1;
+				rows.push_back(row);
+			}
+			renderLedger(tr("Welcome to Banana"), std::to_string(wsel + 1) + " / 5", tr("First-time setup"), rows, wsel, "", tr(help),
+				!message.empty(), { { "B", tr("Skip") } }, { "A", tr(act) });
+			return;
+		}
 		help = (status[wsel].empty() ? "" : status[wsel] + ". ") + help;
 
 		be->beginScreen();
@@ -2869,7 +2948,6 @@ namespace banana
 		}
 		float bw = faceWidth("B", "Skip");
 		face("B", "Skip", 18, bw);
-		const char* act = wsel == 4 ? "Finish" : wsel == 1 ? "Next zone" : wsel == 3 ? (scraping() ? "Running" : "Start") : "Open";
 		float aw = faceWidth("A", act);
 		face("A", act, 622 - aw, aw);
 		footer(help, p.muted);
