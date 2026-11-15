@@ -240,11 +240,20 @@ namespace
 
 	// ---- the card ---------------------------------------------------------------------------------------------------
 	struct System { std::string id, name, folder; std::vector<std::string> exts; };
-	const std::map<std::string, std::string> LIBRETRO = {
-		{ "gba", "Nintendo - Game Boy Advance" }, { "gbc", "Nintendo - Game Boy Color" },
-		{ "gb", "Nintendo - Game Boy" }, { "nes", "Nintendo - Nintendo Entertainment System" },
-		{ "snes", "Nintendo - Super Nintendo Entertainment System" }, { "megadrive", "Sega - Mega Drive - Genesis" },
-		{ "psx", "Sony - PlayStation" }, { "n64", "Nintendo - Nintendo 64" } };
+	// libretro's collections for each system (the folder names on thumbnails.libretro.com and in libretro-database's
+	// metadat); a system the core runs in two models has both, the first one's picture winning a name in both
+	const std::map<std::string, std::vector<std::string>> LIBRETRO = {
+		{ "gba", { "Nintendo - Game Boy Advance" } }, { "gbc", { "Nintendo - Game Boy Color" } },
+		{ "gb", { "Nintendo - Game Boy" } }, { "nes", { "Nintendo - Nintendo Entertainment System" } },
+		{ "snes", { "Nintendo - Super Nintendo Entertainment System" } }, { "n64", { "Nintendo - Nintendo 64" } },
+		{ "megadrive", { "Sega - Mega Drive - Genesis" } }, { "sega32x", { "Sega - 32X" } },
+		{ "segacd", { "Sega - Mega-CD - Sega CD" } }, { "mastersystem", { "Sega - Master System - Mark III" } },
+		{ "gamegear", { "Sega - Game Gear" } }, { "dreamcast", { "Sega - Dreamcast" } },
+		{ "pcengine", { "NEC - PC Engine - TurboGrafx 16", "NEC - PC Engine CD - TurboGrafx-CD" } },
+		{ "ngp", { "SNK - Neo Geo Pocket Color", "SNK - Neo Geo Pocket" } },
+		{ "wonderswan", { "Bandai - WonderSwan Color", "Bandai - WonderSwan" } },
+		{ "atari2600", { "Atari - 2600" } }, { "atarilynx", { "Atari - Lynx" } },
+		{ "psx", { "Sony - PlayStation" } }, { "c64", { "Commodore - 64" } }, { "zxspectrum", { "Sinclair - ZX Spectrum" } } };
 	std::vector<System> systems(const std::string& conf)
 	{
 		std::vector<System> out;
@@ -402,15 +411,20 @@ int main(int argc, char** argv)
 		listRoms(dir, "", sys.exts, rels, 0);
 		if (rels.empty()) continue;
 		status("running 0 " + std::to_string(total + (int)rels.size()) + " " + sys.name + "|the list of covers");
-		// the collection's names, to match ours against
-		std::string base = "https://thumbnails.libretro.com/" + esc(lr->second) + "/";
-		std::vector<std::string> boxes = indexNames(get(base + "Named_Boxarts/")), titles = indexNames(get(base + "Named_Titles/"));
+		// the collections' names, to match ours against, and the collection each one is in
 		std::map<std::string, std::vector<std::string>> byBox, byTitle, byBoxW, byTitleW;
-		for (auto& n : boxes) { byBox[norm(n)].push_back(n); byBoxW[words(n)].push_back(n); }
-		for (auto& n : titles) { byTitle[norm(n)].push_back(n); byTitleW[words(n)].push_back(n); }
+		std::map<std::string, std::string> boxAt, titleAt;
 		std::string meta = "https://raw.githubusercontent.com/libretro/libretro-database/master/metadat/";
-		genres[sys.id] = datField(get(meta + "genre/" + esc(lr->second) + ".dat"), "genre");
-		years[sys.id] = datField(get(meta + "releaseyear/" + esc(lr->second) + ".dat"), "releaseyear");
+		for (auto& col : lr->second)
+		{
+			std::string base = "https://thumbnails.libretro.com/" + esc(col) + "/";
+			for (auto& n : indexNames(get(base + "Named_Boxarts/")))
+				if (boxAt.emplace(n, base).second) { byBox[norm(n)].push_back(n); byBoxW[words(n)].push_back(n); }
+			for (auto& n : indexNames(get(base + "Named_Titles/")))
+				if (titleAt.emplace(n, base).second) { byTitle[norm(n)].push_back(n); byTitleW[words(n)].push_back(n); }
+			genres[sys.id].merge(datField(get(meta + "genre/" + esc(col) + ".dat"), "genre"));
+			years[sys.id].merge(datField(get(meta + "releaseyear/" + esc(col) + ".dat"), "releaseyear"));
+		}
 		auto best = [](const std::vector<std::string>& c, const std::string& stem)
 		{
 			std::string b;
@@ -447,8 +461,8 @@ int main(int argc, char** argv)
 				}
 				return bestV;
 			};
-			if (auto v = find(byBox, byBoxW)) j.box = base + "Named_Boxarts/" + esc(best(*v, j.stem)) + ".png";
-			if (auto v = find(byTitle, byTitleW)) j.title = base + "Named_Titles/" + esc(best(*v, j.stem)) + ".png";
+			if (auto v = find(byBox, byBoxW)) { std::string n = best(*v, j.stem); j.box = boxAt[n] + "Named_Boxarts/" + esc(n) + ".png"; }
+			if (auto v = find(byTitle, byTitleW)) { std::string n = best(*v, j.stem); j.title = titleAt[n] + "Named_Titles/" + esc(n) + ".png"; }
 			jobs.push_back(j);
 		}
 		total += (int)rels.size();
