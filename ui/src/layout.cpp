@@ -115,10 +115,15 @@ namespace banana
 		struct TextTex { rnds::TexPtr tex; int padX = 0, padY = 0; float w = 0; };
 		std::map<std::string, TextTex> texts;
 		std::map<std::string, rnds::TexPtr> shapes;
-		struct ImgTex { rnds::TexPtr tex; float ox = 0, oy = 0, w = 0, h = 0; };	// placed in the box (device px)
+		// placed in the box (device px); used: the last frame that drew it
+		struct ImgTex { rnds::TexPtr tex; float ox = 0, oy = 0, w = 0, h = 0; uint64_t used = 0; };
 		std::map<std::string, ImgTex> images;	// by key (src, fit, size ...)
 		std::map<std::string, std::string> latest;	// src -> its last key made (drawn scaled while another size is made)
-		std::deque<std::string> imageOrder;
+		uint64_t frameNo = 0;	// render() passes, for the pictures' least-recently-drawn eviction
+		// element (Ctx::key) -> the picture it drew last, and when: drawn again while a new src of its is made (a
+		// sprite's next frame, the street's walker), so the element holds its last frame instead of vanishing
+		struct Held { std::string key; uint64_t at = 0; };
+		std::map<std::string, Held> held;
 		struct Job { std::string key, src, fit, crop; int w, h; float radius; };
 		std::deque<Job> jobs;
 		std::set<std::string> pending, pendingSrc, failed;
@@ -862,6 +867,11 @@ namespace banana
 				// another size of the same picture meanwhile, scaled (an element growing), else the placeholder
 				auto lt = latest.find(src);
 				if (lt != latest.end()) it = images.find(lt->second);
+				if (it == images.end())
+				{
+					auto hd = held.find(c.key);
+					if (hd != held.end()) it = images.find(hd->second.key);
+				}
 				std::lock_guard<std::mutex> l(m->jm);
 				if (!pending.count(key) && !pendingSrc.count(src))
 				{
@@ -872,14 +882,33 @@ namespace banana
 					if (m->mQueued) m->mQueued();
 				}
 				if (it == images.end()) { drawPlaceholder(c, x, y, w, h, f); return; }
-				const ImgTex& im = it->second;
+				ImgTex& im = it->second;
+				im.used = frameNo;
+				hold(c.key, it->first);
 				if (!im.tex) return;
 				float kx = iw / std::max(1.0f, im.w + 2 * im.ox), ky = ih / std::max(1.0f, im.h + 2 * im.oy);
 				m->be->draw(im.tex, std::round(x * s) + im.ox * kx, std::round(y * s) + im.oy * ky, im.w * kx, im.h * ky, tint);
 				return;
 			}
-			const ImgTex& im = it->second;
+			ImgTex& im = it->second;
+			im.used = frameNo;
+			hold(c.key, it->first);
 			if (im.tex) m->be->draw(im.tex, std::round(x * s) + im.ox, std::round(y * s) + im.oy, im.w, im.h, tint);
+		}
+		void hold(const std::string& elem, const std::string& key)
+		{
+			Held& h = held[elem];
+			if (h.key != key) h.key = key;
+			h.at = frameNo;
+			// elements gone from the screen (a long library scrolled through) are forgotten now and then
+			if (held.size() > 512)
+			{
+				for (auto i = held.begin(); i != held.end();)
+				{
+					if (i->second.at + 2 < frameNo) i = held.erase(i);
+					else ++i;
+				}
+			}
 		}
 		void drawPlaceholder(const Ctx& c, float x, float y, float w, float h, const Frame& f)
 		{
@@ -1234,6 +1263,7 @@ namespace banana
 
 		void render()
 		{
+			frameNo++;
 			hits.clear();
 			usedTime = false;
 			smoothMoving = false;
@@ -1338,15 +1368,22 @@ namespace banana
 				if (cut != std::string::npos) src = dn.first.substr(0, cut);
 				pendingSrc.erase(src);
 				if (!dn.second.tex) continue;
-				images[dn.first] = dn.second;
+				ImgTex& im = images[dn.first];
+				im = dn.second;
+				im.used = frameNo;	// new: counts as drawn, so it outlives the older ones
 				latest[src] = dn.first;
-				imageOrder.push_back(dn.first);
 			}
 			done.clear();
-			while (images.size() > 160 && !imageOrder.empty())
+			// the least recently drawn go first. (Evicting in the order they were made took the pictures loaded first,
+			// still on screen, as a scroll made new ones: they drew as nothing until made again, a frame or more, longer
+			// with the card's page cache cold.) A picture drawn in the last two frames stays even over the cap.
+			while (images.size() > 160)
 			{
-				images.erase(imageOrder.front());
-				imageOrder.pop_front();
+				auto old = images.end();
+				for (auto i = images.begin(); i != images.end(); ++i)
+					if (old == images.end() || i->second.used < old->second.used) old = i;
+				if (old->second.used + 2 > frameNo) break;
+				images.erase(old);
 			}
 		}
 	};
