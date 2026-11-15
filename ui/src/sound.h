@@ -8,6 +8,8 @@
 #include <condition_variable>
 #include <cstdint>
 #include <map>
+#include <memory>
+#include <set>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -35,13 +37,21 @@ namespace banana
 		// level in thousandths (0: silent but the device stays open, e.g. the burn-in guard's blank stage)
 		void setBgm(bool on);
 		void setBgmGain(int permille);
+		// The theme changed: load its cues and loop (rnds::themeFiles) and hand them to the runner, which swaps them in
+		// between two 5 ms chunks. Call setBgm again after it: whether there is a loop may have changed.
+		void reload();
 		bool enabled = true;
 
 	private:
 		struct Clip { std::vector<int16_t> pcm; int rate = 44100, channels = 2; };
-		std::map<std::string, Clip> clips;
+		struct Bank { std::map<std::string, Clip> clips; Clip bgm; bool bgmLoaded = false; };
+		Bank load() const;
+		std::string dir;
+		std::map<std::string, Clip> clips;	// the runner's (after the constructor): swapped in from pending
 		Clip bgm;
-		bool bgmLoaded = false;
+		std::atomic<bool> bgmLoaded{false};
+		std::set<std::string> names;		// the cues there are, for play() on the menu's thread
+		std::unique_ptr<Bank> pending;		// reload()'s, under m, until the runner takes it
 		Clip warmClip{ {}, 48000, 2 };	// the format the menu's cues are converted to (openDev needs a Clip to open with)
 		std::thread th;
 		std::mutex m;

@@ -12,7 +12,7 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
 
 - **The SNES style: what is left after 0.7.0.** The plan is the "Banana Street" page (plan artifact); tasks 1-7 are done.
   - Still drawn the Classic way in the SNES style: the achievement and message toasts.
-  - Not built yet: SNES-style menu sounds; box art dithered to the palette, with a setting for the original art; a closed
+  - Not built yet: box art dithered to the palette, with a setting for the original art; a closed
     shop's hint naming the folder for that system's games; the reverse mosaic on wake (decoration only, after the panel
     is restored).
   - Done since 0.7.1: the battery is a banana that ripens to brown as the charge drops (five stages from
@@ -21,6 +21,9 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
     wide sheet on the pegboard (`ledger.png`); the volume/brightness pill (`pill.png`) and the battery and charger notices
     (`notice.png`, the ripening banana at twice its size); touch in the workshop (a drawer opens its group, a row is
     chosen then changed) and on the ledger pages. `tests/run.sh` shoots them (headless `level` and `plug` commands).
+  - Done since 0.7.1: the street's own sounds and background loop (`street/sounds/`, synthesised by
+    `tools/gen-street-sounds.py`: pulse voices and the SPC700's echo, F major); a theme's `"sounds"` may name a `"bgm"`,
+    and the cues and loop change with the theme instead of at the next start.
   - A Genesis style needs only a theme with `"style": "genesis"`: the Style row lists the styles of the themes present.
 
 - **Bluetooth: designed, not built (2026-11-08).** Stack chosen by request: a bespoke `banana-bt` over the kernel

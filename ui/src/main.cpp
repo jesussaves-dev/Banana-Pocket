@@ -758,6 +758,8 @@ int main(int argc, char** argv)
 			worker.attach(uiPtr);
 			ui->setHome(sys);
 			settingsView.setVariant(menuTheme());	// the menu may have been forced to the Pocket layout above
+			sound.reload();		// the new theme's cues and loop (the street's are its own)
+			sound.setBgm(settings["bgm"] != "off");
 			sound.play("select");
 			break;
 		}

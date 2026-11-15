@@ -14,6 +14,10 @@
   "canvas": { "w": 310 },
   // Settings in this style: the workshop's panels (tools/gen-street.py)
   "workshop": "street/oldtown",
+  // the cues and the loop, synthesised by tools/gen-street-sounds.py (pulse voices, the SPC700's echo)
+  "sounds": { "scroll": "street/sounds/scroll.wav", "select": "street/sounds/select.wav", "back": "street/sounds/back.wav",
+    "fav": "street/sounds/fav.wav", "ready": "street/sounds/ready.wav", "insert": "street/sounds/insert.wav",
+    "bgm": "street/sounds/bgm.wav" },
 
   "icons": {
     "gba": "fantasy/gba.png",

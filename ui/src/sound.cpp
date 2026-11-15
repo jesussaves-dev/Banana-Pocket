@@ -118,8 +118,9 @@ namespace banana
 	}
 #endif
 
-	Sound::Sound(const std::string& dir)
+	Sound::Bank Sound::load() const
 	{
+		Bank b;
 		for (const char* n : { "scroll", "select", "back", "fav", "ready", "insert" })
 		{
 			// a user theme's own sound for it (rnds::themeFiles; "off": none), else the theme's (one that doesn't
@@ -135,19 +136,51 @@ namespace banana
 				toStereo(c.pcm, c.channels);
 				to48k(c.pcm, c.rate, c.channels);
 #endif
-				clips[n] = std::move(c);
+				b.clips[n] = std::move(c);
 			}
 		}
-		// the ambient background loop: a WAV on the card (bgm.wav, or music/bgm.wav), else the image's own default.
-		// Written by the user; the settings screen shows "Background Music" only when one is found.
-		for (const char* p : { "/data/bgm.wav", "/data/music/bgm.wav", "/usr/share/banana/bgm.wav" })
-			if (loadWav(p, bgm.pcm, bgm.rate, bgm.channels)) { bgmLoaded = true; break; }
+		// the ambient background loop: a WAV on the card (bgm.wav, or music/bgm.wav), else the theme's ("bgm" in its
+		// sounds; "off": none of its own), else the image's own default
+		std::vector<std::string> paths = { "/data/bgm.wav", "/data/music/bgm.wav" };
+		auto own = rnds::themeFiles.sounds.find("bgm");
+		if (own != rnds::themeFiles.sounds.end() && own->second != "off") paths.push_back(own->second);
+		paths.push_back("/usr/share/banana/bgm.wav");
+		for (auto& p : paths)
+			if (loadWav(p, b.bgm.pcm, b.bgm.rate, b.bgm.channels)) { b.bgmLoaded = true; break; }
 #ifdef BANANA_ALSA
-		if (bgmLoaded) { toStereo(bgm.pcm, bgm.channels); to48k(bgm.pcm, bgm.rate, bgm.channels); }
+		if (b.bgmLoaded) { toStereo(b.bgm.pcm, b.bgm.channels); to48k(b.bgm.pcm, b.bgm.rate, b.bgm.channels); }
+#endif
+		return b;
+	}
+
+	Sound::Sound(const std::string& dir_) : dir(dir_)
+	{
+		Bank b = load();
+		for (auto& c : b.clips) names.insert(c.first);
+		clips = std::move(b.clips);
+		bgm = std::move(b.bgm);
+		bgmLoaded = b.bgmLoaded;
+#ifdef BANANA_ALSA
 		bgmStartAt = std::chrono::steady_clock::now();	// setBgm(true) starts the loop from here
 		publishState("closed (startup)");
 #endif
 		th = std::thread([this] { run(); });
+	}
+
+	void Sound::reload()
+	{
+		auto b = std::unique_ptr<Bank>(new Bank(load()));
+		names.clear();
+		for (auto& c : b->clips) names.insert(c.first);
+		bgmLoaded = b->bgmLoaded;	// for the setBgm that follows; the runner checks the loop's own samples too
+		{
+			std::lock_guard<std::mutex> l(m);
+			pending = std::move(b);
+		}
+		cv.notify_all();
+#ifdef BANANA_ALSA
+		slog("reload: %zu cues, loop %d", names.size(), bgmLoaded.load() ? 1 : 0);
+#endif
 	}
 
 	Sound::~Sound()
@@ -162,7 +195,7 @@ namespace banana
 
 	void Sound::play(const std::string& name)
 	{
-		if (!enabled || !clips.count(name)) return;
+		if (!enabled || !names.count(name)) return;
 		{
 			std::lock_guard<std::mutex> l(m);
 			queued = name;
@@ -374,6 +407,14 @@ namespace banana
 				// closed: nothing to do until a cue, a game's release, or the loop wanting the device again
 				if (!pcm) cv.wait(l, [this] { return stop || closeNow || screenOff.load() || !queued.empty() || bgmOn.load() || warmUp.load(); });
 				if (stop) break;
+				if (pending)	// the theme changed (reload): its cues and loop from here, the loop from its start
+				{
+					clips = std::move(pending->clips);
+					bgm = std::move(pending->bgm);
+					pending.reset();
+					cur = nullptr;
+					bgmAt = 0;
+				}
 				if (closeNow) { closeDev("release"); cur = nullptr; closeNow = false; cv.notify_all(); continue; }	// a game is starting
 				// the burn-in guard blanked the screen (idle.h): the real idle, so let the device go -- unless a
 				// cue came with it, in which case the screen is being used again
