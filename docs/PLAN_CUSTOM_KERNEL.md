@@ -1,7 +1,43 @@
 # PLAN: Banana's own kernel (RPC / SM4450)
 
-Written 2026-11-10 · status: **proposal, nothing started** · owner decision needed per phase (kernel work needs explicit
-approval, and this plan is that request, phase by phase).
+Written 2026-11-10 · status: **approved, in progress on branch `kernel` (2026-11-16)** · owner decision still needed
+per phase before it merges to `main`.
+
+## Versioning and milestones (2026-11-16)
+
+The Banana kernel has its **own version line, separate from the distro's `VERSION`**. It starts at **0.1** because it
+is a young branch off mainline, and becomes **1.0** when it replaces the current kernel in a distro release.
+
+- **Version file:** `buildroot/board/retroid-pocket-classic/KERNEL_VERSION` (one line, e.g. `0.1`).
+- **`uname -r`:** `<mainline>-banana<kver>`, e.g. `7.2.0-banana0.1` (`CONFIG_LOCALVERSION`, set from the file; K8).
+- **Tags:** `kernel-v0.1`, `kernel-v0.2`, … `kernel-v1.0` (distro tags stay `v0.8.x`).
+- **Branch:** all kernel work lands on `kernel`; each task gets its own short branch off it (`kernel/k0-report`,
+  `kernel/k1-config`, …) and merges back by PR. `kernel` merges into `main` only at a milestone the owner approves.
+
+| Kernel version | Contains | Done when |
+|---|---|---|
+| **0.1** | K0: test-boot fallback, `tools/kernel-report.sh`, baseline from the shipped **0.8.0** kernel | baseline report committed in `docs/reports/` |
+| **0.2** | K1 + K8: own `linux-banana.config` from `allnoconfig`, `-banana` version string, pstore | RPC-TEST passes, sound-test 14/14, 20 sleep/wake cycles |
+| **0.3** | K2: device tree split by subsystem, unused nodes removed | probed-driver list identical to baseline |
+| **0.4** | K3: `banana-linux` repo, patch dir generated from it, CI build + QEMU boot | generated patches byte-identical; CI green |
+| **0.5–0.9** | K4.1 pad driver, K5 audit of the small patches, optional mainline bump (7.3) | per task |
+| **1.0** | the above shipped in a distro release, one week of daily play with no kernel regressions | owner sign-off |
+
+## Working with two agents (Claude + DeepSeek)
+
+Kernel work is split so the two never edit the same file at once:
+
+1. **One task = one branch = one owner.** Claim it in `docs/KERNEL-TASKS.md` (task, branch, agent, status) before
+   starting; never pick up a claimed task.
+2. **Owned files per phase:** K0 → `tools/kernel-report.sh`, `extlinux.conf.in`; K1/K8 → `linux-banana.config`,
+   `KERNEL_VERSION`, defconfig lines 29–40; K2 → `dts/`; K3 → the new repo + CI. Two tasks touching the same file
+   are done in sequence, not in parallel.
+3. **Every task ends with** a build (`make … 2>&1 | tail -n 35`), the K0 report diffed against the baseline, and a
+   handoff note in the PR body: what changed, what was tested on the device, what is left.
+4. **Device testing is the owner's.** An agent may build and run the QEMU boot test; it never claims a hardware
+   result it did not see in a log the owner provided.
+5. **Kernel patch rule on this branch:** `AGENTS.md`'s "no unapproved kernel patches" rule still applies — on
+   `kernel`, approval is given per task by this plan's phase list; anything outside it needs the owner first.
 
 ## 0. What "our own kernel" can honestly mean
 
@@ -85,7 +121,7 @@ Banana's, with the generic SoC support still community code on its way upstream.
   2. A `tools/kernel-report.sh` that records: `Image` size, module count/size, `dmesg` time to init, rcS marks,
      `lsmod`, `/proc/config.gz` (needs `CONFIG_IKCONFIG_PROC=y`), and which drivers actually probed
      (`/sys/bus/*/drivers/*/`).
-- **Verify:** a report for the shipped 0.6.0 kernel in `docs/reports/kernel-baseline-<date>.txt`.
+- **Verify:** a report for the shipped 0.8.0 kernel in `docs/reports/kernel-baseline-<date>.txt`.
 - **Stop if:** OpenABL has no fallback and you are not comfortable re-flashing the card — then every later phase uses
   the slot method only.
 
