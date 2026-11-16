@@ -3,7 +3,6 @@
 /output/
 /dl/
 /host/
-.opencode/
 
 # Images, archives & rootfs slots
 *.img
