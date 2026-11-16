@@ -97,7 +97,17 @@ probe:
 			&& rm -f /tmp/banana-drm-plane-probe.$$$$ && echo "drm-plane-probe: OK"; \
 	 else echo "drm-plane-probe: skipped (no libdrm)"; fi
 
-test: ui bananad probe
+# K8.1: the kernel is stamped with the kernel line's own version, and KERNEL_VERSION is the file that says which. This
+# keeps the fragment in step with it; only a kernel build can prove the rest (uname -r, /lib/modules/<that>).
+check-kver:
+	@v="$$(cat buildroot/board/retroid-pocket-classic/KERNEL_VERSION)"; \
+	 f=buildroot/board/retroid-pocket-classic/linux-banana.fragment; \
+	 grep -qxF "CONFIG_LOCALVERSION=\"-Bananix$$v\"" "$$f" && \
+	 grep -qxF '# CONFIG_LOCALVERSION_AUTO is not set' "$$f" || \
+	 { echo "$$f: want CONFIG_LOCALVERSION=\"-Bananix$$v\" and CONFIG_LOCALVERSION_AUTO off (KERNEL_VERSION is $$v)"; exit 1; }; \
+	 echo "kernel localversion: -Bananix$$v"
+
+test: ui bananad probe check-kver
 	tools/check-systems.py
 	tools/check-themes.py --selftest
 	tools/check-themes.py
@@ -169,4 +179,4 @@ clean:
 	rm -rf $(OUT)
 	$(MAKE) -C ui clean
 
-.PHONY: $(BOARDS) ui test probe sound-test bench local-rebuild check-local-build agent-check agent-map clean
+.PHONY: $(BOARDS) ui test check-kver probe sound-test bench local-rebuild check-local-build agent-check agent-map clean
