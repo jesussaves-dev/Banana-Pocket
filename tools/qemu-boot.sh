@@ -150,8 +150,8 @@ boot() {    # boot <name>: start the VM (with the kernel and root the card's ext
     wait_for "banana-ui: the menu" 240 "$1: the menu is up" || { cat "$OUT/serial.log" | tail -n 30; kill $QEMU 2>/dev/null; return 1; }
     sleep 3
 }
-shutdown_from_settings() {  # Start (the groups) > L (wraps to the last, System) > A > Up (wraps to its last row, Shut
-    key s pgup ret up ret ret  # down) > A twice; the VM powers off
+shutdown_from_settings() {  # Start (the groups) > R four times (the fifth group, System) > A > Up (wraps to its
+    key s pgdn pgdn pgdn pgdn ret up ret ret  # last row, Shut down) > A twice; the VM powers off
     for _ in $(seq 120); do kill -0 $QEMU 2>/dev/null || { ok "$1: shut down from the settings, the VM powered off"; wait $QEMU 2>/dev/null; return 0; }; sleep 0.5; done
     bad "$1: still running 60 s after the shutdown"; kill $QEMU 2>/dev/null; return 1
 }
@@ -169,8 +169,8 @@ cleanup() {
 trap cleanup EXIT
 with_data() {   # with_data <command...>: the card's data partition (exFAT) mounted at $DATA, by the kernel or by FUSE
     if [ $UDISKS = 1 ]; then
-        LOOP=$(udisksctl loop-setup --no-user-interaction -f "$CARD" --offset $(part_offset 4) --size $(part_size 4) 2>&1 | grep -o '/dev/loop[0-9]*')
-        [ -n "$LOOP" ] || { bad "no loop device for the card (udisks)"; return 1; }
+        LOOP=$(udisksctl loop-setup --no-user-interaction -f "$CARD" --offset $(part_offset 4) --size $(part_size 4) 2>&1 | grep -o '/dev/loop[0-9]*') || true
+        [ -n "$LOOP" ] || { bad "no loop device for the card (udisks: polkit refused? run as root or with sudo)"; return 1; }
         DATA=$(udisksctl mount --no-user-interaction -b "$LOOP" 2>&1 | sed -n 's/^Mounted .* at \(.*\)$/\1/p' | sed 's/\.$//')
         [ -d "$DATA" ] || { bad "the data partition can't be mounted (udisks)"; udisksctl loop-delete --no-user-interaction -b "$LOOP" >/dev/null 2>&1; LOOP=; return 1; }
         "$@"; r=$?
@@ -190,7 +190,7 @@ with_data() {   # with_data <command...>: the card's data partition (exFAT) moun
 echo "1. the first boot: the data partition made, the menu, a shutdown"
 boot first
 grep -q "rcS: data partition ready" "$OUT/serial.log" && ok "the data partition was made and mounted" || bad "no data partition"
-grep -q "panel 1240x1080 (1)" "$OUT/serial.log" && ok "the panel opened at 1240x1080" || bad "the panel didn't open"
+grep -q "kms: panel 1240x1080 (mode" "$OUT/serial.log" && ok "the panel opened at 1240x1080" || bad "the panel didn't open"
 # the first-time setup opens over the menu on a first boot; B skips it (and writes setup-done on the card)
 grep -q "banana-ui: first-time setup" "$OUT/serial.log" && ok "the first-time setup opened" || bad "no first-time setup on the first boot"
 shot first-setup
@@ -229,8 +229,8 @@ add_update() { mkdir -p "$DATA/banana/updates"; make_update "$DATA/banana/update
 with_data add_update
 boot third
 grep -q "rcS: slot a booted" "$OUT/serial.log" && ok "the third boot ran slot a" || bad "the third boot didn't say it ran slot a"
-# Start > System (L from the first group) > Update (the row under Time zone) > the package > A again to confirm
-key s pgup ret down ret; sleep 1; shot third-updates
+# Start > System (R four times from the first group) > Update (the row under Time zone) > the package > A again to confirm
+key s pgdn pgdn pgdn pgdn ret down ret; sleep 1; shot third-updates
 # the page opens on "Check for updates": one Down for the package, then A to write it and A to confirm
 key down; sleep 1; shot third-update-package; key ret; sleep 1; key ret
 sleep 3; shot third-update-applying
@@ -244,9 +244,9 @@ wait $QEMU 2>/dev/null || true
 boot fourth
 grep -q "rcS: slot b booted" "$OUT/serial.log" && ok "the fourth boot ran slot b: the update" || bad "the fourth boot didn't run slot b"
 shot fourth-menu
-# Start > System > Previous version (five rows under Time zone: Update, Back up settings, Box art, Box art from,
-# Previous version; checked headless) > A twice: back to slot a from the next boot
-key s pgup ret down down down down down ret ret
+# Start > System > Previous version (six rows under Time zone: Update, Back up settings, Restore settings, Box art,
+# Box art from, Previous version; checked headless) > A twice: back to slot a from the next boot
+key s pgdn pgdn pgdn pgdn ret down down down down down down ret ret
 for _ in $(seq 120); do kill -0 $QEMU 2>/dev/null || break; sleep 0.5; done
 kill -0 $QEMU 2>/dev/null && { bad "no restart from Previous version"; kill $QEMU; } || ok "restarted from Previous version"
 wait $QEMU 2>/dev/null || true
