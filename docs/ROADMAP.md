@@ -2,16 +2,24 @@
 Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Ordered by what is recommended next.
 
 ## Recommended next (in order)
-0.7.0 is the new UI: the SNES style and Banana Street; 0.8.0 adds the Genesis style, Banana Blast (see *Done*). Next:
-1. **Check the Genesis and SNES styles on the device** (see *In progress*): the few looks only the panel can judge.
-2. **Bluetooth** -- designed and planned, not built (see *In progress*): a bespoke no-D-Bus agent for Classic pads,
-   blocked on a Classic controller to test with.
+0.7.0 is the new UI: the SNES style and Banana Street; 0.8.0 adds the Genesis style, Banana Blast; the landing page,
+the web installer and the flasher 2.0.0 followed (see *Done*). Next:
+1. **Confirm the 26 mA standby overnight** (see *In progress*, sleep): the ~39 mA nights were Fast wake audio,
+   left on in the card's `bananad.conf` without anyone knowing; it is off since 2026-11-16. One clean night's reading
+   is the baseline for every test after it.
+2. **The 12.7 s phantom burst** (see *In progress*, sleep): a second, fast wake source that gives up after three
+   re-sleeps and leaves the handheld awake. Read the wakeup sources at the next burst before guessing.
+3. **The standby drain, next sleep test:** one `deep` sleep with the audio drivers unloaded, to release the LPASS clock
+   votes that keep the ADSP (and `aosd`/`cxsd`/`ddr`) from ever sleeping. The biggest user-facing win left.
+4. **Below-minimum brightness (S)**, then **a real CRT personality (S)** -- the two small items picked to build.
+5. **The flasher on real Windows:** one flash and a mid-flash cancel; 2.0.0's Windows paths are verified only with mocks.
+6. **Languages, phase 2:** the Settings sub-pages and the menu chrome.
+7. **Bluetooth** -- designed and planned, not built (see *In progress*), blocked on a Classic controller to test with.
 
 ## In progress
 
-- **The SNES style: what is left after 0.7.0.** The plan is the "Banana Street" page (plan artifact); tasks 1-7 are done.
-  - To check on the device: the wake mosaic after a real sleep, the dithered box art on real covers, the themes
-    refresh on the card seeded by 0.7.x (it saves differing files to `banana/themes/.before-update/`).
+- **The SNES style after 0.7.0: done.** The plan is the "Banana Street" page (plan artifact); tasks 1-7 are done, and the
+  device checks (wake mosaic, dithered box art, the card's theme refresh) passed on 2026-11-16, with the Genesis ones.
   - Done since 0.7.1: the battery is a banana that ripens to brown as the charge drops (five stages from
     `tools/gen-street.py`), a bolt over it on the charger; Settings > Battery picks the banana alone or with its percent.
   - Done since 0.7.1: the workshop's own pages (Wi-Fi networks, Updates, first-time setup, Save states) on the ledger, a
@@ -21,11 +29,6 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
   - Done since 0.7.1: the street's own sounds and background loop (`street/sounds/`, synthesised by
     `tools/gen-street-sounds.py`: pulse voices and the SPC700's echo, F major); a theme's `"sounds"` may name a `"bgm"`,
     and the cues and loop change with the theme instead of at the next start.
-
-- **The Genesis style (Banana Blast): to check on the device.** Plan steps 1-7 are done (see *Done*, 0.8.0). Still to
-  judge on the panel: the Sound Test's fanfare and number levels against the cues, the Blue Banana's afterimages on the
-  OLED while scrolling, and Acid Mall's and Hyper Arcade's floors. The Zip mascot stays parked (the sprite is one
-  swappable frame set).
 
 - **Bluetooth: designed, not built (2026-11-08).** Stack chosen by request: a bespoke `banana-bt` over the kernel
   mgmt API, a small SDP client and `hidp` — no D-Bus, no BlueZ, no udev; Bluetooth Classic HID only. Design:
@@ -40,8 +43,19 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
 - **An Android-like sleep: find and cut the 37–42 mA standby drain.** Measured on the unit with the gauge's
   `charge_counter` (the awake line has recorded it since `a81a11f`): `battery 99% -> 96% (164 mAh in 3.9 h, 42 mA)` and
   `96% -> 94% (105 mAh in 2.8 h, 37 mA)` in `deep` — about **140 mW**, where an Android-class standby is 5–20 mW. The
-  spurious wakes (3–5 a night, the SD host's IRQ, no key or cable) cost well under 1 mAh together, so this is a steady
-  state, not wake churn; the 99→75 in the field notes was the 2026-11-02 hang (100→74 in 15 h).
+  spurious wakes cost well under 1 mAh together, so this is a steady state, not wake churn; the 99→75 in the field notes was the 2026-11-02 hang (100→74 in 15 h).
+  - **The slow phantom wakes are the battery gauge (confirmed 2026-11-16, 0.8.0).** The overnight sleep (01:19 to
+    12:10, 10.9 h) woke eight times with no key or cable, 73–91 min apart, and the battery had dropped exactly 1 % at
+    each one (99, 98 ... 92 %): the battmgr's per-percent notification, as suspected. The 0.7.1 fix holds: every one
+    re-slept with the panel dark. That is 7 % in 9.9 h; at the ~55 mAh per percent that test 0 measured (164 mAh for 3 %), about
+    **39 mA** -- back at the old baseline, not test 1's 26 mA. Not a regression: `wake_audio_fast = on` was in the
+    card's `bananad.conf` (the image's default is off), so `20-sound` skipped every sleep since at least 2026-11-10 --
+    exactly the 37-42 mA mode it documents. Switched off 2026-11-16; check that key before trusting a drain number. Silencing the notification would only save the wakes themselves.
+  - **Open: a fast phantom burst (2026-11-16 14:34).** A wake 85 s into a sleep, then three more exactly **12.7 s**
+    apart at an unchanged 99 %, so not the gauge. After the third re-sleep `bananad` gave up and woke fully ("the
+    fourth in a row"). A steady 12.7 s period points to a periodic timer or firmware ping, not a key glitch. Next:
+    dump `wakeup_sources` and `/proc/interrupts` deltas on each re-sleep of a burst, and decide whether the
+    give-up should leave the panel dark.
   - **Done — test 1, the sound server (measured win).** The overnight sleep with `sleep.d/20-sound` (stop
     PipeWire/WirePlumber in `pre`, restart in the background in `post`) held **25–29 mA**, against the 37–42 mA
     baseline: 3.3 h at 29 mA, 8.0 h at **26 mA** (206 mAh), 2.0 h at 27 mA. The AudioReach graph pinned by
@@ -252,6 +266,12 @@ accessibility / in-menu log viewer / battery-time item (2026-11-04).)*
 - **Hardware Validation (`docs/RPC-TEST.md`):** In progress on physical units.
 
 ## Done
+- [x] **The landing page, the web installer and the flasher 2.0.0 (2026-11-16).** `site/` is a Banana Blast-styled
+  GitHub Pages site (`pages.yml`), with Ko-fi and Discord. `site/install.html` flashes OpenABL over WebUSB, going
+  through fastbootd because the stock RPC bootloader has no `flash:` command; tested stock -> OpenABL end to end.
+  `docs/INSTALL.md` leads with it and with BananaLinux Flasher 2.0.0 (the Blast theme, plus drive-safety fixes: btrfs/LUKS
+  root detection, fail-closed unmount, drive re-validation before the wipe). CI installs `python3-pil` so
+  `check-themes` can regenerate the baked themes, and compares baked art by pixels rather than PNG bytes.
 - [x] **0.8.0: the Genesis style, Banana Blast (2026-11-16).** Settings > Display & sound > Style lists Genesis
   beside Classic and SNES. Banana Blast is a neon course at night: a billboard per system in its maker's colour, the
   banana on a skateboard, and L/R boosting to the next maker with speed lines. Art is baked by `tools/gen-blast.py` to
