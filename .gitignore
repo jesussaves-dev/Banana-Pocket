@@ -37,10 +37,5 @@ __pycache__/
 /tmp_pixellab_preview.png
 /ui/assets/overrides/palette_master.png
 
-# the local OpenCode config (holds provider keys); keep the tracked copy out of the repo
-/opencode.json
-
 # Phase 2 dmabuf test harness: generated protocol code and binaries
 /ui/build/
-/AGENTS.md
-/docs/superpowers/
