@@ -1,6 +1,6 @@
 # Banana kernel config — driver inventory (K1.1)
 
-Input for K1.2 (`linux-banana.config` from `allnoconfig`). Everything here is read from the 0.8.0 baseline,
+Input for K1.2 (`linux-banana.config`; the result is §5). Everything here is read from the 0.8.0 baseline,
 `docs/reports/kernel-report-0.8.0-b-2026-11-16.txt` (+ `.config`), and from the scripts that load modules. A row
 is in this file because the handheld **uses** it; K1.2 adds each one deliberately and nothing else.
 
@@ -147,3 +147,56 @@ Modules pulled in only as dependencies (visible in `lsmod`, no `modprobe` of the
    `MAC80211` for ath10k, `PACKET`/`UNIX`/`INET` for Wi-Fi + NCM + ssh, `SND_TIMER`/`SND_PCM` for PipeWire, USB host HID
    + the pad modules bananad loads by MODALIAS (list them from the 258 module files before trimming).
 5. **Counts to beat:** 1963 =y / 258 =m, Image 30.7 MB, 258 module files / 12.8 MB (from the baseline).
+
+## 5. The config (K1.2)
+
+`buildroot/board/retroid-pocket-classic/linux-banana.config` is the kernel's whole configuration, and the Buildroot
+defconfig's `BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE` points at it. `linux-rocknix.config` stays in the tree as the 0.8.0
+reference only.
+
+### How Buildroot reads it
+
+Buildroot doesn't run `allnoconfig`. `pkg-kconfig.mk:67` runs `merge_config.sh -m` with this file and
+`linux-banana.fragment` and `linux-qemu.fragment`, in that order, then `make olddefconfig`. So any symbol the file
+doesn't name takes its **Kconfig default**. The file is a defconfig: it lists the changes from the defaults.
+`=y`/`=m` turns on something this board needs. `# ... is not set` turns off a default the handheld doesn't use.
+
+The K1.2a draft was built and checked against `allnoconfig`. Its savedefconfig check counted only `=` lines and
+skipped about 100 `is not set` lines, so under Buildroot it would have resolved to 1196 =y and not the 1083 it
+reported. Most of that difference is defaults that are worth keeping (below).
+
+### Decisions
+
+| Choice | Result | Why |
+|---|---|---|
+| Kconfig defaults that allnoconfig turned off: Cortex-A55/A78 errata workarounds, `ARM64_PTR_AUTH`, `ARM64_BTI`, `ARM64_SVE`, `SECCOMP`, `STACKPROTECTOR_STRONG`, `RELR`, `SCHED_MC`/`_CLUSTER` | **kept** (not listed: they are defaults) | The errata are correctness fixes for the SoC's own cores. The rest is cheap hardening and the stock arm64 ABI. |
+| Defaults the handheld has no use for | **off**, the last group in the file | `INPUT_MOUSE` (PS/2), `LEGACY_PTYS`, `LEGACY_TIOCSTI`, `DEVMEM`, `SWAP`, `IOSCHED_BFQ`, `MQ_IOSCHED_KYBER`, `HW_RANDOM`, `COMPAT_BRK`. `git grep` over `system/`, `buildroot/board/`, `ui/src/` finds no user of `/dev/mem`, swap, loop or hwrng. |
+| `COMPAT` (32-bit userspace), `RANDOMIZE_BASE`, `CGROUPS`, `PSI` | off (the default) | The rootfs is aarch64-only. Nothing in the image uses cgroups or PSI. KASLR can come back later as a separate task if wanted. |
+| `EXPERT=y` | on | `VT` has a prompt only under EXPERT, so without it the fragment's `# CONFIG_VT is not set` has no effect. It also opens the prompt for `SLUB_DEBUG`, which the fragment now turns off. `NAMESPACES` is `default !EXPERT`, so the file turns it on explicitly. |
+| HID pad drivers (`HID_SONY`, `_PLAYSTATION`, `_NINTENDO`, `_LOGITECH`, `_MICROSOFT`) | **=y** (the draft had them as =m) | Their aliases are `hid:…`. bananad's `load_driver` (`system/bananad/bananad.c:2021`) only modprobes `usb:` aliases, so as modules nothing would ever load them. |
+| `JOYSTICK_XPAD`, `USB_STORAGE`, `USB_SERIAL`, `USB_ACM` | =m | Their aliases are `usb:…`, so bananad loads them by MODALIAS. |
+| `QCOM_LLCC`, `MFD_QCOM_PM8008`, `QCOM_WDT` (+`WATCHDOG`), `INPUT_JOYDEV` | **dropped** | Neither mainline `sm4450.dtsi` nor the board dts has an llcc, pm8008 or watchdog node. Nothing opens `/dev/input/js*` (banana-ui reads evdev, RetroArch uses udev). |
+| `DRM_AUX_BRIDGE`, `DRM_AUX_HPD_BRIDGE` | =y via select | `PHY_QCOM_QMP_COMBO` selects them: the USB-C DP altmode chain. |
+| `SENSORS_PWM_FAN` | =m, kept | rcS:105 modprobes it. It binds nothing until the PWM provider has a driver (§4 finding 1). |
+| `linux-qemu.fragment` | now carries `ARM_AMBA`, `PCI`, `PCI_HOST_GENERIC`, `PCI_MSI`, `VIRTIO_MENU`, `VIRTIO_PCI`, `VIRTIO_CONSOLE`, `VIRTIO_NET` | It used to rely on linux-rocknix.config for these. Without them its virtio-gpu, PL011 and SDHCI-PCI lines resolve to off, and `tools/qemu-boot.sh` gets no console or root disk. |
+
+### Check
+
+1. Merge the file and both fragments into an empty `O=` dir with `merge_config.sh -m`, as Buildroot does.
+2. Run `olddefconfig`.
+3. Confirm every `=` line and every `is not set` line across the three files held.
+4. Run `savedefconfig`. Every line it prints must already be in one of the three files.
+
+Kernel tree: linux-7.2 plus the board's 49 patches, with Buildroot's `aarch64-linux-` toolchain.
+
+| | 0.8.0 baseline | K1.2a draft (allnoconfig, no fragment) | K1.2 (Buildroot flow) |
+|---|---|---|---|
+| Lines checked: held / not held | | | 273 / 0 |
+| savedefconfig lines not in the files | | (skipped `is not set`) | 0 |
+| =y / =m | 1963 / 258 | 1083 / 65 | 1249 / 61 |
+| Image | 30.7 MB | 19.0 MB | 17.9 MB |
+| `.ko` files / bytes | 258 / 12.8 MB | 65 / 3.4 MB | 60 / 3.3 MB |
+| dtb | 62,981 B | 62,981 B | 62,981 B |
+
+The Image + modules + revq dtb build passes with no warnings. Nothing has been built in Buildroot, booted in QEMU or
+flashed yet. RPC-TEST, sound, sleep and `tools/qemu-boot.sh` are the next checks.
