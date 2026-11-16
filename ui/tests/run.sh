@@ -550,6 +550,9 @@ for size in 640x557; do
     sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
     grep -q '^blue_banana = on' "$FX/data/settings.conf" || { echo "FAIL $size: blast's Sound Test code didn't turn the Blue Banana on: $(grep '^blue_banana' "$FX/data/settings.conf")"; fail=1; }
     sed -i '/^blue_banana *=/d' "$FX/data/settings.conf"
+    # the banana is yellow until then (the course's first shot, before the code), blue after it with its afterimages
+    [ "$(convert "$OUT/$size-blast-home.png" -crop 128x88+556+804 +repage -fill black +opaque '#246DFF' -fill white -opaque '#246DFF' -format '%[fx:mean>0]' info:)" = 0 ] ||
+        { echo "FAIL $size: blast's banana is blue before the secret"; fail=1; }
     # the banana's body in the boost is the blue ramp's (1,3,7), and its afterimages trail it
     [ "$(convert "$OUT/$size-blast-blue-boost.png" -crop 128x88+556+804 +repage -fill black +opaque '#246DFF' -fill white -opaque '#246DFF' -format '%[fx:mean>0.05]' info:)" = 1 ] ||
         { echo "FAIL $size: blast's Blue Banana isn't blue"; fail=1; }

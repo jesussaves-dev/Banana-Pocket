@@ -233,6 +233,11 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 			{
 				if (!settings.isOpen()) { settings.open(); logf("press %s: settings open", b.c_str()); continue; }
 				int r = (int)settings.press(it->second);
+				if (r == Settings::CHANGED)	// what main.cpp's applySettings reads back that the course draws
+				{
+					lib.blue = getConfValue(o.data + "/settings.conf", "blue_banana", "off") == "on";
+					ui.dataChanged();
+				}
 				if (r == Settings::SEARCH)
 				{
 					lib.setSearch(settings.searchText);

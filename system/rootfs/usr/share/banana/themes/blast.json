@@ -151,13 +151,13 @@
 
         // the Blue Banana (the Sound Test's secret) leaves two afterimages behind it while boosting
         { "type": "image", "src": "{art}/ghost-far.png", "fit": "pixel", "x": "=139 - dir * 14", "y": 201, "w": 32, "h": 22,
-          "visible": "=blue && motion && abs(scroll - cursor) > 1.2" },
+          "visible": "=blueBanana && motion && abs(scroll - cursor) > 1.2" },
         { "type": "image", "src": "{art}/ghost-near.png", "fit": "pixel", "x": "=139 - dir * 7", "y": 201, "w": 32, "h": 22,
-          "visible": "=blue && motion && abs(scroll - cursor) > 1.2" },
+          "visible": "=blueBanana && motion && abs(scroll - cursor) > 1.2" },
 
         // the banana: on the board, wheels turning while it rolls; left alone for 20 s it steps off and taps a foot
         { "type": "image", "fit": "pixel", "x": 139, "y": 201, "w": 32, "h": 22,
-          "src": "{art}/{blue ? 'blue-' : ''}{moved > 20000 && entered > 20000 && abs(scroll - cursor) < 0.02 ? 'idle' + mod(floor(time / 500), 2) : 'ride' + (abs(scroll - cursor) > 0.02 ? mod(floor(abs(scroll) * 8), 2) : 0)}.png" },
+          "src": "{art}/{blueBanana ? 'blue-' : ''}{moved > 20000 && entered > 20000 && abs(scroll - cursor) < 0.02 ? 'idle' + mod(floor(time / 500), 2) : 'ride' + (abs(scroll - cursor) > 0.02 ? mod(floor(abs(scroll) * 8), 2) : 0)}.png" },
 
         // what's selected: its name in chrome, its maker under it, then the buttons
         { "use": "chrome", "x": 0, "y": 224, "w": 310, "align": "center", "text": "{upper(sys.name)}" },
