@@ -248,6 +248,10 @@ Get the image and the update package from
 bootloader, the Android root and unlock to install it, writing the card, the first boot) is in
 **[`docs/INSTALL.md`](docs/INSTALL.md)**.
 
+The quick way is two steps: the [install page](https://jesussaves-dev.github.io/Banana-Pocket/install.html) flashes the
+bootloader from Chrome or Edge over USB, and
+[BananaLinux Flasher](https://github.com/jesussaves-dev/banana-linux-flasher/releases/latest) writes the card.
+
 In short, write the image to a microSD card. It holds the first three partitions, and the data partition is made on
 the first boot:
 

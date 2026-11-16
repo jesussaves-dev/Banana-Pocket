@@ -1,0 +1,32 @@
+OpenABL v1.2 for SM4450 (abl_signed-SM4450.elf), redistributed unmodified by Banana Pocket
+================================================================================
+
+This file is OpenABL v1.2, built and released by the OpenHandheldCollective:
+  https://github.com/OpenHandheldCollective/OpenABL/releases/tag/v1.2
+  sha256 8d73232614bdf50d602dfb934157328b95fc90f1ea22ba71dbc8836bc7aa8a3b
+
+It holds Qualcomm's ABL plus the components listed in LICENSES.md, and is
+distributed under the GNU General Public License, version 3 or later, as a whole
+(LICENSE). The component licences are in LICENSES/, the font licences are
+LICENSES/Montserrat-OFL.txt and LICENSES/SourceHanSans-OFL.txt, and the
+copyright notices are in LICENSES.md.
+
+Corresponding source
+--------------------
+The complete source of this binary is:
+  1. The OpenABL repository at tag v1.2, commit ae7dad0eec1cbd568f270e95b6ce401527e868c9:
+       https://github.com/OpenHandheldCollective/OpenABL/tree/v1.2
+  2. The sources its Scripts/fetch.sh downloads at that revision:
+       https://git.codelinaro.org/clo/la/abl/tianocore/edk2.git
+       https://github.com/rxi/microui.git
+       https://github.com/msm8916-mainline/qtestsign.git
+If any of these stop being available, ask through the Banana Pocket repository
+(https://github.com/jesussaves-dev/Banana-Pocket/issues) and the source will be
+provided.
+
+Attributions required by the OpenSSL and SSLeay licences (BoringSSL)
+--------------------------------------------------------------------
+This product includes software developed by the OpenSSL Project for use in the
+OpenSSL Toolkit (http://www.openssl.org/).
+This product includes cryptographic software written by Eric Young
+(eay@cryptsoft.com).
