@@ -11,8 +11,8 @@ is a young branch off mainline, and becomes **1.0** when it replaces the current
 - **Version file:** `buildroot/board/retroid-pocket-classic/KERNEL_VERSION` (one line, e.g. `0.1`).
 - **`uname -r`:** `<mainline>-banana<kver>`, e.g. `7.2.0-banana0.1` (`CONFIG_LOCALVERSION`, set from the file; K8).
 - **Tags:** `kernel-v0.1`, `kernel-v0.2`, … `kernel-v1.0` (distro tags stay `v0.8.x`).
-- **Branch:** all kernel work lands on `kernel`; each task gets its own short branch off it (`kernel/k0-report`,
-  `kernel/k1-config`, …) and merges back by PR. `kernel` merges into `main` only at a milestone the owner approves.
+- **Branch:** all kernel work lands on `kernel`; each task gets its own short branch off it (`kernel-k0-report`,
+  `kernel-k1-config`, …; git cannot nest `kernel/…` under a branch named `kernel`) and merges back by PR. `kernel` merges into `main` only at a milestone the owner approves.
 
 | Kernel version | Contains | Done when |
 |---|---|---|
@@ -114,10 +114,19 @@ Banana's, with the generic SoC support still community code on its way upstream.
 - **Why safe:** the whole OS lives on the **microSD card**, and each slot has its own kernel (`/boot/a`, `/boot/b`).
   A kernel that does not boot is fixed by re-writing the card on a PC — the handheld's internal Android is untouched.
 - **Steps:**
-  1. Find out whether OpenABL's `extlinux.conf` handling supports a boot menu, `TIMEOUT` or a one-shot entry. If yes,
-     add a `LABEL test` entry that boots `/boot/test/Image` once and falls back. If not, test kernels go to the
-     inactive slot with `update apply` (slot A keeps the release; **Previous version** cannot help if the new kernel
-     never reaches the menu, so keep a known-good card image at hand).
+  1. **Done (K0.1, 2026-11-16): test boots go through the inactive slot, picked once from OpenABL's menu.**
+     What OpenABL does (read from its source, v1.2 = what is flashed): it parses extlinux `TIMEOUT` but nothing uses
+     it, and the countdown menu is driven by BLS `loader.conf` only (added after v1.2, on 2026-10-31). What v1.2 does
+     have is **Boot entries** (Vol- + Power → menu): it lists every extlinux label, and *picking one boots only that
+     entry*; the next boot runs `DEFAULT` again. It also honors `LoaderEntryOneShot` (systemd BLI), but that needs
+     working EFI runtime variables from Linux, which has not been tried on this device, so it is not used.
+     The loop: `tools/rpc-push-update.sh --stage <pkg>` → `update stage` writes kernel + rootfs to the inactive slot,
+     verified, **without changing `DEFAULT`** → restart, Vol- + Power, Boot entries, pick that slot → test. A hang
+     needs only a long Power press; the release slot boots next. Keep the test build with `update switch <slot>`.
+     A separate `LABEL test` was rejected: a test kernel booting the release rootfs would not match its modules.
+     `update apply|stage` refuse to run during a test boot (running slot ≠ default), since the other slot is then the
+     known-good one. **To verify on the device:** stage a build, pick it once, confirm the next cold boot runs the
+     default.
   2. A `tools/kernel-report.sh` that records: `Image` size, module count/size, `dmesg` time to init, rcS marks,
      `lsmod`, `/proc/config.gz` (needs `CONFIG_IKCONFIG_PROC=y`), and which drivers actually probed
      (`/sys/bus/*/drivers/*/`).
