@@ -27,6 +27,52 @@ namespace banana
 			x0 = x0 < o.x0 ? x0 : o.x0; y0 = y0 < o.y0 ? y0 : o.y0;
 			x1 = x1 > o.x1 ? x1 : o.x1; y1 = y1 > o.y1 ? y1 : o.y1;
 		}
+		long area() const { return empty() ? 0 : (long)(x1 - x0) * (y1 - y0); }
+	};
+
+	// the parts of a screen that changed, as a few separate rectangles: scattered small changes (a twinkling star
+	// field, a blinking cursor across the screen) copy only themselves to the uncached scanout buffer, not the box
+	// around them all. Overlapping ones are merged; past MAX, a new one joins the rectangle it grows least
+	struct DamageSet
+	{
+		enum { MAX = 32 };
+		Damage r[MAX];
+		int n = 0;
+		DamageSet() = default;
+		DamageSet(const Damage& d) { add(d); }
+		bool empty() const { return n == 0; }
+		void clear() { n = 0; }
+		void add(Damage d)
+		{
+			if (d.empty()) return;
+			for (int i = 0; i < n;)
+			{
+				const Damage& o = r[i];
+				if (d.x0 < o.x1 && o.x0 < d.x1 && d.y0 < o.y1 && o.y0 < d.y1)
+				{
+					d.add(o);
+					r[i] = r[--n];
+					i = 0;	// the grown rectangle may reach ones already passed
+				}
+				else i++;
+			}
+			if (n == MAX)
+			{
+				int best = 0; long grow = -1;
+				for (int i = 0; i < n; i++)
+				{
+					Damage u = r[i]; u.add(d);
+					long g = u.area() - r[i].area();
+					if (grow < 0 || g < grow) { grow = g; best = i; }
+				}
+				d.add(r[best]);
+				r[best] = r[--n];
+				add(d);	// the union may now overlap others
+				return;
+			}
+			r[n++] = d;
+		}
+		void add(const DamageSet& o) { for (int i = 0; i < o.n; i++) add(o.r[i]); }
 	};
 
 	// One atomic request, filled by hand: drmModeAtomicAlloc allocates a request per commit, and commitFrame runs every
@@ -73,7 +119,7 @@ namespace banana
 		int pollFd() const { return fd; }
 		bool flipPending() const { return pending > 0; }
 		// the composed screen (rows of width() words) and what changed since the last present
-		bool present(const uint32_t* screen, const Damage& dmg);
+		bool present(const uint32_t* screen, const DamageSet& dmg);
 		void handleEvents();	// the flip events from pollFd()
 		// after a resume or a lost master: show the current buffers again. False when another master still holds the
 		// panel (a game's compositor letting go): the caller retries
@@ -149,7 +195,7 @@ namespace banana
 			int maskFront = 0, maskShown = -1;
 			Buf black;		// XRGB8888, the primary when the menu is on the overlay
 			int front = 0;
-			Damage missed[2];
+			DamageSet missed[2];
 			Plane primary, overlay;
 			bool atomic = false;
 			uint32_t mode_blob = 0;

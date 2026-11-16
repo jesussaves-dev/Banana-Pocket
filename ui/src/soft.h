@@ -52,12 +52,12 @@ namespace banana
 		// the composed screen, 0xXXRRGGBB rows of W words
 		const uint32_t* pixels() const { return scr.data(); }
 		// the part touched since the last call (empty: none); clears the mark
-		Damage takeDamage() { Damage d = dmg; dmg = Damage(); return d; }
+		DamageSet takeDamage() { DamageSet d = dmg; dmg.clear(); return d; }
 		// everything again (new scanout buffers): the next frame is drawn in full
-		void invalidate() { dmg = { 0, 0, W, H }; last.clear(); full = true; }
+		void invalidate() { dmg = Damage{ 0, 0, W, H }; last.clear(); full = true; }
 		// the pixels to draw on directly (the boot animation): all of it counts as changed, and the engine's
 		// next frame is drawn over all of it
-		uint32_t* canvas() { dmg = { 0, 0, W, H }; last.clear(); full = true; return scr.data(); }
+		uint32_t* canvas() { dmg = Damage{ 0, 0, W, H }; last.clear(); full = true; return scr.data(); }
 
 		// (touches nothing of the backend's but the new texture: callable from the picture workers)
 		rnds::TexPtr upload(const rnds::Bitmap& b, bool smooth) override;
@@ -117,10 +117,10 @@ namespace banana
 		void doMosaic(const Cmd& c, const Clip& cl);
 		int W, H;
 		std::vector<uint32_t> scr;
-		Damage dmg;
+		DamageSet dmg;
 		std::vector<Clip> clips;
 		std::vector<int> colA, colB;	// a scaled draw's source columns (and their blend) for each pixel of a row
 		std::vector<uint32_t> colF;
-		void touch(const Clip& r) { dmg.add({ r.x0, r.y0, r.x1, r.y1 }); }
+		void touch(const Clip& r) { dmg.add(Damage{ r.x0, r.y0, r.x1, r.y1 }); }
 	};
 }

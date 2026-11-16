@@ -151,7 +151,7 @@ namespace banana
 	SoftBackend::SoftBackend(int w, int h) : W(w), H(h)
 	{
 		scr.assign((size_t)W * H, 0xff000000u);
-		dmg = { 0, 0, W, H };
+		dmg = Damage{ 0, 0, W, H };
 	}
 
 	rnds::TexPtr SoftBackend::upload(const rnds::Bitmap& b, bool smooth)

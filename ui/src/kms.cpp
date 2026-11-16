@@ -545,38 +545,49 @@ namespace banana
 		std::vector<uint8_t>().swap(frameCopy);
 	}
 
-	bool Display::present(const uint32_t* screen, const Damage& dmg)
+	bool Display::present(const uint32_t* screen, const DamageSet& dmg)
 	{
 		if (fd < 0 || pending || off) return false;
 		bool any = false;
 		Panel& pn = panel;
 		// the hidden buffer missed what changed since it was shown: this frame's part and the last frame's
 		int back = pn.front ^ 1;
-		Damage d = dmg;
-		d.add(pn.missed[back]);
-		pn.missed[back] = Damage();
-		d.x0 = std::max(d.x0, 0); d.y0 = std::max(d.y0, 0);
-		d.x1 = std::min(d.x1, W); d.y1 = std::min(d.y1, H);
-		if (d.empty())
+		DamageSet ds = dmg;
+		ds.add(pn.missed[back]);
+		pn.missed[back].clear();
+		bool none = true;
+		for (int i = 0; i < ds.n; i++)
+		{
+			Damage& d = ds.r[i];
+			d.x0 = std::max(d.x0, 0); d.y0 = std::max(d.y0, 0);
+			d.x1 = std::min(d.x1, W); d.y1 = std::min(d.y1, H);
+			if (!d.empty()) none = false;
+		}
+		if (none)
 		{
 			// nothing to draw, but new colour blobs still need a commit to reach the panel
 			if (pn.atomic && pn.color.dirty && commitMenu(pn, pn.buf[pn.front].fb)) any = true;
 			return any;
 		}
 		Buf& bf = pn.buf[back];
-		if (rot)
-			turn(screen, bf, d);
-		else if (d.x0 == 0 && d.x1 == W && bf.pitch == (uint32_t)W * 4)
+		for (int i = 0; i < ds.n; i++)
 		{
-			// a full-width change on an unpadded buffer is one contiguous copy, not a row at a time
-			memcpy(bf.map + (size_t)d.y0 * bf.pitch, screen + (size_t)d.y0 * W, (size_t)(d.y1 - d.y0) * W * 4);
-		}
-		else
-		{
-			// only the columns that changed: the scanout buffer is uncached, every byte written costs
-			size_t n = (size_t)(d.x1 - d.x0) * 4;
-			for (int y = d.y0; y < d.y1; y++)
-				memcpy(bf.map + (size_t)y * bf.pitch + (size_t)d.x0 * 4, screen + (size_t)y * W + d.x0, n);
+			const Damage& d = ds.r[i];
+			if (d.empty()) continue;
+			if (rot)
+				turn(screen, bf, d);
+			else if (d.x0 == 0 && d.x1 == W && bf.pitch == (uint32_t)W * 4)
+			{
+				// a full-width change on an unpadded buffer is one contiguous copy, not a row at a time
+				memcpy(bf.map + (size_t)d.y0 * bf.pitch, screen + (size_t)d.y0 * W, (size_t)(d.y1 - d.y0) * W * 4);
+			}
+			else
+			{
+				// only the columns that changed: the scanout buffer is uncached, every byte written costs
+				size_t n = (size_t)(d.x1 - d.x0) * 4;
+				for (int y = d.y0; y < d.y1; y++)
+					memcpy(bf.map + (size_t)y * bf.pitch + (size_t)d.x0 * 4, screen + (size_t)y * W + d.x0, n);
+			}
 		}
 		pn.missed[pn.front] = dmg;	// the buffer going hidden misses this frame
 		if (pn.atomic)
