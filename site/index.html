@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en" data-palette="night">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Banana Pocket</title>
+  <meta name="description" content="Banana Pocket: the little operating system for the Retroid Pocket Classic. Every system is a shop, the menu is a street, and the banana rides a skateboard.">
+  <meta property="og:title" content="Banana Pocket: blast processing for your pocket">
+  <meta property="og:description" content="A tiny Linux distro for the Retroid Pocket Classic. 21 systems, A/B updates, a hand-drawn 16-bit menu.">
+  <meta property="og:image" content="assets/img/banner.png">
+  <meta name="theme-color" content="#000000">
+  <link rel="icon" href="assets/img/idle0.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Chakra+Petch:ital,wght@0,400;0,600;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="crt" aria-hidden="true"></div>
+
+  <header class="nav">
+    <a class="brand" href="#top" aria-label="Banana Pocket home">
+      <img src="assets/img/idle0.png" alt="" width="32" height="22">
+      <span>BANANA<em>POCKET</em></span>
+    </a>
+    <nav class="links" aria-label="Sections">
+      <a href="#street">Street</a>
+      <a href="#styles">Styles</a>
+      <a href="#features">Engine</a>
+      <a href="#systems">Systems</a>
+      <a href="#download">Download</a>
+      <a href="#coin">Support</a>
+    </nav>
+    <div class="toggles">
+      <button class="tog" id="crtToggle" aria-pressed="false" title="CRT scanlines">CRT</button>
+      <button class="tog" id="sndToggle" aria-pressed="false" title="Sound (off by default)">
+        <span class="snd-off">♪ OFF</span><span class="snd-on">♪ ON</span>
+      </button>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- ===== HERO: the Banana Blast course ===== -->
+    <section class="hero" aria-labelledby="heroTitle">
+      <div class="scene" aria-hidden="true">
+        <div class="sky"></div>
+        <div class="stars"></div>
+        <div class="shapes"><i class="tri"></i><i class="zig"></i><i class="tri t2"></i></div>
+        <div class="city"></div>
+        <div class="horizon"></div>
+        <div class="floor"><div class="grid"></div></div>
+        <div class="speed"></div>
+      </div>
+      <button class="rider" id="rider" aria-label="The banana. It might be hiding something.">
+        <img id="riderImg" src="assets/img/ride0.png" alt="" width="128" height="88">
+      </button>
+
+      <div class="hud" aria-hidden="true">
+        <span><b>TIME</b> <span id="clock">05:17 PM</span></span>
+        <span><b>VER</b> <span class="hl">0.8.0</span></span>
+      </div>
+
+      <div class="hero-copy">
+        <p class="kicker">The little OS for the Retroid Pocket Classic</p>
+        <h1 id="heroTitle" class="chrome">BANANA<br>POCKET</h1>
+        <p class="tagline">BLAST PROCESSING FOR YOUR POCKET.</p>
+        <div class="cta">
+          <a class="btn btn-main sfx" href="https://github.com/jesussaves-dev/Banana-Pocket/releases/latest">▶ Download 0.8</a>
+          <a class="btn btn-ghost sfx" href="https://discord.gg/V5eFeWzcZe" rel="noopener">Join the Discord</a>
+        </div>
+        <p class="press">PRESS START</p>
+      </div>
+    </section>
+
+    <div class="ticker" aria-hidden="true">
+      <div class="ticker-track">
+        <span>21 SHOPS</span><span>★</span><span>NO SYSTEMD</span><span>★</span><span>A/B UPDATES</span><span>★</span>
+        <span>PIPEWIRE + WIREPLUMBER</span><span>★</span><span>DRAWN BY HAND ON THE CPU</span><span>★</span>
+        <span>RETROACHIEVEMENTS</span><span>★</span><span>BOOTED IN QEMU ON EVERY BUILD</span><span>★</span>
+        <span>TRUE BLACK FOR AMOLED</span><span>★</span>
+        <span>21 SHOPS</span><span>★</span><span>NO SYSTEMD</span><span>★</span><span>A/B UPDATES</span><span>★</span>
+        <span>PIPEWIRE + WIREPLUMBER</span><span>★</span><span>DRAWN BY HAND ON THE CPU</span><span>★</span>
+        <span>RETROACHIEVEMENTS</span><span>★</span><span>BOOTED IN QEMU ON EVERY BUILD</span><span>★</span>
+        <span>TRUE BLACK FOR AMOLED</span><span>★</span>
+      </div>
+    </div>
+
+    <!-- ===== STREET ===== -->
+    <section id="street" class="block split">
+      <div class="handheld reveal">
+        <div class="bezel">
+          <img src="assets/img/street.gif" alt="The banana walks down the street past the Game Boy and Super Nintendo shops, goes into the Super Nintendo shop, picks a game, and the picture breaks into growing blocks as the game starts" width="620" height="540" loading="lazy">
+        </div>
+        <div class="pad" aria-hidden="true"><i class="dpad"></i><i class="ab"><b>B</b><b>A</b></i></div>
+      </div>
+      <div class="copy reveal">
+        <p class="stage">STAGE 1</p>
+        <h2>The menu is a street.</h2>
+        <p>Every system is a shop and your games are on its shelves. A banana walks you there.</p>
+        <p>Left and right walk one shop. <kbd>L</kbd> and <kbd>R</kbd> jump to the next maker's block. A shop with no
+          games has its shutter down. Press <kbd>A</kbd> on a game and it starts in the Super NES's mosaic: the picture
+          breaks into bigger and bigger blocks while the light steps down in sixteenths.</p>
+        <p>The street follows the clock, too. Dawn from 5, day from 8, dusk from 17, night from 20. The windows come on
+          at dusk.</p>
+      </div>
+    </section>
+
+    <!-- ===== STYLES / PALETTES ===== -->
+    <section id="styles" class="block">
+      <div class="head reveal">
+        <p class="stage">STAGE 2</p>
+        <h2>Pick your ride.</h2>
+        <p class="lede">Three styles, one handheld. <b>Banana Blast</b> is the Genesis one: a neon course at night, a
+          billboard for every system and the banana on a skateboard. Its blacks are true black, so the AMOLED's pixels
+          stay off. Pick a palette and the whole page follows.</p>
+      </div>
+
+      <div class="picker reveal" role="tablist" aria-label="Banana Blast palettes">
+        <button role="tab" class="pal sfx" data-pal="night" aria-selected="true"><i></i>Night Drive</button>
+        <button role="tab" class="pal sfx" data-pal="acid" aria-selected="false"><i></i>Acid Mall</button>
+        <button role="tab" class="pal sfx" data-pal="arcade" aria-selected="false"><i></i>Hyper Arcade</button>
+      </div>
+
+      <div class="showcase reveal">
+        <figure class="screen">
+          <img id="palShot" src="assets/img/blast-night.png" alt="Banana Blast, Night Drive palette: a magenta floor, cyan rails and a violet city" width="632" height="552" loading="lazy">
+        </figure>
+        <div class="style-cards">
+          <article class="scard">
+            <h3>Genesis</h3>
+            <p>Banana Blast. Options is an arcade settings screen with a Sound Test, search is a high-score name entry,
+              and a game starts with a palette fade and a line-scroll wobble. Its own FM sounds and a funk loop.</p>
+          </article>
+          <article class="scard">
+            <h3>SNES</h3>
+            <p>Banana Street and its five neighborhoods. 15-bit colour, scanline skies, parallax and one real pixel
+              grid: 310 × 270, 4 × 4 panel pixels per art pixel.</p>
+            <div class="thumbs">
+              <img src="assets/img/hood-banana.png" alt="Banana neighborhood" loading="lazy">
+              <img src="assets/img/hood-sundown.png" alt="Sundown neighborhood" loading="lazy">
+              <img src="assets/img/hood-harbor.png" alt="Harbor neighborhood" loading="lazy">
+            </div>
+          </article>
+          <article class="scard">
+            <h3>Classic</h3>
+            <p>The menu from before 0.7: a carousel of chunky tiles with a gold highlight, in seven colour themes and six
+              four-shade LCD ones. Themes are JSON. Make your own.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== FEATURES ===== -->
+    <section id="features" class="block">
+      <div class="head reveal">
+        <p class="stage">STAGE 3</p>
+        <h2>Under the hood.</h2>
+        <p class="lede">Early access, built from source. The panel timings, the amplifiers, the DSP graph and the sleep
+          behaviour were all measured on a real handheld.</p>
+      </div>
+      <div class="boards">
+        <article class="board reveal"><div class="face"><span class="ico">⇄</span><h3>A/B boot slots</h3>
+          <p>An update is written to the other slot, never the one you're running. A bad update just boots the old one.</p></div><i class="posts"></i></article>
+        <article class="board reveal"><div class="face"><span class="ico">▣</span><h3>Its own compositor</h3>
+          <p><code>banana-ui</code> owns the screen while you play. Games are Wayland clients, so the pause menu and cards sit above any game, port or video.</p></div><i class="posts"></i></article>
+        <article class="board reveal"><div class="face"><span class="ico">✎</span><h3>Drawn on the CPU</h3>
+          <p>The whole menu is painted by hand into KMS dumb buffers. No toolkit, no browser, no Electron.</p></div><i class="posts"></i></article>
+        <article class="board reveal"><div class="face"><span class="ico">♫</span><h3>PipeWire, no systemd</h3>
+          <p>PipeWire and WirePlumber run the sound. The first boot chime went from about 20 seconds to about 8.</p></div><i class="posts"></i></article>
+        <article class="board reveal"><div class="face"><span class="ico">◐</span><h3>Free shaders</h3>
+          <p>CRT, aperture-grille and LCD masks ride the overlay plane, so they cost the GPU nothing, over the menu and every game.</p></div><i class="posts"></i></article>
+        <article class="board reveal"><div class="face"><span class="ico">✓</span><h3>Tested every build</h3>
+          <p>Every image CI makes is booted in QEMU and tested before it ships. Sleep keeps your game exactly where it was.</p></div><i class="posts"></i></article>
+      </div>
+
+      <div class="pause reveal">
+        <div class="pause-menu" aria-label="The in-game pause menu">
+          <p class="pm-title">PAUSED</p>
+          <ul>
+            <li class="on">Resume</li>
+            <li>Save state <span>◀ Slot 0 ▶</span></li>
+            <li>Load state <span>◀ Slot 0 ▶</span></li>
+            <li>Fast-forward <span>Off</span></li>
+            <li>Shader <span>CRT</span></li>
+            <li>Achievements <span>12/40</span></li>
+            <li>Quit game</li>
+          </ul>
+        </div>
+        <div class="copy">
+          <h3>A pause menu that speaks Banana.</h3>
+          <p>Press the button under the screen in any game and it stops, properly frozen. Save states with screenshots,
+            disc swaps, fast-forward, shaders and your RetroAchievements progress are all one row away.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== SYSTEMS ===== -->
+    <section id="systems" class="block">
+      <div class="head reveal">
+        <p class="stage">STAGE 4</p>
+        <h2>21 shops on the street.</h2>
+        <p class="lede">Each one ships with the emulator it needs. Nothing to download, nowhere to sign in.
+          <span class="hint">Use <kbd>L</kbd>/<kbd>R</kbd> to boost between makers.</span></p>
+      </div>
+      <div class="makers reveal" id="makers">
+        <div class="maker" tabindex="0"><h3>Nintendo</h3><ul><li>Game Boy</li><li>Game Boy Color</li><li>Game Boy Advance</li><li>NES</li><li>Super Nintendo</li><li>Nintendo 64</li></ul></div>
+        <div class="maker" tabindex="0"><h3>Sega</h3><ul><li>Master System</li><li>Game Gear</li><li>Mega Drive / Genesis</li><li>Sega CD</li><li>Sega 32X</li><li>Dreamcast</li></ul></div>
+        <div class="maker" tabindex="0"><h3>Sony</h3><ul><li>PlayStation</li></ul></div>
+        <div class="maker" tabindex="0"><h3>NEC · SNK</h3><ul><li>PC Engine &amp; PC Engine CD</li><li>Neo Geo Pocket Color</li></ul></div>
+        <div class="maker" tabindex="0"><h3>Atari</h3><ul><li>Atari 2600</li><li>Atari Lynx</li></ul></div>
+        <div class="maker" tabindex="0"><h3>Bandai</h3><ul><li>WonderSwan / Color</li></ul></div>
+        <div class="maker" tabindex="0"><h3>Computers</h3><ul><li>Commodore 64</li><li>ZX Spectrum</li></ul></div>
+        <div class="maker" tabindex="0"><h3>Ports</h3><ul><li>PortMaster</li></ul></div>
+      </div>
+      <p class="note reveal"><b>RetroAchievements</b> is built in: sign in once on first setup and badges pop up in-game.</p>
+    </section>
+
+    <!-- ===== SOUND TEST ===== -->
+    <section id="soundtest" class="block">
+      <div class="st reveal">
+        <p class="st-title">SOUND TEST</p>
+        <div class="st-row">
+          <button class="st-arrow" id="stPrev" aria-label="Previous sound">◀</button>
+          <output class="st-num" id="stNum" aria-live="polite">00</output>
+          <button class="st-arrow" id="stNext" aria-label="Next sound">▶</button>
+        </div>
+        <p class="st-name" id="stName">SCROLL</p>
+        <div class="st-btns">
+          <button class="btn btn-main" id="stPlay">A · PLAY</button>
+          <button class="btn btn-ghost" id="stBgm">START · FUNK LOOP</button>
+        </div>
+        <p class="st-foot">The real FM cues from Banana Blast. There is a secret in the Sound Test.</p>
+      </div>
+    </section>
+
+    <!-- ===== DOWNLOAD ===== -->
+    <section id="download" class="block">
+      <div class="dl reveal">
+        <div class="dl-main">
+          <p class="stage">STAGE 5</p>
+          <h2>Get 0.8 <span class="chrome-sm">“Banana Blast”</span></h2>
+          <p>Flash the image to a microSD card and boot the Retroid Pocket Classic from it. Your games and saves live on
+            an exFAT card, so they're easy to copy on from any computer.</p>
+          <div class="cta">
+            <a class="btn btn-main sfx" href="https://github.com/jesussaves-dev/Banana-Pocket/releases/latest">▶ Latest release</a>
+            <a class="btn btn-ghost sfx" href="https://github.com/jesussaves-dev/Banana-Pocket/blob/main/docs/INSTALL.md">Install guide</a>
+            <a class="btn btn-ghost sfx" href="https://github.com/jesussaves-dev/Banana-Pocket">Source on GitHub</a>
+          </div>
+        </div>
+        <div class="dl-soon">
+          <p class="soon-tag">COMING SOON</p>
+          <h3>One-click installer</h3>
+          <p>A tool that flashes the card, sets up your folders and gets you to the street without the manual steps.</p>
+          <div class="loadbar" aria-hidden="true"><i></i></div>
+          <p class="loading">NOW LOADING<span class="dots"></span></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== KO-FI ===== -->
+    <section id="coin" class="block">
+      <div class="coin reveal">
+        <p class="insert">INSERT COIN</p>
+        <p class="credits">CREDITS <span id="credits">00</span></p>
+        <h2>Keep the banana rolling.</h2>
+        <p>Banana Pocket is made by one person and a lot of measured late nights on a real handheld. If it put a smile
+          on your face, a coffee goes straight into the next release.</p>
+        <a class="btn btn-kofi sfx" id="kofiBtn" href="https://ko-fi.com/jesussavesai" rel="noopener">
+          <span class="cup">☕</span> Buy me a coffee on Ko-fi
+        </a>
+        <p class="small">Or just tell a friend, star the repo, or come hang out on the
+          <a href="https://discord.gg/V5eFeWzcZe" rel="noopener">Discord</a>.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="foot-links">
+      <a href="https://github.com/jesussaves-dev/Banana-Pocket">GitHub</a>
+      <a href="https://discord.gg/V5eFeWzcZe" rel="noopener">Discord</a>
+      <a href="https://ko-fi.com/jesussavesai" rel="noopener">Ko-fi</a>
+      <a href="https://github.com/jesussaves-dev/Banana-Pocket/releases">Releases</a>
+    </div>
+    <p>MIT licensed. Not affiliated with Retroid, Nintendo, Sega or Sony.</p>
+    <p class="secret-hint">↑ ↑ ↓ ↓ ← → ← → B A</p>
+  </footer>
+
+  <a class="kofi-float sfx" href="https://ko-fi.com/jesussavesai" rel="noopener" aria-label="Support Banana Pocket on Ko-fi">
+    <span class="cup">☕</span><span class="kf-label">Ko-fi</span>
+  </a>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="flash" id="flash" aria-hidden="true"></div>
+
+  <script src="main.js"></script>
+</body>
+</html>
