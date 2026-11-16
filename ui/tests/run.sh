@@ -563,6 +563,26 @@ for size in 640x557; do
         [ "$nb" = 0 ] || { echo "FAIL $size: blast's $s has $nb colours off the 9-bit grid"; fail=1; }
         golden "blast-$s" "$OUT/$size-blast-$s.png"
     done
+    # the other palettes (blast-<id>.json, rewritten from blast.json by tools/gen-blast.py): the course, the rack and
+    # Options load with no theme errors, stay on the 9-bit grid, and keep their course's look (a first shot warms the decode queue)
+    sed -i "s|^ *blue_banana *=.*|blue_banana = off|" "$FX/data/settings.conf"
+    for pal in acid arcade; do
+        plog=$OUT/$size-blast-$pal.log
+        sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/blast-$pal.json|" "$FX/data/settings.conf"
+        "$HERE/banana-ui" --headless "$OUT/$size-blast-$pal-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+            --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+            --script "home 0; wait 500; shot warm; wait 16; shot home; press a; wait 900; shot lib; press b; wait 600; press start; wait 300; shot options" \
+            2> "$plog" || { echo "FAIL $size: banana-ui (blast $pal) exited $?"; fail=1; }
+        grep -q "theme:" "$plog" && { echo "FAIL $size: the blast $pal theme: $(grep 'theme:' "$plog" | head -3)"; fail=1; }
+        for s in home lib options; do
+            f=$OUT/$size-blast-$pal-$s.png
+            [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
+            nb=$(off9 "$f")
+            [ "$nb" = 0 ] || { echo "FAIL $size: blast $pal's $s has $nb colours off the 9-bit grid"; fail=1; }
+        done
+        golden "blast-$pal-home" "$OUT/$size-blast-$pal-home.png"
+    done
+    sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/blast.json|" "$FX/data/settings.conf"
     # the card's banana/themes kept up to date with the image's (theme.cpp syncCardThemes): a new card gets a copy; a
     # new version refreshes what the user left alone, adds what is new and keeps an edited file; a card seeded before
     # the manifest has a differing file saved to .before-update/ and then refreshed

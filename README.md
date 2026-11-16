@@ -120,7 +120,8 @@ Pick one in **Settings > Display & sound > Theme**.
 **Style** sits right above Theme. **SNES** is Banana Street and its neighborhoods, and it's the default on a new card.
 **Genesis** is Banana Blast: a neon course at night, with a billboard for each system and the banana on a
 skateboard. **L** and **R** boost to the next maker. It follows the Mega Drive's rules, and its blacks are true
-black, so the AMOLED's pixels stay off.
+black, so the AMOLED's pixels stay off. Two more palettes come with it: **Acid Mall** (a lime floor, pink rails) and
+**Hyper Arcade** (red and blue).
 **Classic** is the menu from before 0.7: a carousel of chunky tiles with a gold highlight, in `pocket`, `pocket-ocean`,
 `pocket-sakura`, `pocket-sunset`, `pocket-terminal`, `fantasy` and six four-shade LCD themes. Each style remembers the
 theme you last used in it.

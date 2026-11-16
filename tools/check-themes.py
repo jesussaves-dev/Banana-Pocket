@@ -194,7 +194,8 @@ def snes_checks(path, themes_dir):
 def genesis_checks(path, themes_dir):
     """A Genesis theme's baked art. Every plain "src" under {art} has to exist. A theme drawn from tools/gen-blast.py
     also has to match a fresh bake byte for byte (none missing, none changed, none left over), and its twinkling
-    stars have to carry the pick() lists and count that `gen-blast.py --twinkle` prints."""
+    stars have to carry the pick() lists and count that `gen-blast.py --twinkle` prints. A blast-<palette>.json has to
+    match what gen-blast.py rewrites from blast.json, and every palette it bakes needs its blast-<palette>.json."""
     text = open(path, encoding="utf-8").read()
     doc = json.loads(strip_comments(text))
     if str(doc.get("style", "")).lower() != "genesis":
@@ -221,6 +222,12 @@ def genesis_checks(path, themes_dir):
                 errors += ["art: %s is not baked by tools/gen-blast.py" % f for f in sorted(have - made)]
                 errors += ["art: %s is out of date (run tools/gen-blast.py)" % f for f in sorted(made & have)
                            if not filecmp.cmp(os.path.join(tmp, f), os.path.join(themes_dir, f), shallow=False)]
+            m = re.match(r"blast-(\w+)\.json$", os.path.basename(path))
+            if m and m.group(1) in gen.PALETTES and gen.theme_text(themes_dir, m.group(1)) != text:
+                errors.append("out of date with blast.json: run tools/gen-blast.py")
+            if os.path.basename(path) == "blast.json":    # every palette gen-blast bakes has its theme
+                errors += ["no blast-%s.json for blast/%s (run tools/gen-blast.py)" % (k, k) for k in gen.PALETTES
+                           if k != "night" and not os.path.isfile(os.path.join(themes_dir, "blast-%s.json" % k))]
             n, xs, ys = gen.twinkle_picks()
             if xs not in text or ys not in text or not re.search(r'"count":\s*%s,\s*"range":\s*%s\b' % (n, n), text):
                 errors.append("twinkle: the stars' lists or count differ from `tools/gen-blast.py --twinkle`")
