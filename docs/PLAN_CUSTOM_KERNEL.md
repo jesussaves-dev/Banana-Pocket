@@ -9,7 +9,7 @@ The Banana kernel has its **own version line, separate from the distro's `VERSIO
 is a young branch off mainline, and becomes **1.0** when it replaces the current kernel in a distro release.
 
 - **Version file:** `buildroot/board/retroid-pocket-classic/KERNEL_VERSION` (one line, e.g. `0.1`).
-- **`uname -r`:** `<mainline>-banana<kver>`, e.g. `7.2.0-banana0.1` (`CONFIG_LOCALVERSION`, set from the file; K8).
+- **`uname -r`:** `<mainline>-Bananix<kver>`, e.g. `7.2.0-Bananix0.1` (`CONFIG_LOCALVERSION`, set from the file; K8).
 - **Tags:** `kernel-v0.1`, `kernel-v0.2`, … `kernel-v1.0` (distro tags stay `v0.8.x`).
 - **Branch:** all kernel work lands on `kernel`; each task gets its own short branch off it (`kernel-k0-report`,
   `kernel-k1-config`, …; git cannot nest `kernel/…` under a branch named `kernel`) and merges back by PR. `kernel` merges into `main` only at a milestone the owner approves.
@@ -17,7 +17,7 @@ is a young branch off mainline, and becomes **1.0** when it replaces the current
 | Kernel version | Contains | Done when |
 |---|---|---|
 | **0.1** | K0: test-boot fallback, `tools/kernel-report.sh`, baseline from the shipped **0.8.0** kernel | baseline report committed in `docs/reports/` |
-| **0.2** | K1 + K8: own `linux-banana.config` from `allnoconfig`, `-banana` version string, pstore | RPC-TEST passes, sound-test 14/14, 20 sleep/wake cycles |
+| **0.2** | K1 + K8: own `linux-banana.config` from `allnoconfig`, `-Bananix` version string, pstore | RPC-TEST passes, sound-test 14/14, 20 sleep/wake cycles |
 | **0.3** | K2: device tree split by subsystem, unused nodes removed | probed-driver list identical to baseline |
 | **0.4** | K3: `banana-linux` repo, patch dir generated from it, CI build + QEMU boot | generated patches byte-identical; CI green |
 | **0.5–0.9** | K4.1 pad driver, K5 audit of the small patches, optional mainline bump (7.3) | per task |
@@ -205,7 +205,7 @@ Async probing for slow drivers, the energy model and cpu capacities (0057) check
 `none`). Each one measured with K0's report, one at a time.
 
 ### K8 — Identity · S
-`CONFIG_LOCALVERSION="-banana"` and a Banana build string (so `uname -r` reads e.g. `7.2.0-banana1`), panic → reboot
+`CONFIG_LOCALVERSION="-Bananix<kver>"` and a Banana build string (so `uname -r` reads e.g. `7.2.0-Bananix0.2`), panic → reboot
 after N s with the last `dmesg` saved to `/data` on the next boot (pstore/ramoops), and a Banana line in the kernel's
 early console for the serial log.
 
