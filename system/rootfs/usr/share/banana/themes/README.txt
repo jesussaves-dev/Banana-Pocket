@@ -35,8 +35,9 @@ example's file name replaces that example.
         "psx": "mine/psx.png"      in roms/, and banana/systems.conf.default lists them all)
       },
       "sounds": {                  the menu's sounds (WAV): scroll, select, back, fav, ready, insert; "off"
-        "scroll": "mine/tick.wav", for none. "bgm" is the background loop (a bgm.wav on the card still wins).
-        "fav": "off",              They change with the theme.
+        "scroll": "mine/tick.wav", for none. "boost" (optional) is L/R on the home screen, else the scroll.
+        "fav": "off",              "bgm" is the background loop (a bgm.wav on the card still wins).
+                                   They change with the theme.
         "bgm": "mine/loop.wav"
       }
     }

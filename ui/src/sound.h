@@ -24,6 +24,7 @@ namespace banana
 		explicit Sound(const std::string& dir);
 		~Sound();
 		void play(const std::string& name);
+		bool has(const std::string& name) const { return names.count(name) != 0; }	// the theme has that cue (the menu's thread)
 		// The burn-in guard's hook (idle.h): the stream lives while the screen is on. off: the device is released
 		// (the screen being off *is* the idle); on: it is pre-opened, so the next cue needs no DSP graph to be
 		// instantiated. The press that wakes the screen is swallowed by the guard, which is free head-start time.

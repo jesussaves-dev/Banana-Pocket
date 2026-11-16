@@ -121,7 +121,7 @@ namespace banana
 	Sound::Bank Sound::load() const
 	{
 		Bank b;
-		for (const char* n : { "scroll", "select", "back", "fav", "ready", "insert" })
+		for (const char* n : { "scroll", "select", "back", "fav", "ready", "insert", "boost" })
 		{
 			// a user theme's own sound for it (rnds::themeFiles; "off": none), else the theme's (one that doesn't
 			// load: the theme's)

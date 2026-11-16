@@ -922,7 +922,10 @@ int main(int argc, char** argv)
 		if (letterJump(*ui, lib, b) || ui->press(b))
 		{
 			dirty = true;
-			if (const char* s = soundOf(ev.key, before, ui->view())) sound.play(s);
+			const char* s = soundOf(ev.key, before, ui->view());
+			// L/R on the home shelf jump a maker: a theme's own "boost" if it has one (Blast's whoosh)
+			if ((ev.key == Key::L || ev.key == Key::R) && before == Menu::HOME && sound.has("boost")) s = "boost";
+			if (s) sound.play(s);
 		}
 		if (ev.key == Key::LEFT || ev.key == Key::RIGHT || ev.key == Key::UP || ev.key == Key::DOWN || ev.key == Key::L || ev.key == Key::R)
 		{

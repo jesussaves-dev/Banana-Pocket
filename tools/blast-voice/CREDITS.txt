@@ -1,0 +1,9 @@
+The voice chops in Banana Blast's loop (tools/gen-blast-sounds.py --voice sample|mix), all CC0 1.0 (public domain),
+from Freesound's HQ previews, converted to 32 kHz mono:
+
+  yeah.wav  "Shouting Yeah.wav" by tonsil5         https://freesound.org/people/tonsil5/sounds/416843/
+  hey.wav   "HEY VERY LOW 4.WAV" by metrostock99   https://freesound.org/people/metrostock99/sounds/345083/
+  what.wav  "WHAT?!" by unfa                       https://freesound.org/people/unfa/sounds/580321/
+  whoo.wav  "US Military Soldier Shouting "Whoo!"" by qubodup   https://freesound.org/people/qubodup/sounds/161340/
+
+Credit isn't required under CC0; it's kept here anyway. Swap in your own: any WAV with the same name.

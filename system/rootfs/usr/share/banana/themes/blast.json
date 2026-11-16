@@ -12,6 +12,11 @@
   "crisp": true,
   "canvas": { "w": 310 },
 
+  // the cues, a boost for L/R and the loop, synthesised by tools/gen-blast-sounds.py (2-op FM, the PSG, crushed voice)
+  "sounds": { "scroll": "blast/sounds/scroll.wav", "select": "blast/sounds/select.wav", "back": "blast/sounds/back.wav",
+    "fav": "blast/sounds/fav.wav", "ready": "blast/sounds/ready.wav", "insert": "blast/sounds/insert.wav",
+    "boost": "blast/sounds/boost.wav", "bgm": "blast/sounds/bgm.wav" },
+
   // every colour is on the Mega Drive's grid: a channel is one of 00 24 49 6d 92 b6 db ff
   "vars": {
     "art": "blast/night",
