@@ -44,3 +44,5 @@ __pycache__/
 /ui/build/
 /AGENTS.md
 /docs/superpowers/
+# local DeepSeek/OpenCode helper (see .handoff/README.md), not part of the repo
+/tools/oc

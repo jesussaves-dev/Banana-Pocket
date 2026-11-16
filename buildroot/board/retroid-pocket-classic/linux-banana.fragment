@@ -1,6 +1,6 @@
 # Retroid Pocket Classic (SM4450) — board fragment.
-# The base options live in linux-rocknix.config (imported from ROCKNIX 7.2).
-# EFI stub + squashfs + fbcon + evdev are already enabled there.
+# The base config is linux-banana.config (K1.2); linux-rocknix.config is the 0.8.0 base, kept for comparison only.
+# Several lines below repeat that file on purpose: this fragment is what a base swap must never lose.
 
 # ---- identity (K8.1) ----
 # The kernel line's own version, from KERNEL_VERSION beside this file: uname -r reads 7.2.0-Bananix0.2, so a report or a
@@ -34,8 +34,8 @@ CONFIG_SMB_SERVER=m
 # ftrace/tracefs or dynamic-debug (no Banana userland script opens /sys/kernel/debug). Off saves kernel size and a
 # little boot work. FTRACE is what most of the tracer machinery hangs off, so it has to go together with TRACING (a
 # tracer would re-select it).
-# (SLUB_DEBUG is left alone: it has a prompt only under CONFIG_EXPERT, so without EXPERT it takes its default y and a
-#  "# ... is not set" line has no effect -- and turning EXPERT on just to reach it would expose hundreds of others.)
+# SLUB_DEBUG has a prompt only under CONFIG_EXPERT, which linux-banana.config turns on (for VT), so it can go too.
+# CONFIG_SLUB_DEBUG is not set
 # CONFIG_FTRACE is not set
 # CONFIG_TRACING is not set
 # CONFIG_DYNAMIC_DEBUG is not set
