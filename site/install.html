@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en" data-palette="night">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install Banana Pocket</title>
+  <meta name="description" content="Install Banana Pocket on the Retroid Pocket Classic: the bootloader from this page, the card with BananaLinux Flasher.">
+  <meta name="theme-color" content="#000000">
+  <link rel="icon" href="assets/img/idle0.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Chakra+Petch:ital,wght@0,400;0,600;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .inst { max-width: 860px; }
+    .inst h1 { font: clamp(18px, 4vw, 28px)/1.4 var(--px); margin: 0 0 18px; color: var(--label); }
+    .inst > p, .card p, .card li { color: #dbdbdb; font-size: 17px; line-height: 1.55; }
+    .card { border: 3px solid var(--line); background: #000; padding: 22px; margin: 26px 0; position: relative; }
+    .card h2 { font: 13px/1.5 var(--px); margin: 0 0 14px; color: var(--ink); }
+    .card[data-state="done"] { border-color: var(--b); }
+    .card[data-state="bad"] { border-color: var(--kofi); }
+    .card[data-state="busy"] { border-color: var(--label); }
+    .card .state { font: 10px var(--px); color: var(--b); margin: 12px 0 0; min-height: 1em; }
+    .card[data-state="bad"] .state { color: var(--kofi); }
+    .card .cta { justify-content: flex-start; margin-top: 18px; }
+    .btn[disabled] { opacity: .35; pointer-events: none; }
+    .warn { border: 3px solid var(--kofi); padding: 16px 18px; color: #fff; background: #1a0000; font-size: 16px; line-height: 1.5; }
+    .warn strong { color: var(--kofi); }
+    #log { font: 13px/1.5 ui-monospace, monospace; background: #0a0a0a; border: 2px solid var(--line); padding: 12px;
+           height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; color: #cfcfcf; margin-top: 18px; }
+    #log .ok { color: var(--b); } #log .bad { color: var(--kofi); } #log .dim { color: var(--dim); }
+    .card code, .inst code { font: 14px ui-monospace, monospace; background: #151515; padding: 1px 5px; color: var(--label); }
+    pre { background: #0a0a0a; border: 2px solid var(--line); padding: 12px; overflow-x: auto; font: 13px ui-monospace, monospace; color: #cfcfcf; }
+    details { margin-top: 14px; } summary { cursor: pointer; color: var(--b); font-size: 16px; }
+    input[type=file] { color: #dbdbdb; margin-top: 10px; max-width: 100%; }
+    .back { font: 10px var(--px); color: var(--b); text-decoration: none; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header class="nav">
+    <a class="brand" href="index.html" aria-label="Banana Pocket home">
+      <img src="assets/img/idle0.png" alt="" width="32" height="22">
+      <span>BANANA<em>POCKET</em></span>
+    </a>
+  </header>
+
+  <main class="block inst">
+    <a class="back" href="index.html#download">◀ BACK</a>
+    <p class="stage">INSTALL</p>
+    <h1>Two steps to the street.</h1>
+    <p>This page puts the <strong>OpenABL</strong> bootloader on the handheld over USB, which only needs doing once.
+      Then <strong>BananaLinux Flasher</strong> writes the microSD card. Android stays where it is.</p>
+
+    <div class="warn">
+      <strong>Retroid Pocket Classic only</strong> (Snapdragon G1 Gen 2, SM4450). The page checks the device and refuses
+      anything else. A bootloader for the wrong chipset is the one way to brick a handheld. Use it at your own risk.
+    </div>
+
+    <section class="card" id="stepFile" data-state="">
+      <h2>1a · Bootloader file</h2>
+      <p id="filePick" hidden>Download <a id="ablLink" href="#" rel="noopener"><code>abl_signed-SM4450.elf</code></a>
+        from the OpenABL v1.2 release, then pick it here. The page checks its sha256 before it will flash it.<br>
+        <input type="file" id="ablFile" accept=".elf,application/octet-stream"></p>
+      <p class="state" id="fileState"></p>
+      <p>OpenABL v1.2 by the <a href="https://github.com/OpenHandheldCollective/OpenABL" rel="noopener">OpenHandheldCollective</a>,
+        unmodified, GPL-3.0-or-later: <a href="abl/NOTICE.txt">licence and source</a>.</p>
+    </section>
+
+    <section class="card" id="stepDevice" data-state="">
+      <h2>1b · Connect the handheld</h2>
+      <ol>
+        <li>Power the handheld off.</li>
+        <li>Hold <strong>Volume Down</strong> and press <strong>Power</strong>: it opens fastboot.</li>
+        <li>Plug it into this computer with a USB-C <strong>data</strong> cable, then press Connect and pick it.</li>
+      </ol>
+      <p id="noUsb" class="warn" hidden>This browser can't talk to USB devices. Open this page in <strong>Chrome</strong>
+        or <strong>Edge</strong> on a computer (Firefox and Safari don't have WebUSB).</p>
+      <p>A stock handheld then restarts once into <strong>fastbootd</strong> (its own bootloader can't flash): press the
+        button that appears, wait for the fastbootd screen, and press Connect again.</p>
+      <div class="cta">
+        <button class="btn btn-ghost" id="connectBtn">Connect</button>
+        <button class="btn btn-main" id="fbdBtn" hidden>▶ Restart into fastbootd</button>
+      </div>
+      <p class="state" id="devState"></p>
+      <details>
+        <summary>The handheld doesn't show up</summary>
+        <p><strong>Windows:</strong> install the
+          <a href="https://developer.android.com/studio/run/win-usb" rel="noopener">Google USB driver</a>, replug, try again.</p>
+        <p><strong>Linux:</strong> let your user open fastboot devices, then replug:</p>
+        <pre>echo 'SUBSYSTEM=="usb", ENV{ID_USB_INTERFACES}=="*:ff4203:*", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/51-fastboot.rules
+sudo udevadm control --reload-rules</pre>
+        <p><strong>Close anything else using it</strong>: a running <code>fastboot</code> or <code>adb</code> server
+          holds the device (<code>adb kill-server</code>).</p>
+      </details>
+    </section>
+
+    <section class="card" id="stepFlash" data-state="">
+      <h2>1c · Flash OpenABL</h2>
+      <p>Writes OpenABL to both bootloader slots (<code>abl_a</code>, <code>abl_b</code>) and restarts the handheld.
+        Don't unplug it until this says done.</p>
+      <div class="cta"><button class="btn btn-main" id="flashBtn" disabled>▶ Flash bootloader</button></div>
+      <p class="state" id="flashState"></p>
+      <div id="log" role="log" aria-live="polite"></div>
+    </section>
+
+    <section class="card" id="next">
+      <h2>2 · Write the card</h2>
+      <p><strong>BananaLinux Flasher</strong> downloads the newest Banana Pocket release, checks it and writes it to the
+        microSD. Pick <strong>Retroid Pocket Classic</strong>, pick the card, press <strong>Download &amp; Flash</strong>.
+        Everything on the card is erased.</p>
+      <div class="cta">
+        <a class="btn btn-main" href="https://github.com/jesussaves-dev/banana-linux-flasher/releases/latest">⬇ BananaLinux Flasher</a>
+      </div>
+      <p>Windows <code>.exe</code> and Linux AppImage. On macOS, use the flasher from source or balenaEtcher with
+        <code>banana-retroid-pocket-classic.img.gz</code> from the
+        <a href="https://github.com/jesussaves-dev/Banana-Pocket/releases/latest">latest release</a>.</p>
+    </section>
+
+    <section class="card">
+      <h2>3 · First boot</h2>
+      <ol>
+        <li>Put the card in the handheld. Hold <strong>Volume Down</strong> and press <strong>Power</strong> for the OpenABL menu.</li>
+        <li>Set <strong>Boot mode → Linux</strong> and <strong>Boot source → Auto</strong>, then <strong>Start</strong>.
+          OpenABL remembers these, so after this an ordinary power-on boots Banana.</li>
+        <li>The first boot takes a few seconds longer while it makes the games partition. The first-time setup opens next.</li>
+      </ol>
+      <p>Getting Android back: set <strong>Boot mode → Android</strong> in the same menu. More detail, and what to do
+        when something goes wrong, is in the
+        <a href="https://github.com/jesussaves-dev/Banana-Pocket/blob/main/docs/INSTALL.md">install guide</a>.</p>
+    </section>
+  </main>
+
+  <script src="install.js"></script>
+</body>
+</html>
