@@ -56,7 +56,40 @@ echo "   sha256 $l"
 if [ -n "$APPLY" ]; then
     echo "== applying (writes the inactive slot and restarts into it)"
     run "$UPDATE apply $DEST/$NAME"
-    run "sync; reboot"
+    # A reboot sent right after the apply has been seen to do nothing (rc 0, the same uptime; a second one worked).
+    # So it is checked: the kernel's boot id must change, else the reboot is sent again; then the handheld is waited
+    # for and its version compared with the package's.
+    want=$(tar -tf "$P" 2>/dev/null | grep -E '(^|/)VERSION$' | head -n 1)
+    [ -z "$want" ] || want=$(tar -xOf "$P" "$want" 2>/dev/null | head -n 1)
+    bootid() { run "cat /proc/sys/kernel/random/boot_id" 2>/dev/null || true; }
+    b0=$(bootid)
+    try=1
+    while :; do
+        run "sync; reboot" 2>/dev/null || true
+        n=0
+        while [ $n -lt 20 ]; do
+            sleep 1; n=$((n + 1))
+            b=$(bootid)
+            [ -z "$b" ] || [ "$b" != "$b0" ] && break
+        done
+        { [ -z "$b" ] || [ "$b" != "$b0" ]; } && break
+        [ $try -ge 3 ] && { echo "the handheld is still up after $try reboots: restart it by hand" >&2; exit 1; }
+        echo "   still running the same boot after ${n} s: rebooting again"
+        try=$((try + 1))
+    done
+    echo "== restarting"
+    n=0
+    while [ $n -lt 180 ]; do
+        sleep 2; n=$((n + 2))
+        b=$(bootid)
+        [ -n "$b" ] && [ "$b" != "$b0" ] && break
+    done
+    [ -n "$b" ] && [ "$b" != "$b0" ] || { echo "the handheld didn't come back within 3 minutes (no link)" >&2; exit 1; }
+    got=$(run "cat /etc/banana/version" 2>/dev/null || true)
+    if [ -n "$want" ] && [ "$got" != "$want" ]; then
+        echo "back up, but running $got, not $want (the slot switch didn't take?)" >&2; exit 1
+    fi
+    echo "== up again, running ${got:-an unknown version}"
 else
     echo "== done. On the handheld: Settings > System > Update, or:"
     echo "   ssh $HOST '$UPDATE apply $DEST/$NAME && sync && reboot'"

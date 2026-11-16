@@ -87,7 +87,7 @@
   "Menu sounds": "Sonidos del menú",
   "The menu's clicks, and the cartridge going into the console.": "Los clics del menú y el cartucho entrando en la consola.",
   "Background Music": "Música de fondo",
-  "An ambient loop under the menu, mixed low so the clicks stay clear. Put a bgm.wav (or music/bgm.wav) on the card to hear one. Off stops it at once.": "Un bucle ambiental bajo el menú, mezclado bajo para que los clics se oigan claros. Pon un bgm.wav (o music/bgm.wav) en la tarjeta para oírlo. Desactivado lo detiene al momento.",
+  "An ambient loop under the menu, mixed low so the clicks stay clear. The SNES style plays its own; a bgm.wav (or music/bgm.wav) on the card plays instead. Off stops it at once.": "Un bucle ambiental bajo el menú, mezclado bajo para que los clics se oigan claros. Pon un bgm.wav (o music/bgm.wav) en la tarjeta para oírlo. Desactivado lo detiene al momento.",
   "Battery": "Batería",
   "The battery in the status bar: its icon, or its icon and how full it is.": "La batería en la barra de estado: su icono, o su icono y cuánto queda.",
   "Clock": "Reloj",
@@ -171,6 +171,9 @@
   "Change disc": "Cambiar disco",
   "Fast-forward": "Avance rápido",
   "Shader": "Shader",
-  "Achievements": "Logros"
+  "Achievements": "Logros",
+    "Pixel": "Píxel",
+    "Original": "Original",
+    "In the SNES style, a game's box on the counter: drawn on the street's grid in the Super NES's colours, or the picture as it is.": "En el estilo SNES, la caja del juego en el mostrador: dibujada en la cuadrícula de la calle con los colores de Super NES, o la imagen tal cual."
 }
 }

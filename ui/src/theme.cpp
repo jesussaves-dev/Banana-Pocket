@@ -8,6 +8,8 @@
 #include <fstream>
 #include <map>
 #include <sstream>
+#include <cerrno>
+#include <sys/stat.h>
 
 namespace banana
 {
@@ -182,6 +184,123 @@ namespace banana
 		std::string p = themePath(value);
 		size_t k = p.rfind('/');
 		return k == std::string::npos ? "." : p.substr(0, k);
+	}
+
+	// ---- the card's copy of the image's themes ----------------------------------------------------------------------
+	static bool readAll(const std::string& p, std::string& out)
+	{
+		std::ifstream f(p, std::ios::binary);
+		if (!f) return false;
+		std::ostringstream ss;
+		ss << f.rdbuf();
+		out = ss.str();
+		return true;
+	}
+
+	static std::string fnv(const std::string& d)
+	{
+		uint64_t h = 1469598103934665603ull;
+		for (unsigned char c : d) { h ^= c; h *= 1099511628211ull; }
+		char b[17];
+		snprintf(b, sizeof b, "%016llx", (unsigned long long)h);
+		return b;
+	}
+
+	// every regular file under dir, as paths relative to it (dot files and folders skipped)
+	static void listFiles(const std::string& dir, const std::string& rel, std::vector<std::string>& out)
+	{
+		DIR* d = opendir((dir + (rel.empty() ? "" : "/" + rel)).c_str());
+		if (!d) return;
+		while (dirent* e = readdir(d))
+		{
+			std::string n = e->d_name;
+			if (n.empty() || n[0] == '.') continue;
+			std::string r = rel.empty() ? n : rel + "/" + n;
+			struct stat st;
+			if (stat((dir + "/" + r).c_str(), &st) != 0) continue;
+			if (S_ISDIR(st.st_mode)) listFiles(dir, r, out);
+			else if (S_ISREG(st.st_mode)) out.push_back(r);
+		}
+		closedir(d);
+	}
+
+	static bool mkdirs(const std::string& path)
+	{
+		for (size_t k = 1; k <= path.size(); k++)
+			if (k == path.size() || path[k] == '/')
+			{
+				std::string p = path.substr(0, k);
+				if (mkdir(p.c_str(), 0755) != 0 && errno != EEXIST) return false;
+			}
+		return true;
+	}
+
+	static bool writeAll(const std::string& p, const std::string& data)
+	{
+		size_t k = p.rfind('/');
+		if (k != std::string::npos && !mkdirs(p.substr(0, k))) return false;
+		std::string tmp = p + ".new";
+		{
+			std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+			if (!f || !f.write(data.data(), (std::streamsize)data.size())) return false;
+		}
+		return rename(tmp.c_str(), p.c_str()) == 0;
+	}
+
+	std::string syncCardThemes(const std::string& card, const std::string& image, const std::string& version)
+	{
+		struct stat st;
+		if (version.empty() || stat(image.c_str(), &st) != 0) return "";
+		const std::string manifest = card + "/.image-files";
+		std::map<std::string, std::string> seeded;	// relative path -> its hash when it was copied
+		std::string had, m;
+		bool known = readAll(manifest, m);
+		if (known)
+		{
+			std::istringstream in(m);
+			std::string ln;
+			std::getline(in, had);
+			while (std::getline(in, ln))
+			{
+				size_t t = ln.find('\t');
+				if (t != std::string::npos) seeded[ln.substr(t + 1)] = ln.substr(0, t);
+			}
+			if (had == version) return "";
+		}
+		bool fresh = stat(card.c_str(), &st) != 0;
+		std::vector<std::string> files;
+		listFiles(image, "", files);
+		std::sort(files.begin(), files.end());
+		std::string out = version + "\n";
+		int added = 0, refreshed = 0, kept = 0, saved = 0, failed = 0;
+		for (auto& r : files)
+		{
+			std::string img, cur;
+			if (!readAll(image + "/" + r, img)) continue;
+			const std::string h = fnv(img), dst = card + "/" + r;
+			bool have = readAll(dst, cur);
+			std::string record = h;
+			if (!have) { if (writeAll(dst, img)) added++; else failed++; }
+			else if (cur == img) {}
+			else
+			{
+				const std::string ch = fnv(cur);
+				auto it = seeded.find(r);
+				if (known && it != seeded.end() && it->second != ch) { kept++; record = it->second; }	// the user's edit
+				else if (known && it == seeded.end()) { kept++; continue; }						// theirs, not ours
+				else
+				{
+					if (!known && !fresh) { if (writeAll(card + "/.before-update/" + r, cur)) saved++; else { failed++; continue; } }
+					if (writeAll(dst, img)) refreshed++; else failed++;
+				}
+			}
+			out += record + "\t" + r + "\n";
+		}
+		if (!writeAll(manifest, out)) failed++;
+		char b[200];
+		snprintf(b, sizeof b, "%s -> %s: %d added, %d refreshed, %d kept as changed, %d saved to .before-update, %d failed",
+			known ? had.c_str() : fresh ? "none" : "unrecorded", version.c_str(), added, refreshed, kept, saved, failed);
+		return b;
 	}
 
 	std::string styleName(const std::string& style)

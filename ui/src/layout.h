@@ -48,6 +48,7 @@ namespace banana
 		bool animating() const override;
 		void setLog(std::function<void(const std::string&)> log) override;
 		bool ownLocking() const override { return true; }	// (the jobs share only the queue, under jm)
+		void woke() override;
 
 		struct Node;
 		struct Impl;

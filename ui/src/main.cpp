@@ -350,9 +350,15 @@ int main(int argc, char** argv)
 	auto settings = readSettings(o.data);
 	i18nInit(o.data);	// the Settings screen's language, before it is built
 	if (!o.theme.empty()) settings["theme"] = "file:" + o.theme;	// --theme: the theme being made (headless render)
-	// banana/themes on the card, for themes of one's own: the image's README and examples to start from (once)
-	if (access((o.data + "/themes").c_str(), F_OK) != 0 && access("/usr/share/banana/themes", F_OK) == 0)
-		if (system(("mkdir -p '" + o.data + "/themes' && cp -r /usr/share/banana/themes/. '" + o.data + "/themes/' 2>/dev/null").c_str()) != 0) {}	// (-r: a theme's folder of pictures too)
+	// banana/themes on the card, for themes of one's own: the image's README and examples to start from, brought up
+	// to date once per image version (theme.h: the user's own edits are kept)
+	{
+		std::string v;
+		std::ifstream(getenv("BANANA_VERSION_FILE") ? getenv("BANANA_VERSION_FILE") : "/etc/banana/version") >> v;
+		const char* img = getenv("BANANA_IMAGE_THEMES");
+		std::string did = syncCardThemes(o.data + "/themes", img && *img ? img : "/usr/share/banana/themes", v);
+		if (!did.empty()) logf("themes on the card: %s", did.c_str());
+	}
 	// the time zone, for the clock and every game started from here (a POSIX rule, see settings.cpp)
 	if (!settings["timezone"].empty()) { setenv("TZ", settings["timezone"].c_str(), 1); tzset(); }
 	// the palette (a user theme's colours and accent set on the way) and the accent, before anything is drawn: the
@@ -370,7 +376,7 @@ int main(int argc, char** argv)
 	Host lib(o.systems, o.roms, o.data, o.assets);
 	lib.motion = settings["motion"] != "off";
 	lib.twelveHour = settings["clock"] == "12h";
-	lib.batteryShown = settings["battery"] == "percent" ? "text" : "icon";
+	lib.batteryShown = settings["battery"] == "percent" ? "text" : "icon"; lib.boxLookShown = settings["boxart_look"] == "original" ? "original" : "pixel";
 
 	if (!o.headless.empty())
 	{
@@ -738,7 +744,7 @@ int main(int argc, char** argv)
 			settings = readSettings(o.data);
 			lib.motion = settings["motion"] != "off";
 			lib.twelveHour = settings["clock"] == "12h";
-			lib.batteryShown = settings["battery"] == "percent" ? "text" : "icon";
+			lib.batteryShown = settings["battery"] == "percent" ? "text" : "icon"; lib.boxLookShown = settings["boxart_look"] == "original" ? "original" : "pixel";
 			sound.enabled = settings["sounds"] != "off";
 			sound.setBgm(settings["bgm"] != "off");
 			configureGuard();
@@ -1431,7 +1437,7 @@ int main(int argc, char** argv)
 							if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
 						}
 						std::lock_guard<std::mutex> l(worker.uiLock);
-						be.invalidate(); ui->dataChanged(); dirty = true; batteryDue = true; guard.wake(nowMs(), &sound); sound.setBgm(settings["bgm"] != "off"); sound.warm();
+						be.invalidate(); ui->dataChanged(); if (gamePid <= 0) ui->woke(); dirty = true; batteryDue = true; guard.wake(nowMs(), &sound); sound.setBgm(settings["bgm"] != "off"); sound.warm();
 					}
 					if (c == SIGUSR2)
 					{

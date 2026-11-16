@@ -27,6 +27,13 @@ namespace banana
 	std::string themeValue(const std::string& value, const std::string& key);
 	std::string themeDir(const std::string& value);
 
+	// The card's banana/themes starts as a copy of the image's, and a card file shadows the image's of the same name,
+	// so an update's new theme files would never reach a card seeded before it. Once per image version (a manifest,
+	// .image-files, records the version and each file as it was copied): files the user hasn't changed are refreshed,
+	// new ones added, changed ones kept. A card seeded before the manifest has no record: a file that differs is put in
+	// .before-update/ first, then refreshed. Returns what it did, for the log ("" when there was nothing to do).
+	std::string syncCardThemes(const std::string& card, const std::string& image, const std::string& version);
+
 	// the Theme setting's value -> the palette it draws with ("dark" or "light"), with a user theme's colours
 	// and accent set for it (rnds::themeColors, rnds::accent); any other theme clears them and sets accentName's accent.
 	// A theme that can't be read falls back to dark, its reason in *why

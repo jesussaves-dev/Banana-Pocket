@@ -97,6 +97,8 @@ namespace banana
 		int moveDir = 1;
 		float scroll = 0;				// the cursor's eased position
 		double launchAt = -1;
+		double wakeAt = -1, wakeMs = 450;	// the wake's transition: started at the next update after woke()
+		bool wakePending = false;
 		int launchGame = -1;
 		size_t cuesDone = 0;
 		mutable bool usedTime = false;	// the last frame read "time": it moves by itself
@@ -302,6 +304,7 @@ namespace banana
 			if (const JVal* b = doc->get("behavior"))
 			{
 				launchMs = b->num("launchMs", launchMs);
+				wakeMs = b->num("wakeMs", wakeMs);
 				settleMs = b->num("settleMs", settleMs);
 				scrollMs = b->num("scrollMs", scrollMs);
 				fps = std::max(1.0, std::min(60.0, b->num("fps", fps)));
@@ -385,6 +388,7 @@ namespace banana
 			else if (f == "newBlock") out = EV(index <= 0 || index > (int)systems.size() || systems[index - 1].maker != si.maker ? 1.0 : 0.0);
 			else if (f == "color" || f == "accent") out = EV(hex(si.accent));
 			else if (f == "icon") out = EV(si.icon);
+			else if (f == "folder") out = EV(si.folder);
 			else if (f == "games") out = EV((double)si.games);
 			else if (f == "played") out = EV((double)si.played);
 			else if (f == "time") out = EV(si.time);
@@ -453,6 +457,7 @@ namespace banana
 			}
 			if (n == "charging") { Library* lib = dynamic_cast<Library*>(m->src); out = EV(lib && lib->power().charging ? 1.0 : 0.0); return true; }
 			if (n == "batteryMode") { out = EV(m->src->batteryMode()); return true; }
+			if (n == "boxLook") { out = EV(m->src->boxLook()); return true; }
 			if (n == "online") { out = EV(m->src->online() ? 1.0 : 0.0); return true; }
 			if (n == "motion") { out = EV(m->src->topMotion() ? 1.0 : 0.0); return true; }
 			if (n == "brand") { out = EV(rnds::brandNote); return true; }
@@ -472,6 +477,8 @@ namespace banana
 			if (n == "games.count" || n == "gameCount") { out = EV((double)games.size()); return true; }
 			if (n == "launch.t") { out = EV(launchAt < 0 ? 0.0 : now - launchAt); return true; }
 			if (n == "launch.progress") { out = EV(launchAt < 0 ? 0.0 : std::min(1.0, (now - launchAt) / std::max(1.0, launchMs))); return true; }
+			// 0 just after a wake to 1 (and 1 when there was none): what a theme undoes as the panel comes back
+			if (n == "wake.progress") { out = EV(wakePending ? 0.0 : wakeAt < 0 ? 1.0 : std::min(1.0, (now - wakeAt) / std::max(1.0, wakeMs))); return true; }
 			if (n == "empty") { out = EV(m->mView != Menu::HOME && games.empty() ? 1.0 : 0.0); return true; }
 			if (n == "empty.title") { out = EV(m->src->emptyTitle()); return true; }
 			if (n == "empty.hint") { out = EV(m->src->emptyHint()); return true; }
@@ -1323,7 +1330,33 @@ namespace banana
 				else if (j.crop == "noStrip") src = rnds::coverWithoutStrip(src);
 				rnds::Bitmap out;
 				float ox = 0, oy = 0;
-				if (j.fit == "contain" || j.fit == "pixelContain")
+				if (j.fit == "ditherContain" && !src.alpha)
+				{
+					// the picture on the theme's grid: contained at one texel a unit, snapped to 15-bit colour through
+					// a 4x4 ordered dither (the Super NES's colours, no smooth blends), then grown a unit a texel
+					const int u = std::max(1, (int)std::lround(s));
+					float fw, fh;
+					rnds::containSize(src.w, src.h, std::max(1, j.w / u), std::max(1, j.h / u), fw, fh);
+					int gw = std::max(1, (int)std::lround(fw)), gh = std::max(1, (int)std::lround(fh));
+					rnds::Bitmap g = rnds::resize(src, gw, gh);
+					static const int BAYER[4][4] = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
+					for (int y = 0; y < g.h; y++)
+						for (int x = 0; x < g.w; x++)
+						{
+							uint8_t* p = &g.px[(y * g.w + x) * 4];
+							const float d = (BAYER[y & 3][x & 3] + 0.5f) / 16 - 0.5f;
+							for (int ch = 0; ch < 3; ch++)
+							{
+								int k = (int)std::floor(p[ch] * 31 / 255.0f + d + 0.5f);
+								k = std::max(0, std::min(31, k));
+								p[ch] = (uint8_t)((k << 3) | (k >> 2));
+							}
+							p[3] = p[3] >= 128 ? 255 : 0;
+						}
+					out = rnds::resizeNearest(g, gw * u, gh * u);
+					ox = std::floor((j.w / u - gw) / 2.0f) * u; oy = std::floor((j.h / u - gh) / 2.0f) * u;
+				}
+				else if (j.fit == "contain" || j.fit == "pixelContain" || j.fit == "ditherContain")
 				{
 					float fw, fh;
 					rnds::containSize(src.w, src.h, j.w, j.h, fw, fh);
@@ -1629,6 +1662,8 @@ namespace banana
 		float k = 1 - (float)std::exp(-dt / std::max(1.0, d->scrollMs));
 		d->scroll += (to - d->scroll) * k;
 		if (std::fabs(to - d->scroll) < 0.002f) d->scroll = to;
+		if (d->wakePending) { d->wakePending = false; d->wakeAt = t; }
+		else if (d->wakeAt >= 0 && t - d->wakeAt >= d->wakeMs) d->wakeAt = -1;
 		if (d->launchAt >= 0)
 		{
 			while (d->cuesDone < d->cues.size() && t - d->launchAt >= d->cues[d->cuesDone].second) src->cue(d->cues[d->cuesDone++].first);
@@ -1643,9 +1678,11 @@ namespace banana
 
 	void LayoutMenu::render() { d->render(); }
 
+	void LayoutMenu::woke() { d->wakePending = true; d->wakeAt = -1; }
+
 	bool LayoutMenu::animating() const
 	{
-		return std::fabs(d->scroll - (float)d->cursor()) > 0.002f || d->launchAt >= 0 || d->smoothMoving ||
+		return std::fabs(d->scroll - (float)d->cursor()) > 0.002f || d->launchAt >= 0 || d->wakePending || d->wakeAt >= 0 || d->smoothMoving ||
 			d->now - std::max(d->movedAt, d->enteredAt) < d->settleMs;
 	}
 

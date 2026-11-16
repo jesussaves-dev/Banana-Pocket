@@ -781,7 +781,7 @@ def main():
         p.update(wall=hood["wall"], back=hood["back"])
         for k, c in {"workshop": workshop(p), "drawer": drawer(p, False), "drawer-on": drawer(p, True), "sheet": sheet(p),
                      "book": book(p), "ticket": ticket(p), "ledger": ledger(p),
-                     "pill": panel(p, 124, 22), "notice": panel(p, 282, 48),
+                     "pill": panel(p, 124, 22), "notice": panel(p, 282, 48), "toast": panel(p, 300, 34),
                      "hud": panel(p, 310, 46), "chip52": panel(p, 52, 14), "chip34": panel(p, 34, 14), "interior": interior(p),
                      "row": row(p, False), "rowsel": row(p, True), "chip24": panel(p, 24, 14), "bolt": bolt(p),
                      **{"batt%d" % s: battery(p, s) for s in range(len(BATT_BROWN))}}.items():

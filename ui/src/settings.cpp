@@ -318,6 +318,7 @@ namespace banana
 		add(D, "music", "Menu sounds", "The menu's clicks, and the cartridge going into the console.", menu, "sounds", { "On", "Off" }, { "on", "off" });
 		add(D, "music", "Background Music", "An ambient loop under the menu, mixed low so the clicks stay clear. The SNES style plays its own; a bgm.wav (or music/bgm.wav) on the card plays instead. Off stops it at once.", menu, "bgm", { "On", "Off" }, { "on", "off" });
 		add(D, "picture", "Battery", "The battery in the status bar: its icon, or its icon and how full it is.", menu, "battery", { "Icon", "Icon and %" }, { "icon", "percent" });
+		add(D, "picture", "Box art", "In the SNES style, a game's box on the counter: drawn on the street's grid in the Super NES's colours, or the picture as it is.", menu, "boxart_look", { "Pixel", "Original" }, { "pixel", "original" });
 		add(D, "picture", "Clock", "How the time in the status bar is written.", menu, "clock", { "24-hour", "12-hour" }, { "24h", "12h" });
 		add(D, "picture", "Boot animation", "The bananas and the cartridge while Banana starts. Off goes straight to the menu once it is ready.", menu, "splash", { "On", "Off" }, { "on", "off" });
 		const char* P = "Sleep & power";
@@ -2775,6 +2776,7 @@ namespace banana
 			{ "...###...", "..#####..", "..##.##..", "....##...", "...##....", "...##....", ".........", "...##....", "...##...." },
 			{ ".........", "........#", ".......##", "......##.", "#....##..", "##..##...", ".####....", "..##.....", "........." },
 			{ "##.....##", ".##...##.", "..##.##..", "...###...", "...###...", "..##.##..", ".##...##.", "##.....##", "........." } };
+		if (snes && !snesArt.empty()) { toastSnes(SIGN[std::max(0, std::min(2, toastNow.icon))]); return; }
 		const Color light = Color::hex(0xf1ede2), acc = Color::hex(toastNow.accent);
 		rememberCard(8, 4, 624, 64);
 		box("osd", false, 8, 4, 624, 64);

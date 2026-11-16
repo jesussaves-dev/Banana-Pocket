@@ -87,7 +87,7 @@
   "Menu sounds": "Menu sounds",
   "The menu's clicks, and the cartridge going into the console.": "The menu's clicks, and the cartridge going into the console.",
   "Background Music": "Background Music",
-  "An ambient loop under the menu, mixed low so the clicks stay clear. Put a bgm.wav (or music/bgm.wav) on the card to hear one. Off stops it at once.": "An ambient loop under the menu, mixed low so the clicks stay clear. Put a bgm.wav (or music/bgm.wav) on the card to hear one. Off stops it at once.",
+  "An ambient loop under the menu, mixed low so the clicks stay clear. The SNES style plays its own; a bgm.wav (or music/bgm.wav) on the card plays instead. Off stops it at once.": "An ambient loop under the menu, mixed low so the clicks stay clear. The SNES style plays its own; a bgm.wav (or music/bgm.wav) on the card plays instead. Off stops it at once.",
   "Battery": "Battery",
   "The battery in the status bar: its icon, or its icon and how full it is.": "The battery in the status bar: its icon, or its icon and how full it is.",
   "Clock": "Clock",
@@ -172,6 +172,18 @@
   "Change disc": "Change disc",
   "Fast-forward": "Fast-forward",
   "Shader": "Shader",
-  "Achievements": "Achievements"
+  "Achievements": "Achievements",
+    "Pixel": "Pixel",
+    "Original": "Original",
+    "In the SNES style, a game's box on the counter: drawn on the street's grid in the Super NES's colours, or the picture as it is.": "In the SNES style, a game's box on the counter: drawn on the street's grid in the Super NES's colours, or the picture as it is.",
+    "Check for updates": "Check for updates",
+    "Copy": "Copy",
+    "Networks": "Networks",
+    "No save states for this game.": "No save states for this game.",
+    "Save states": "Save states",
+    "Searching...": "Searching...",
+    "Skip": "Skip",
+    "Update packages": "Update packages",
+    "Welcome to Banana": "Welcome to Banana"
 }
 }

@@ -410,6 +410,36 @@ for size in 640x557; do
         [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
         golden "street-$s" "$f"
     done
+    # the toasts in the SNES style (toast.png): an achievement's badge cut to 24 x 24 in 15-bit colour, and a plain
+    # message with the glyph's sign; two runs, as above, since a toast holds the panel for real seconds
+    for t in "toast|1|Trophy won|By finding the sword|$FX/roms/ngp/media/box/Peel Quest.png" "toast-plain|2|Something failed|A plain message"; do
+        sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/street.json|" "$FX/data/settings.conf"
+        BANANA_PHASE=dusk "$HERE/banana-ui" --headless "$OUT/$size-street-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+            --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+            --script "home 0; wait 600; toast ${t#*|}; wait 16; shot ${t%%|*}; wait 1" 2>> "$stlog" || { echo "FAIL $size: banana-ui (street ${t%%|*}) exited $?"; fail=1; }
+        sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+        f=$OUT/$size-street-${t%%|*}.png
+        [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
+        golden "street-${t%%|*}" "$f"
+    done
+    # back from a sleep (`wake`, as bananad's SIGUSR1) the street comes back through the mosaic, blocks shrinking
+    # to the picture: just after it, a 16-unit (64 px) mosaic; then the street itself. A closed shop, selected, has
+    # its folder pinned over the Closed sign (Ports, the 5th shop: roms/ports).
+    sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/street.json|" "$FX/data/settings.conf"
+    BANANA_PHASE=dusk "$HERE/banana-ui" --headless "$OUT/$size-street-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+        --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "home 4; wait 800; wake; wait 16; shot wake; wait 600; shot closed" 2>> "$stlog" || { echo "FAIL $size: banana-ui (street wake) exited $?"; fail=1; }
+    sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    grep -q "wake: transition" "$stlog" || { echo "FAIL $size: the wake verb"; fail=1; }
+    f=$OUT/$size-street-wake.png; mos=0
+    for n in 64 60 56 52; do
+        w=$((1240 / n * n)); h=$((1080 / n * n))
+        convert "$f" -crop ${w}x${h}+0+0 +repage "$OUT/mos-a.png" 2>/dev/null
+        convert "$OUT/mos-a.png" -sample $((w / n))x$((h / n))! -sample ${w}x${h}! "$OUT/mos-b.png" 2>/dev/null
+        [ "$(compare -metric AE "$OUT/mos-a.png" "$OUT/mos-b.png" null: 2>&1 | cut -d' ' -f1)" = 0 ] && { mos=$n; break; }
+    done
+    [ "$mos" != 0 ] || { echo "FAIL $size: the wake isn't a coarse mosaic"; fail=1; }
+    golden "street-closed" "$OUT/$size-street-closed.png"
     # the other SNES neighborhoods (street-*.json, generated from street.json by tools/gen-street.py): each draws its
     # street, a shop, the workshop and the ticket with no theme error. Loaded as "file:" themes, which the Theme row
     # lists (it used to be empty for one, and the workshop crashed reading it).
@@ -429,6 +459,25 @@ for size in 640x557; do
         golden "street-$hood-home" "$OUT/$size-street-$hood-home.png"
     done
     sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    # the card's banana/themes kept up to date with the image's (theme.cpp syncCardThemes): a new card gets a copy; a
+    # new version refreshes what the user left alone, adds what is new and keeps an edited file; a card seeded before
+    # the manifest has a differing file saved to .before-update/ and then refreshed
+    sy=$OUT/themesync; rm -rf "$sy"; mkdir -p "$sy/img/sub" "$sy/data"; cp "$FX/data/settings.conf" "$sy/data/"
+    printf 'one\n' > "$sy/img/a.json"; printf 'x\n' > "$sy/img/sub/p.png"
+    tsync() { echo "$1" > "$sy/version"; BANANA_IMAGE_THEMES="$sy/img" BANANA_VERSION_FILE="$sy/version" "$HERE/banana-ui" --headless "$sy/s-" \
+        --size 640x557 --assets "$HERE/assets/rnds" --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$sy/data" \
+        --script "wait 1" 2>&1 | grep 'themes on the card' || true; }
+    tsync v1 >/dev/null
+    [ "$(cat "$sy/data/themes/a.json" "$sy/data/themes/sub/p.png" 2>/dev/null | tr '\n' ' ')" = "one x " ] || { echo "FAIL $size: a new card's themes copy"; fail=1; }
+    printf 'mine\n' > "$sy/data/themes/a.json"; printf 'two\n' > "$sy/img/a.json"; printf 'y\n' > "$sy/img/sub/p.png"; printf 'b\n' > "$sy/img/b.json"
+    r=$(tsync v2)
+    [ "$(cat "$sy/data/themes/a.json" "$sy/data/themes/sub/p.png" "$sy/data/themes/b.json" | tr '\n' ' ')" = "mine y b " ] ||
+        { echo "FAIL $size: the themes refresh on an update: $r"; fail=1; }
+    [ -z "$(tsync v2)" ] || { echo "FAIL $size: the themes refresh ran twice for one version"; fail=1; }
+    rm "$sy/data/themes/.image-files"; printf 'three\n' > "$sy/img/a.json"
+    r=$(tsync v3)
+    [ "$(cat "$sy/data/themes/a.json" "$sy/data/themes/.before-update/a.json" | tr '\n' ' ')" = "three mine " ] ||
+        { echo "FAIL $size: the themes refresh on a card with no manifest: $r"; fail=1; }
     # The one panel offers the layout themes only: a colour theme (Dark/Light) is forced to the Pocket layout there,
     # so they were rows that changed nothing. From a stored dark the Theme row reads Pocket, and stepping right
     # picks the next layout (not Light) -- which the value it writes proves.

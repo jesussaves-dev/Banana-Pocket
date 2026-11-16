@@ -961,6 +961,8 @@ namespace banana
 		}
 		r.icon = themedIcon(s.def.id, look.icon);	// a user theme's own icon for the system (theme.h)
 		r.app = look.app || s.def.app;
+		if (!r.app && !s.favorites && !s.search && !s.def.folder.empty())
+			r.folder = s.def.folder[0] == '/' ? s.def.folder : "roms/" + s.def.folder;
 		r.games = (int)s.games.size();
 		long secs = 0;
 		for (auto& g : s.games) { if (g.plays > 0) r.played++; secs += g.seconds; }

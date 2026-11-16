@@ -213,6 +213,8 @@ struct Host : Library
 	bool topMotion() override { return motion; }
 	std::string batteryShown = "icon";		// "icon", or "text": the percentage too
 	std::string batteryMode() override { return batteryShown; }
+	std::string boxLookShown = "pixel";
+	std::string boxLook() override { return boxLookShown; }
 };
 
 

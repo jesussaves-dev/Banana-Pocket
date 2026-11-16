@@ -112,6 +112,12 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 			p.charging = ch == "charging";
 			if (plug.check(p, nowMs())) logf("plug: notice %s", plug.title.c_str());
 		}
+		else if (op == "wake")
+		{
+			// wake: as bananad's SIGUSR1 after a resume, the theme's wake transition (wake.progress)
+			ui.woke();
+			logf("wake: transition");
+		}
 		else if (op == "level")
 		{
 			// level <Volume|Brightness> <percent>: the keys' pill, as bananad's SIGUSR2 brings it up

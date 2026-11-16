@@ -621,4 +621,69 @@ namespace banana
 		sText(t, tx, y0 + 6, percent >= 0 && percent <= 10 && !charging ? Color(1.0f, 0.42f, 0.42f, 1) : sGold);
 		sWrap(tr(body), tx, y0 + 21, tw, 2, sPaper);
 	}
+
+	// an achievement or message toast across the top: the badge (or the glyph's sign on the accent) in an ink frame, the
+	// title in gold and the line under it in paper. A badge is cut to 24 x 24 by averaging and snapped to 15-bit colour,
+	// so it sits on the grid like the rest of the art instead of as a smooth picture.
+	void Settings::toastSnes(const char* const* sign)
+	{
+		const float x0 = 5, y0 = 4, w = 300, h = 34;
+		rememberCard(x0 * u / s, y0 * u / s, w * u / s, h * u / s);
+		sImg("toast.png", x0, y0);
+		const float bx = x0 + 6, by = y0 + 5;
+		sFill(bx - 1, by - 1, 26, 26, sInk);
+		rnds::TexPtr badge;
+		if (!toastNow.badge.empty())
+		{
+			std::string key = "tbadge:" + toastNow.badge;
+			auto it = cache.find(key);
+			if (it == cache.end())
+			{
+				rnds::Bitmap b = rnds::decodeFile(toastNow.badge), o;
+				Cached c;
+				if (!b.empty() && !b.alpha)
+				{
+					const int n = 24;
+					o.w = o.h = n;
+					o.px.assign(n * n * 4, 0);
+					for (int y = 0; y < n; y++)
+						for (int x = 0; x < n; x++)
+						{
+							int ya = y * b.h / n, yb = std::max(ya + 1, (y + 1) * b.h / n);
+							int xa = x * b.w / n, xb = std::max(xa + 1, (x + 1) * b.w / n);
+							double r = 0, g = 0, bl = 0, a = 0;
+							int cnt = 0;
+							for (int yy = ya; yy < yb; yy++)
+								for (int xx = xa; xx < xb; xx++)
+								{
+									const uint8_t* q = &b.px[(yy * b.w + xx) * 4];
+									double qa = q[3] / 255.0;
+									r += q[0] * qa; g += q[1] * qa; bl += q[2] * qa; a += qa; cnt++;
+								}
+							uint8_t* d = &o.px[(y * n + x) * 4];
+							if (a <= 0) continue;
+							auto q5 = [](double v) { int k = (int)std::lround(std::min(255.0, v) / 255.0 * 31); return (uint8_t)((k << 3) | (k >> 2)); };
+							d[0] = q5(r / a); d[1] = q5(g / a); d[2] = q5(bl / a);
+							d[3] = a / cnt >= 0.5 ? 255 : 0;	// hard edges: the SNES has no partial alpha on a sprite
+						}
+					c.tex = be->upload(o, false);
+				}
+				it = cache.emplace(key, c).first;
+			}
+			badge = it->second.tex;
+		}
+		const Color acc = Color::hex(toastNow.accent);
+		sFill(bx, by, 24, 24, acc);
+		if (badge)
+			be->draw(badge, bx * u, by * u, 24 * u, 24 * u, Color(1, 1, 1, 1));
+		else
+			for (int r = 0; r < 9; r++)
+				for (int c = 0; c < 9; c++)
+					if (sign[r][c] == '#') sFill(bx + 3 + c * 2, by + 3 + r * 2, 2, 2, sInk);
+		const float tx = bx + 31, tw = x0 + w - 7 - tx;
+		std::string t = sFit(toastNow.l1, tw);
+		sText(t, tx + 1, y0 + 5, sInk);
+		sText(t, tx, y0 + 4, sGold);
+		sText(sFit(toastNow.l2, tw), tx, y0 + 18, sPaper);
+	}
 }

@@ -26,6 +26,7 @@ namespace rnds
 		int achA = 0, achB = 0;	// RetroAchievements across its games: unlocked / total (achB 0: none known)
 		std::string achLabel;	// "28 / 50 achievements" (empty when none known)
 		bool fav = false;
+		std::string folder;		// where its games go, as the player sees the card: "roms/gb" (empty for a collection)
 		bool app = false;			// the system is one app (the theme's systems.cfg says "[app]"): A on its tile starts it
 		bool hasResume = false;		// a game to show on the "last played" chip
 		std::string resumeEyebrow;	// "Last played"
@@ -63,7 +64,8 @@ namespace rnds
 		virtual std::string dateText() = 0;		// "10/02"
 		virtual float battery() = 0;			// 0..1, < 0 unknown
 		virtual bool charging() { return false; }	// the charger is plugged in: the battery icon shows a bolt
-		virtual std::string batteryMode() { return "icon"; }	// ES's "show battery status": "" none, "icon", "text" (icon and %)
+		virtual std::string batteryMode() { return "icon"; }
+		virtual std::string boxLook() { return "pixel"; }	// Settings > Box art: "pixel" (a theme may dither it) or "original"	// ES's "show battery status": "" none, "icon", "text" (icon and %)
 		virtual bool topMotion() { return true; }	// false: the screen holds still (no rise on a move, no bob)
 		virtual bool online() = 0;
 

@@ -75,7 +75,9 @@
         "color": "=battery < 20 && !charging ? '#ff6a6a' : paper", "visible": "=battery >= 0 && batteryMode == 'text'" },
       // starting a game, over everything (the status panels too): the picture breaks into growing blocks while the
       // brightness steps down in sixteenths, the Super NES's mosaic and fade
-      { "type": "effect", "mosaic": "=view == 'launch' ? 1 + round(launch.progress * 15) : 0" },
+      // and back from a sleep the same mosaic runs the other way, the blocks shrinking to the picture (decoration
+      // only: the panel is restored before it starts, and Motion off skips it)
+      { "type": "effect", "mosaic": "=view == 'launch' ? 1 + round(launch.progress * 15) : motion && wake.progress < 1 ? 16 - round(wake.progress * 15) : 0" },
       { "type": "rect", "fill": "=alpha('#000000', round(launch.progress * 15) / 15)", "visible": "=view == 'launch'" }
     ] },
 
@@ -109,6 +111,10 @@
               { "type": "image", "src": "{art}/{phase}/closed.png", "fit": "pixel", "x": 5, "y": 123, "w": 86, "h": 55, "visible": "=item.games == 0" },
               { "type": "rect", "x": 24, "y": 140, "w": 48, "h": 14, "fill": "=paper", "border": 1, "borderColor": "=ink", "visible": "=item.games == 0" },
               { "type": "text", "size": 12, "x": 24, "w": 48, "y": 141, "align": "center", "text": "Closed", "color": "=ink", "visible": "=item.games == 0" },
+              // the selected one has a note pinned over the sign: where its stock goes, the system's folder on the card
+              { "type": "group", "layout": "row", "padding": 2, "x": 48, "y": 125, "anchor": "top center", "h": 13, "fill": "=paper",
+                "border": 1, "borderColor": "=ink", "visible": "=sel && item.games == 0 && item.folder != ''",
+                "children": [ { "type": "text", "size": 12, "text": "{item.folder}", "color": "=ink" } ] },
               // the lamp between this shop and the next
               { "type": "image", "src": "{art}/{phase}/lamp.png", "fit": "pixel", "x": 88, "y": 66, "w": 24, "h": 112 },
               // a maker's first shop: the block's street sign, on a tall post between it and the shop before
@@ -158,8 +164,9 @@
         { "type": "text", "size": 12, "right": "=batteryMode == 'text' ? 60 : 32", "y": 5, "w": 40, "align": "right", "text": "{cursor + 1}/{count}", "color": "=paper" },
 
         // the box on the counter: the whole picture, whatever its shape (Game Boy boxes are square, Super NES ones
-        // wide), on the box's dark backing
-        { "type": "image", "src": "{game.art}", "fallback": "{sys.icon}", "fit": "contain", "x": 12, "y": 32, "w": 82, "h": 104 },
+        // wide), on the box's dark backing; on the grid in 15-bit colour unless Settings > Box art says Original
+        { "type": "image", "src": "{game.art}", "fallback": "{sys.icon}", "x": 12, "y": 32, "w": 82, "h": 104,
+          "fit": "=boxLook == 'original' ? 'contain' : 'ditherContain'" },
         { "type": "text", "size": 12, "x": 10, "w": 86, "y": 70, "align": "center", "text": "{empty.title}", "color": "=paper", "visible": "=empty", "wrap": true },
 
         // the receipt: what the shelf knows about the game

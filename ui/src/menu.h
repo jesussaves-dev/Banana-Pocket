@@ -33,5 +33,7 @@ namespace banana
 		virtual void setLog(std::function<void(const std::string&)> log) = 0;
 		// workOnce guards what it shares with the drawing itself: the worker may run it without the UI's lock
 		virtual bool ownLocking() const { return false; }
+		// back from a sleep with the panel restored: a theme can play `wake.progress` from 0 to 1 over behavior.wakeMs
+		virtual void woke() {}
 	};
 }

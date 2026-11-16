@@ -11,10 +11,14 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
 ## In progress
 
 - **The SNES style: what is left after 0.7.0.** The plan is the "Banana Street" page (plan artifact); tasks 1-7 are done.
-  - Still drawn the Classic way in the SNES style: the achievement and message toasts.
-  - Not built yet: box art dithered to the palette, with a setting for the original art; a closed
-    shop's hint naming the folder for that system's games; the reverse mosaic on wake (decoration only, after the panel
-    is restored).
+  - Done since 0.7.2: the achievement and message toasts on the street's panel (`toast.png`, the badge cut to 24 x 24
+    in 15-bit colour); box art on the counter dithered to the Super NES's colours on the grid (the `ditherContain`
+    fit), Settings > Display & sound > Box art keeps the original; a selected closed shop has its folder pinned over
+    the sign (`sys.folder`); back from a sleep the street comes back through the mosaic (`wake.progress`, Motion off
+    skips it). The card's copy of the image's themes is brought up to date once per version (`.image-files`; edited
+    files kept), and `tools/rpc-push-update.sh --apply` checks that the reboot happened and the new version runs.
+  - To check on the device: the wake mosaic after a real sleep, the dithered box art on real covers, the themes
+    refresh on the card seeded by 0.7.x (it saves differing files to `banana/themes/.before-update/`).
   - Done since 0.7.1: the battery is a banana that ripens to brown as the charge drops (five stages from
     `tools/gen-street.py`), a bolt over it on the charger; Settings > Battery picks the banana alone or with its percent.
   - Done since 0.7.1: the workshop's own pages (Wi-Fi networks, Updates, first-time setup, Save states) on the ledger, a

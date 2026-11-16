@@ -143,6 +143,7 @@ namespace banana
 			int sel, const std::string& empty, const std::string& help, bool helpIsMessage, const std::vector<SChip>& left, const SChip& right);
 		void levelSnes(const std::string& label, int percent);	// the pill, pill.png
 		void noticeSnes(const std::string& title, const std::string& body, int percent, bool charging);	// notice.png
+		void toastSnes(const char* const* sign);	// toast.png: the queue's current toast, the badge cut to 24 x 24 in 15-bit colour
 		Result snesTouch(float cx, float cy);	// the end of a touch on a SNES page; cx, cy in the 640 space
 		int ledgerRowAt(float uy, int sel, int n) const;	// the row under uy (units), or -1
 		void sImgScaled(const std::string& file, float x, float y, float k);
