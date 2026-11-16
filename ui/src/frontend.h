@@ -112,6 +112,10 @@ namespace rnds
 		// a post-effect over what is drawn so far in the box (device px): the mosaic, each block of `size` px the
 		// colour of its top-left pixel. A backend without it draws nothing for it.
 		virtual void mosaic(float x, float y, float w, float h, float size) { (void)x; (void)y; (void)w; (void)h; (void)size; }
+		// the Genesis palette fade: every channel's 9-bit level (0-7) stepped down `levels` (7: black)
+		virtual void fade9(float x, float y, float w, float h, int levels) { (void)x; (void)y; (void)w; (void)h; (void)levels; }
+		// line scroll: each row moved sideways by amp * sin(row / unit * 0.13 + phase) px (unit: a theme unit in px)
+		virtual void wobble(float x, float y, float w, float h, float amp, float phase, float unit) { (void)x; (void)y; (void)w; (void)h; (void)amp; (void)phase; (void)unit; }
 	};
 
 	// ---- the theme ----------------------------------------------------------------------------------------------------

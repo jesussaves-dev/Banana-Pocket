@@ -68,6 +68,8 @@ namespace banana
 		void beginScreen() override;
 		void endScreen() override;
 		void mosaic(float x, float y, float w, float h, float size) override;
+		void fade9(float x, float y, float w, float h, int levels) override;
+		void wobble(float x, float y, float w, float h, float amp, float phase, float unit) override;
 
 		// drawn over the screen just before it ends (the menu's notices), so it is part of the screen's draw list
 		std::function<void()> overlay;
@@ -84,10 +86,10 @@ namespace banana
 		// changed are cleared and drawn again, with every draw that touches them clipped to them
 		struct Cmd
 		{
-			enum Op { DRAW, FILL, PUSH, POP, MOSAIC } op;
+			enum Op { DRAW, FILL, PUSH, POP, MOSAIC, FADE9, WOBBLE } op;
 			rnds::TexPtr tex;	// held, so its address can't be reused by a new texture while it is compared
 			float x, y, w, h;
-			float c[4];		// a tint or fill; MOSAIC: its block size
+			float c[4];		// a tint or fill; MOSAIC: its block size; FADE9: its levels; WOBBLE: amp, phase, unit
 		};
 		struct Clip { int x0, y0, x1, y1; };
 		struct Item
@@ -115,12 +117,15 @@ namespace banana
 		void doDraw(SoftTex* t, float x, float y, float w, float h, const rnds::Color& tint, const Clip& cl);
 		void doFill(float x, float y, float w, float h, const rnds::Color& c, const Clip& cl);
 		void doMosaic(const Cmd& c, const Clip& cl);
+		void doFade9(const Cmd& c, const Clip& cl);
+		void doWobble(const Cmd& c, const Clip& cl);
 		int W, H;
 		std::vector<uint32_t> scr;
 		DamageSet dmg;
 		std::vector<Clip> clips;
 		std::vector<int> colA, colB;	// a scaled draw's source columns (and their blend) for each pixel of a row
 		std::vector<uint32_t> colF;
+		std::vector<uint32_t> rowT;	// a wobbled row's pixels before the move (sized W once)
 		void touch(const Clip& r) { dmg.add(Damage{ r.x0, r.y0, r.x1, r.y1 }); }
 	};
 }

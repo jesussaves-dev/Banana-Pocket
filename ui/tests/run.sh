@@ -466,7 +466,7 @@ for size in 640x557; do
     sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/blast.json|" "$FX/data/settings.conf"
     "$HERE/banana-ui" --headless "$OUT/$size-blast-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
         --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
-        --script "home 0; wait 500; shot warm; wait 16; shot home; wait 500; shot home2; press right; wait 1000; press r; wait 16; shot boost; wait 1000; shot arrived; press l; wait 21000; shot idle; wait 500; shot idle2; press a; wait 1000; shot lib" \
+        --script "home 0; wait 500; shot warm; wait 16; shot home; wait 500; shot home2; press right; wait 1000; press r; wait 16; shot boost; wait 1000; shot arrived; press l; wait 21000; shot idle; wait 500; shot idle2; press a; wait 1000; shot lib; press a; wait 350; shot launch; wait 1000; wait 1" \
         2> "$bllog" || { echo "FAIL $size: banana-ui (blast) exited $?"; fail=1; }
     sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
     grep -q "theme:" "$bllog" && { echo "FAIL $size: the blast theme: $(grep 'theme:' "$bllog" | head -3)"; fail=1; }
@@ -498,7 +498,13 @@ for size in 640x557; do
         compare -metric AE "$OUT/spr-a.png" "$OUT/spr-b.png" null: 2>&1 | cut -d' ' -f1; }
     [ "$(spr "$OUT/$size-blast-home.png" "$OUT/$size-blast-home2.png")" = 0 ] || { echo "FAIL $size: blast's banana moves at rest before 20 s"; fail=1; }
     [ "$(spr "$OUT/$size-blast-idle.png" "$OUT/$size-blast-idle2.png")" != 0 ] || { echo "FAIL $size: blast's banana doesn't tap its foot when idle"; fail=1; }
-    for s in home lib; do golden "blast-$s" "$OUT/$size-blast-$s.png"; done
+    # the launch halfway: the palette 4 levels down (still 9-bit, darker than the rack) and the lines wobbling
+    grep -q "launch [0-9]*: " "$bllog" || { echo "FAIL $size: blast's launch: $(grep launch "$bllog")"; fail=1; }
+    nb=$(off9 "$OUT/$size-blast-launch.png")
+    [ "$nb" = 0 ] || { echo "FAIL $size: blast's launch fade has $nb colours off the 9-bit grid"; fail=1; }
+    [ "$(convert "$OUT/$size-blast-launch.png" "$OUT/$size-blast-lib.png" -format '%[fx:u.mean<v.mean*0.6]' info: | head -c1)" = 1 ] ||
+        { echo "FAIL $size: blast's launch doesn't fade"; fail=1; }
+    for s in home lib launch; do golden "blast-$s" "$OUT/$size-blast-$s.png"; done
     # its Settings (settings_genesis.cpp, on the SNES style's pages and input): Options, open Display & sound and
     # change Night light (saved like the Classic screen's); name entry types q, w, Shift, S and a tap on E (the phone
     # book's places), B deletes it and START looks "qwS" up; the pause panel is a whole-screen card (the game behind in

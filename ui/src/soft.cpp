@@ -274,6 +274,8 @@ namespace banana
 			rnds::Color col(c.c[0], c.c[1], c.c[2], c.c[3]);
 			if (c.op == Cmd::DRAW) doDraw((SoftTex*)c.tex.get(), c.x, c.y, c.w, c.h, col, cl);
 			else if (c.op == Cmd::MOSAIC) doMosaic(c, cl);
+			else if (c.op == Cmd::FADE9) doFade9(c, cl);
+			else if (c.op == Cmd::WOBBLE) doWobble(c, cl);
 			else doFill(c.x, c.y, c.w, c.h, col, cl);
 		}
 	}
@@ -308,10 +310,10 @@ namespace banana
 			}
 			for (; p < old.size(); p++) addDirty(old[p].box);
 			if (dirty.empty()) { skipped++; std::swap(items, old); return; }
-			// a mosaic's block is the colour of its top-left pixel, which a rectangle cutting the block would leave
-			// out: anything to draw under a mosaic draws its whole box again
+			// a mosaic's block is the colour of its top-left pixel and a wobbled row reads pixels from across its box,
+			// which a rectangle cutting the box would leave out: anything to draw under either draws its whole box again
 			for (auto& it : items)
-				if (it.c.op == Cmd::MOSAIC)
+				if (it.c.op == Cmd::MOSAIC || it.c.op == Cmd::WOBBLE)
 					for (size_t i = 0; i < dirty.size(); i++)
 						if (overlaps(dirty[i].x0, dirty[i].y0, dirty[i].x1, dirty[i].y1, it.box.x0, it.box.y0, it.box.x1, it.box.y1)) { addDirty(it.box); break; }
 		}
@@ -347,6 +349,51 @@ namespace banana
 				const uint32_t p = scr[(size_t)y0 * W + x0];
 				for (int y = y0; y < y1; y++) std::fill(&scr[(size_t)y * W + x0], &scr[(size_t)y * W + x1], p);
 			}
+		}
+	}
+
+	void SoftBackend::fade9(float x, float y, float w, float h, int levels)
+	{
+		if (levels > 0) rec.push_back({ Cmd::FADE9, nullptr, x, y, w, h, { (float)std::min(levels, 7), 0, 0, 1 } });
+	}
+
+	void SoftBackend::wobble(float x, float y, float w, float h, float amp, float phase, float unit)
+	{
+		// the phase only matters modulo a turn: kept small so equal pictures compare equal
+		if (amp >= 0.5f && unit > 0) rec.push_back({ Cmd::WOBBLE, nullptr, x, y, w, h, { amp, std::fmod(phase, 6.2831853f), unit, 1 } });
+	}
+
+	// each channel to its nearest 9-bit level, `n` levels down, and back to 8 bits (opaque screen pixels)
+	void SoftBackend::doFade9(const Cmd& c, const Clip& cl)
+	{
+		static const uint8_t LV[8] = { 0, 36, 73, 109, 146, 182, 219, 255 };
+		const int n = (int)c.c[0];
+		uint8_t map[256];
+		for (int v = 0; v < 256; v++) { const int l = (v * 7 + 127) / 255 - n; map[v] = LV[l < 0 ? 0 : l]; }
+		for (int y = cl.y0; y < cl.y1; y++)
+		{
+			uint32_t* d = &scr[(size_t)y * W];
+			for (int x = cl.x0; x < cl.x1; x++)
+			{
+				const uint32_t p = d[x];
+				d[x] = (p & 0xff000000u) | (uint32_t)map[(p >> 16) & 255] << 16 | (uint32_t)map[(p >> 8) & 255] << 8 | map[p & 255];
+			}
+		}
+	}
+
+	// each row of the box moved sideways (the Genesis's line scroll), its edge pixel repeated into the gap
+	void SoftBackend::doWobble(const Cmd& c, const Clip& cl)
+	{
+		const int bx0 = std::max(0, edge(c.x)), bx1 = std::min(W, edge(c.x + c.w)), by0 = edge(c.y);
+		if (bx1 <= bx0) return;
+		if ((int)rowT.size() < W) rowT.resize(W);
+		for (int y = cl.y0; y < cl.y1; y++)
+		{
+			const int off = (int)std::lround(c.c[0] * std::sin((float)(y - by0) / c.c[2] * 0.13f + c.c[1]));
+			if (!off) continue;
+			uint32_t* d = &scr[(size_t)y * W];
+			std::copy(d + bx0, d + bx1, rowT.begin() + bx0);
+			for (int x = cl.x0; x < cl.x1; x++) d[x] = rowT[std::min(bx1 - 1, std::max(bx0, x - off))];
 		}
 	}
 

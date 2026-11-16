@@ -1054,6 +1054,12 @@ namespace banana
 				// "mosaic": what was drawn before it in its box, in blocks this many units wide (1 or less: none)
 				const float mz = std::floor((float)num(c, "mosaic", 0) * cf.k);
 				if (mz >= 2) m->be->mosaic(std::round(ax0 * s), std::round(ay0 * s), std::round(aw * s), std::round(ah * s), mz * s);
+				// "wobble": each line moved sideways up to this many units, at "wobblePhase" radians (the line scroll)
+				const float wb = (float)num(c, "wobble", 0) * cf.k * s;
+				if (wb >= 0.5f) m->be->wobble(std::round(ax0 * s), std::round(ay0 * s), std::round(aw * s), std::round(ah * s), wb, (float)num(c, "wobblePhase", 0), cf.k * s);
+				// "fade": the Genesis palette fade, every colour this many 9-bit levels down (7: black)
+				const int fd = (int)std::lround(num(c, "fade", 0));
+				if (fd > 0) m->be->fade9(std::round(ax0 * s), std::round(ay0 * s), std::round(aw * s), std::round(ah * s), fd);
 			}
 			else if (n->type == "group")
 			{

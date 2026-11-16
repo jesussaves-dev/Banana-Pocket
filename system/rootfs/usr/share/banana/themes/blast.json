@@ -66,9 +66,11 @@
       { "type": "text", "size": 12, "right": 6, "y": 6, "w": 26, "align": "right", "text": "{battery}%",
         "color": "=battery < 20 && !charging ? '#ff2400' : charging ? cyan : ink", "outline": { "width": 1, "color": "=void" },
         "visible": "=battery >= 0" },
-      // starting a game: the picture breaks up as the brightness steps down, and back from a sleep the other way
-      { "type": "effect", "mosaic": "=view == 'launch' ? 1 + round(launch.progress * 15) : motion && wake.progress < 1 ? 16 - round(wake.progress * 15) : 0" },
-      { "type": "rect", "fill": "=alpha('#000000', round(launch.progress * 7) / 7)", "visible": "=view == 'launch'" }
+      // starting a game: the palette fades a 9-bit level at a time while the lines wobble (Motion off: the fade
+      // alone), and back from a sleep the levels step up again
+      { "type": "effect",
+        "wobble": "=view == 'launch' && motion ? launch.progress * 9 : 0", "wobblePhase": "=launch.t * 0.021",
+        "fade": "=view == 'launch' ? ceil(launch.progress * 7) : wake.progress < 1 ? 7 - floor(wake.progress * 7) : 0" }
     ] },
 
     "home": {
