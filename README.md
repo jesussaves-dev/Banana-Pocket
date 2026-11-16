@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/jesussaves-dev/Banana-Pocket/releases/tag/v0.7.0"><img src="docs/readme/download.png" alt="Download 0.7" height="44"></a>
+  <a href="https://github.com/jesussaves-dev/Banana-Pocket/releases/tag/v0.8.0"><img src="docs/readme/download.png" alt="Download 0.8" height="44"></a>
 </p>
 
 **Banana Pocket** is the little operating system for the **Retroid Pocket Classic**. Since 0.7 its menu is a street.
@@ -114,6 +114,25 @@ you stand still, the banana's one-pixel bob is the only thing that moves, and **
 </table>
 
 Pick one in **Settings > Display & sound > Theme**.
+
+## Banana Blast
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/readme/blast-night.png" alt="Banana Blast"></td>
+    <td width="33%"><img src="docs/readme/blast-acid.png" alt="Acid Mall"></td>
+    <td width="33%"><img src="docs/readme/blast-arcade.png" alt="Hyper Arcade"></td>
+  </tr>
+  <tr>
+    <td><b>Banana Blast</b><br>Night Drive: a magenta floor, cyan rails, a violet city.</td>
+    <td><b>Acid Mall</b><br>A lime floor, pink rails, a teal city.</td>
+    <td><b>Hyper Arcade</b><br>A red floor, blue rails, an orange city.</td>
+  </tr>
+</table>
+
+The Genesis style (Settings > Display & sound > Style). Options is an arcade settings screen with a Sound Test, search
+is a high-score name entry, and a game starts with a palette fade and a line-scroll wobble. It has its own FM sounds and a
+funk loop. There is a secret in the Sound Test.
 
 ## Three styles
 

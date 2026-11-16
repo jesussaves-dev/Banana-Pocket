@@ -2,21 +2,14 @@
 Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Ordered by what is recommended next.
 
 ## Recommended next (in order)
-0.7.0 is the new UI: the SNES style and Banana Street (see *Done*). Next:
-1. **Finish the SNES style** (see *In progress*): the screens and pieces it still draws the Classic way, and the parts
-   of the plan not built yet.
+0.7.0 is the new UI: the SNES style and Banana Street; 0.8.0 adds the Genesis style, Banana Blast (see *Done*). Next:
+1. **Check the Genesis and SNES styles on the device** (see *In progress*): the few looks only the panel can judge.
 2. **Bluetooth** -- designed and planned, not built (see *In progress*): a bespoke no-D-Bus agent for Classic pads,
    blocked on a Classic controller to test with.
 
 ## In progress
 
 - **The SNES style: what is left after 0.7.0.** The plan is the "Banana Street" page (plan artifact); tasks 1-7 are done.
-  - Done since 0.7.2: the achievement and message toasts on the street's panel (`toast.png`, the badge cut to 24 x 24
-    in 15-bit colour); box art on the counter dithered to the Super NES's colours on the grid (the `ditherContain`
-    fit), Settings > Display & sound > Box art keeps the original; a selected closed shop has its folder pinned over
-    the sign (`sys.folder`); back from a sleep the street comes back through the mosaic (`wake.progress`, Motion off
-    skips it). The card's copy of the image's themes is brought up to date once per version (`.image-files`; edited
-    files kept), and `tools/rpc-push-update.sh --apply` checks that the reboot happened and the new version runs.
   - To check on the device: the wake mosaic after a real sleep, the dithered box art on real covers, the themes
     refresh on the card seeded by 0.7.x (it saves differing files to `banana/themes/.before-update/`).
   - Done since 0.7.1: the battery is a banana that ripens to brown as the charge drops (five stages from
@@ -28,7 +21,11 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Or
   - Done since 0.7.1: the street's own sounds and background loop (`street/sounds/`, synthesised by
     `tools/gen-street-sounds.py`: pulse voices and the SPC700's echo, F major); a theme's `"sounds"` may name a `"bgm"`,
     and the cues and loop change with the theme instead of at the next start.
-  - A Genesis style needs only a theme with `"style": "genesis"`: the Style row lists the styles of the themes present.
+
+- **The Genesis style (Banana Blast): to check on the device.** Plan steps 1-7 are done (see *Done*, 0.8.0). Still to
+  judge on the panel: the Sound Test's fanfare and number levels against the cues, the Blue Banana's afterimages on the
+  OLED while scrolling, and Acid Mall's and Hyper Arcade's floors. The Zip mascot stays parked (the sprite is one
+  swappable frame set).
 
 - **Bluetooth: designed, not built (2026-11-08).** Stack chosen by request: a bespoke `banana-bt` over the kernel
   mgmt API, a small SDP client and `hidp` — no D-Bus, no BlueZ, no udev; Bluetooth Classic HID only. Design:
@@ -255,6 +252,25 @@ accessibility / in-menu log viewer / battery-time item (2026-11-04).)*
 - **Hardware Validation (`docs/RPC-TEST.md`):** In progress on physical units.
 
 ## Done
+- [x] **0.8.0: the Genesis style, Banana Blast (2026-11-16).** Settings > Display & sound > Style lists Genesis
+  beside Classic and SNES. Banana Blast is a neon course at night: a billboard per system in its maker's colour, the
+  banana on a skateboard, and L/R boosting to the next maker with speed lines. Art is baked by `tools/gen-blast.py` to
+  the Mega Drive's rules (9-bit colour, true-black backdrops for the AMOLED, checker dithers, a raster-bar horizon, the
+  floor drawn as 119 per-line scrolled rows, the cross lines live and rolling while the course moves). The leaning HUD
+  face and chrome title face with hard-banded gradients; Options (`settings_genesis.cpp`), the name-entry search, the
+  shadow-mode pause and the cart rack with dithered box art; a palette-fade launch with a line-scroll wobble (the
+  backend's FADE9 and WOBBLE ops); its own FM cues, a boost whoosh and a funk loop with crushed vocal chops
+  (`tools/gen-blast-sounds.py`). The secret: the banana taps a foot after 20 s idle, and the Sound Test code turns on
+  the Blue Banana (a saved setting: blue sprites, afterimages, a rev on boost). Two more palettes, Acid Mall and Hyper
+  Arcade (`blast-<id>.json`, rewritten from `blast.json`); `tools/check-themes.py` checks the bake and the generated
+  themes. The kms backend's damage is a set of rects, so scattered idle changes (the twinkling stars) copy only themselves.
+  Also in 0.8.0, on the street:
+  the achievement and message toasts on the street's panel (`toast.png`, the badge cut to 24 x 24
+    in 15-bit colour); box art on the counter dithered to the Super NES's colours on the grid (the `ditherContain`
+    fit), Settings > Display & sound > Box art keeps the original; a selected closed shop has its folder pinned over
+    the sign (`sys.folder`); back from a sleep the street comes back through the mosaic (`wake.progress`, Motion off
+    skips it). The card's copy of the image's themes is brought up to date once per version (`.image-files`; edited
+    files kept), and `tools/rpc-push-update.sh --apply` checks that the reboot happened and the new version runs.
 - [x] **0.7.0: the new UI, the SNES style (2026-11-11).** Settings > Display & sound > Style picks Classic (the Pocket
   layout and its themes) or SNES, the new default on a new card. SNES is Banana Street: every system a shop on one
   street, on a 310 x 270 grid drawn at exactly 4 device px a unit, art baked by `tools/gen-street.py` to the Super NES's

@@ -173,7 +173,7 @@ def main():
         sys.exit("gen-readme-art: needs ui/banana-ui and ui/tests/out/fixture: run `make test` first")
     os.makedirs(OUT, exist_ok=True)
     scale(banner(), 2).save(os.path.join(OUT, "banner.png"), optimize=True)
-    scale(button("Download 0.7"), 2).save(os.path.join(OUT, "download.png"), optimize=True)
+    scale(button("Download 0.8"), 2).save(os.path.join(OUT, "download.png"), optimize=True)
 
     # the screens: the street, a shop, the workshop, the phone book, the ticket
     t = headless("street.json", "home 1; wait 900; shot home; press a; wait 900; press down; wait 600; shot lib; press b; wait 600;"
@@ -215,6 +215,11 @@ def main():
                     ("sundown", "street-sundown.json"), ("oldtown", "street-oldtown.json")):
         t = headless(f, "home 2; wait 900; shot home", phase="day")
         frame(shot(t, "home", 1), 3).resize(((310 + 6) * 2, (270 + 6) * 2), Image.NEAREST).save(os.path.join(OUT, "hood-%s.png" % hood), optimize=True)
+        shutil.rmtree(t)
+    # Banana Blast in its three palettes (a first shot warms the decode queue: the floor alone is 119 pictures)
+    for pal, f in (("night", "blast.json"), ("acid", "blast-acid.json"), ("arcade", "blast-arcade.json")):
+        t = headless(f, "home 2; wait 500; shot warm; wait 16; shot home")
+        frame(shot(t, "home", 1), 3).resize(((310 + 6) * 2, (270 + 6) * 2), Image.NEAREST).save(os.path.join(OUT, "blast-%s.png" % pal), optimize=True)
         shutil.rmtree(t)
     print("gen-readme-art: %s" % ", ".join(sorted(os.listdir(OUT))))
 
