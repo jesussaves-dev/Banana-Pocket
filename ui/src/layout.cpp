@@ -285,6 +285,9 @@ namespace banana
 			// 310-wide canvas
 			fontFiles["banana"] = interFonts + "/BananaPixel.ttf";
 			fontFiles["banana-title"] = interFonts + "/BananaTitle.ttf";
+			// the Genesis style's leaning faces, crisp at the same two sizes
+			fontFiles["banana-blast"] = interFonts + "/BananaBlast.ttf";
+			fontFiles["banana-blast-title"] = interFonts + "/BananaBlastTitle.ttf";
 			std::string why;
 			doc = readJsonFile(path, &why);
 			if (!doc) { err(why); return; }
@@ -809,9 +812,12 @@ namespace banana
 			// "gradient": { "stops": ["#top", ..., "#bottom"] } on text: the letters coloured in even bands down the
 			// line, one band per layout unit (an art pixel on a "canvas" theme), the stepped shading of 16-bit title
 			// text. Each band is the line drawn again through a clip, a draw per band: meant for titles, not lists.
-			uint32_t grad[8];
+			// "hard": true gives each band one stop's colour unblended (the stops spread evenly over the bands, so
+			// as many stops as the line has units means one per row): chrome type keeps to the theme's palette.
+			uint32_t grad[32];
 			int ng = 0;
-			while (ng < 8 && color(c, "gradient.stops." + std::to_string(ng), grad[ng])) ng++;
+			while (ng < 32 && color(c, "gradient.stops." + std::to_string(ng), grad[ng])) ng++;
+			const bool hard = flag(c, "gradient.hard");
 			for (size_t i = 0; i < L.lines.size(); i++)
 			{
 				const rnds::TextLine& l = L.lines[i];
@@ -831,11 +837,16 @@ namespace banana
 				const int n = std::min(64, (int)std::ceil(L.lineH / band));
 				for (int r = 0; r < n; r++)
 				{
-					const float t = (r + 0.5f) / n * (ng - 1);
-					const int a = std::min(ng - 2, (int)t);
-					const float u = t - a;
-					auto ch = [&](int sh) { float p = (grad[a] >> sh) & 255, q = (grad[a + 1] >> sh) & 255; return (uint32_t)(p + (q - p) * u + 0.5f) << sh; };
-					const uint32_t g = ch(24) | ch(16) | ch(8) | ch(0);
+					uint32_t g;
+					if (hard) g = grad[std::min(ng - 1, r * ng / n)];
+					else
+					{
+						const float t = (r + 0.5f) / n * (ng - 1);
+						const int a = std::min(ng - 2, (int)t);
+						const float u = t - a;
+						auto ch = [&](int sh) { float p = (grad[a] >> sh) & 255, q = (grad[a + 1] >> sh) & 255; return (uint32_t)(p + (q - p) * u + 0.5f) << sh; };
+						g = ch(24) | ch(16) | ch(8) | ch(0);
+					}
 					const float y0 = std::floor((top + i * L.lineH + r * band) * s), y1 = std::floor((top + i * L.lineH + (r + 1) * band) * s);
 					m->be->pushClip(0, y0, W * s, y1 - y0);
 					drawLine(l, L.st, L.asc, lx, ly, colorFrom(g, f.opacity));

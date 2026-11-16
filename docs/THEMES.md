@@ -170,12 +170,17 @@ bottom); `radius` (a number, `"50%"` for a pill or a circle, or `[tl, tr, br, bl
 within `h`), `upper`, `spacing` (letter spacing), `wrap`, `maxLines`, `lineHeight`, `ellipsis` (default on: a line
 longer than `w` ends in ...), `shadow: { "x", "y", "color" }`, `outline: { "width", "color" }`.
 `gradient: { "stops": ["#fff6c8", "#ffd21e", "#8a4a10"] }` shades the letters in even bands down the line, one per
-layout unit: the stepped look of 16-bit title text. Each band is a draw of its own, so keep it to titles.
+layout unit: the stepped look of 16-bit title text. Each band is a draw of its own, so keep it to titles. With
+`"hard": true` the bands are not blended: each takes one stop's colour, the stops (up to 32) spread evenly over the
+bands, so one stop per unit of the line paints it row by row and keeps to the palette (Blast's `chrome` component).
 
 Fonts are named in the theme's `fonts` (`"title": "mine/Title.ttf"`) or are built in: `pixel`, `pixel-medium`
 (Pixelify Sans), `inter`, `inter-medium`, `inter-semibold`, `inter-bold`, and Banana's own pixel faces `banana` and
-`banana-title` (`tools/make-pixel-font.py`, ASCII and Latin-1). Those two are drawn on a grid of 100 font units per art
-pixel, so they come out hard-edged with no grey at `size` 12 and 24 on a `"canvas": { "w": 310 }` theme.
+`banana-title` (`tools/make-pixel-font.py`, ASCII and Latin-1), with the Genesis style's leaning pair `banana-blast`
+(the HUD face, leaned a cell every 3 rows) and `banana-blast-title` (doubled, thick-stemmed, leaned a cell every 4 rows).
+They are drawn on a grid of 100 font units per art pixel, so they come out hard-edged with no grey at `size` 12 (the
+plain faces) and 24 (the titles) on a `"canvas": { "w": 310 }` theme. The leaning faces keep the upright advance, so
+each row keeps its gap to the next letter and the last letter's top overhangs the measured width by up to 4 units.
 
 ### image
 

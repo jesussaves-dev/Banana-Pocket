@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Banana's pixel fonts, drawn here as text and built into TrueType outlines of whole grid squares.
 
-  tools/make-pixel-font.py [outdir]     writes BananaPixel.ttf and BananaTitle.ttf (default ui/assets/banana/fonts)
+  tools/make-pixel-font.py [outdir]     writes BananaPixel.ttf, BananaTitle.ttf, BananaBlast.ttf and BananaBlastTitle.ttf
+                                        (default ui/assets/banana/fonts)
 
 Every art pixel is a square of 100 font units, so a font drawn at a size where 100 units is a whole number of device
 pixels comes out hard-edged with no grey: the menu draws glyphs unhinted at whole-pixel origins (raster.cpp).
   banana        unitsPerEm 1200 (12 cells): "size": 12 on a 310-wide canvas is 4 device px per art pixel
   banana-title  the same glyphs doubled with EPX (rounded diagonals), unitsPerEm 2400: "size": 24
+  banana-blast        the Genesis style's HUD face: the glyphs leaned right a cell every 3 rows, "size": 12
+  banana-blast-title  its chrome title face: EPX-doubled, stems thickened a cell, leaned a cell every 4 rows, "size": 24
+Leaning keeps every row's gap to the next glyph, so the advance stays the upright width; the top overhangs it.
 Rows: 0-1 accents, 2-8 capitals (7 high), 9-10 descenders; the baseline is under row 8. Glyphs below are given from
 row 2 down, rows separated by "/"; "#" is ink. Accented letters are composed from a base and a mark.
 """
@@ -118,6 +122,25 @@ def epx(rows, w):
     return out, w * 2
 
 
+def embolden(rows, w):
+    """Every ink cell also inks the cell to its right: stems two cells wide, one cell wider overall."""
+    out = [[0] * (w + 1) for _ in rows]
+    for y, r in enumerate(rows):
+        for x, c in enumerate(r):
+            if c: out[y][x] = out[y][x + 1] = 1
+    return out, w + 1
+
+
+def lean(rows, w, every, base):
+    """Italic by whole cells: a row is pushed right one cell per `every` rows above row `base` (the baseline row
+    leans 0); rows under it stay put, so descenders hang straight."""
+    off = every // 2                      # the baseline row and the one above it share a step
+    shift = [(base - j + off) // every if j <= base else 0 for j in range(len(rows))]
+    extra = max(shift)
+    out = [[0] * shift[y] + r + [0] * (extra - shift[y]) for y, r in enumerate(rows)]
+    return out, w + extra
+
+
 def outline(rows, asc, cell=100):
     """One rectangle per horizontal run of ink, clockwise (TrueType's direction for outer contours)."""
     pen = TTGlyphPen(None)
@@ -134,17 +157,25 @@ def outline(rows, asc, cell=100):
     return pen.glyph()
 
 
-def build(path, family, scale):
+def shape(rows, w, scale, style):
+    if scale == 2: rows, w = epx(rows, w)
+    if style == "blast":
+        if scale == 2: rows, w = embolden(rows, w)
+        rows, _ = lean(rows, w, 3 if scale == 1 else 4, ASC * scale - 1)
+    return rows, w
+
+
+def build(path, family, scale, style=None):
     chars = sorted(set(G) | set(COMPOSE))
     upm, asc, desc = 1200 * scale, ASC * scale, (ROWS + 1 - ASC) * scale
     order, glyphs, metrics, cmap = [".notdef"], {}, {}, {}
     box = [[1] * 4] + [[1, 0, 0, 1]] * 5 + [[1] * 4]
     nd = [[0] * 4 for _ in range(2)] + [list(r) for r in box] + [[0] * 4 for _ in range(2)]
-    if scale == 2: nd, _ = epx(nd, 4)
+    nd, _ = shape(nd, 4, scale, style)
     glyphs[".notdef"] = outline(nd, asc); metrics[".notdef"] = ((4 * scale + scale) * 100, 0)
     for ch in chars:
         rows, w = bitmap(ch)
-        if scale == 2: rows, w = epx(rows, w)
+        rows, w = shape(rows, w, scale, style)
         name = "uni%04X" % ord(ch)
         order.append(name); cmap[ord(ch)] = name
         glyphs[name] = outline(rows, asc)
@@ -168,4 +199,6 @@ if __name__ == "__main__":
     os.makedirs(out, exist_ok=True)
     n = build(os.path.join(out, "BananaPixel.ttf"), "Banana Pixel", 1)
     build(os.path.join(out, "BananaTitle.ttf"), "Banana Title", 2)
-    print("make-pixel-font: %d glyphs each in %s (BananaPixel.ttf, BananaTitle.ttf)" % (n, out))
+    build(os.path.join(out, "BananaBlast.ttf"), "Banana Blast", 1, "blast")
+    build(os.path.join(out, "BananaBlastTitle.ttf"), "Banana Blast Title", 2, "blast")
+    print("make-pixel-font: %d glyphs each in %s (BananaPixel, BananaTitle, BananaBlast, BananaBlastTitle .ttf)" % (n, out))

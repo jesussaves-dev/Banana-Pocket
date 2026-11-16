@@ -8,7 +8,7 @@
   "style": "genesis",
   "base": "dark",
   "accent": "#ff00b6",
-  "font": "banana",
+  "font": "banana-blast",
   "crisp": true,
   "canvas": { "w": 310 },
 
@@ -30,6 +30,16 @@
   "behavior": { "launchMs": 700, "scrollMs": 110, "fps": 4 },
 
   "components": {
+    // chrome title type: one stop per row of the 24-unit line, white over a cyan/blue horizon line, then orange into
+    // yellow, outlined in black. Capitals sit on rows 4-17.
+    "chrome": {
+      "type": "text", "font": "banana-blast-title", "size": 24, "color": "=chrome0",
+      "gradient": { "hard": true, "stops": [
+        "=chrome0", "=chrome0", "=chrome0", "=chrome0", "=chrome0", "=chrome0", "=chrome0", "=chrome0",
+        "=chrome1", "=chrome2", "=chrome2", "=chrome3", "=chrome4", "=chrome4", "=chrome5", "=chrome5",
+        "=chrome6", "=chrome6", "=chrome6", "=chrome6", "=chrome6", "=chrome6", "=chrome6", "=chrome6" ] },
+      "outline": { "width": 1, "color": "=void" }
+    },
     // a button and what it does: the key in yellow on a black chip, the label in white
     "pill": {
       "type": "group", "layout": "row", "gap": 3, "align": "center", "h": 13,
@@ -122,9 +132,7 @@
           "src": "{art}/{moved > 20000 && entered > 20000 && abs(scroll - cursor) < 0.02 ? 'idle' + mod(floor(time / 500), 2) : 'ride' + (abs(scroll - cursor) > 0.02 ? mod(floor(abs(scroll) * 8), 2) : 0)}.png" },
 
         // what's selected: its name in chrome, its maker under it, then the buttons
-        { "type": "text", "x": 0, "y": 224, "w": 310, "align": "center", "text": "{upper(sys.name)}", "font": "banana-title", "size": 24,
-          "color": "=chrome0", "gradient": { "stops": ["=chrome0", "=chrome1", "=chrome2", "=chrome3", "=chrome4", "=chrome5", "=chrome6", "=chrome6"] },
-          "outline": { "width": 1, "color": "=void" } },
+        { "use": "chrome", "x": 0, "y": 224, "w": 310, "align": "center", "text": "{upper(sys.name)}" },
         { "type": "text", "size": 12, "x": 0, "y": 243, "w": 310, "align": "center",
           "text": "=upper(sys.maker) + '  ' + (cursor + 1) + '/' + count", "color": "=dim",
           "outline": { "width": 1, "color": "=void" } },
@@ -137,9 +145,7 @@
       "top": [
         // the cart rack (a first cut; its own art comes with the screens): black, a dim red grid, the system's name
         { "type": "rect", "x": 0, "y": 0, "w": 310, "h": 270, "fill": "=void" },
-        { "type": "text", "x": 8, "y": 20, "w": 200, "text": "{upper(sys.name)}", "font": "banana-title", "size": 24, "color": "=chrome0",
-          "gradient": { "stops": ["=chrome0", "=chrome1", "=chrome2", "=chrome3", "=chrome4", "=chrome5", "=chrome6", "=chrome6"] },
-          "outline": { "width": 1, "color": "=void" } },
+        { "use": "chrome", "x": 8, "y": 20, "w": 200, "text": "{upper(sys.name)}" },
         { "type": "text", "size": 12, "right": 8, "y": 26, "w": 80, "align": "right", "text": "{cursor + 1}/{count}", "color": "=dim", "visible": "=!empty" },
         { "type": "rect", "x": 0, "y": 44, "w": 310, "h": 2, "fill": "=mag" },
 

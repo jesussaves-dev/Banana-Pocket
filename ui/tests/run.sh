@@ -478,8 +478,9 @@ for size in 640x557; do
         [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
         [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ] || { echo "FAIL $size: $f is blank"; fail=1; }
     done
-    # the Mega Drive's rules above the title (the chrome font is not 9-bit yet): 9-bit colours only, and a true-black sky
-    nb=$(convert "$OUT/$size-blast-home.png" -crop 1240x896+0+0 +repage -depth 8 txt:- 2>/dev/null | grep -v '^#' |
+    # the Mega Drive's rules over the whole course, the chrome title's hard bands too: 9-bit colours only, and a
+    # true-black sky
+    nb=$(convert "$OUT/$size-blast-home.png" -depth 8 txt:- 2>/dev/null | grep -v '^#' |
         grep -o '#[0-9A-F]\{6\}' | sort -u | grep -cvE '^#((00|24|49|6D|92|B6|DB|FF)){3}$' || true)
     [ "$nb" = 0 ] || { echo "FAIL $size: blast's course has $nb colours off the 9-bit grid"; fail=1; }
     [ "$(convert "$OUT/$size-blast-home.png" -crop 1240x280+0+100 +repage -fill white +opaque black -format '%[fx:mean<0.1]' info:)" = 1 ] ||

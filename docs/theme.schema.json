@@ -169,6 +169,7 @@
       "description": "A linear gradient across the box (CSS angles: 180 runs top to bottom). On text: the letters shaded in even bands down the line, one per layout unit, from the stops (plain colours; angle and positions are not used).",
       "properties": {
         "angle": { "$ref": "#/$defs/prop", "description": "The gradient's angle in degrees. Default 180." },
+        "hard": { "$ref": "#/$defs/prop", "description": "Text only: each band takes one stop's colour unblended, the stops spread evenly over the bands (as many stops as the line has units gives one per row). Up to 32 stops. Default false." },
         "stops": {
           "type": "array",
           "description": "The colour stops, in order: a colour, optionally with a position (\"#123 40%\").",
