@@ -73,7 +73,7 @@ Modules pulled in only as dependencies (visible in `lsmod`, no `modprobe` of the
 |---|---|
 | `MMC_SDHCI_MSM` | `sdhci_msm`, `mmc/mmcblk` (microSD: whole OS) |
 | `SQUASHFS`, `SQUASHFS_LZ4` | root (`rootfstype=squashfs`) |
-| `VFAT_FS` | `/boot` (p1, `rcS:67`) |
+| `VFAT_FS` + `NLS_CODEPAGE_437`, `NLS_ISO8859_1` | `/boot` (p1, `rcS:67`); the NLS pair are vfat's default codepage and iocharset, which a mount without `codepage=`/`iocharset=` needs (the K1.2 config missed them and `/boot` stopped mounting) |
 | `EXFAT_FS` | `/data` (p4, `rcS:53`); `rcS:59` falls back to "whatever the kernel can mount" (FAT32) |
 | `DEVTMPFS(_MOUNT)`, `TMPFS`, `PROC_FS`, `SYSFS`, `DEVPTS` | `rcS:5-17` |
 | `EXT4_FS`, `F2FS_FS` | **nothing mounts them** — drop in K1.2 |
