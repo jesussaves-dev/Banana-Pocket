@@ -138,6 +138,14 @@ def lean(rows, w, every, base):
     shift = [(base - j + off) // every if j <= base else 0 for j in range(len(rows))]
     extra = max(shift)
     out = [[0] * shift[y] + r + [0] * (extra - shift[y]) for y, r in enumerate(rows)]
+    # where a step falls across a "/" stroke (ink above and to the right, none straight above or right), the step's
+    # extra cell would open a two-cell gap: the lower row gets the cell between, so the letter stays joined (Y, M, V)
+    for j in range(1, len(rows)):
+        if shift[j - 1] == shift[j]: continue
+        up, lo = rows[j - 1], rows[j]
+        for x in range(w - 1):
+            if lo[x] and up[x + 1] and not up[x] and not lo[x + 1]:
+                out[j][x + 1 + shift[j]] = 1
     return out, w + extra
 
 

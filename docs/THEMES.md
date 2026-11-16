@@ -82,8 +82,12 @@ on the same 310 grid, drawn to the Mega Drive's rules (9-bit colour, levels 0-7 
 the AMOLED; checker dithers, never gradients). `tools/gen-blast.py` bakes its art into `blast/night/`: the sky, three
 parallax layers, the banana's frames and the floor as 119 one-scanline pictures, each drawn by a `"source": "range"`
 list at its own x (the per-line horizontal scroll). The twinkling stars are 20 one-pixel rects whose positions come
-from `tools/gen-blast.py --twinkle`. So far a Genesis theme's Settings, keyboard and pause menu are still the Classic
-painter's.
+from `tools/gen-blast.py --twinkle`. The library is a cart rack under a dim red grid, its box art through
+`dither9Contain`. Settings, the keyboard, the pause menu and the pill, notices and toasts have their own painter
+(`settings_genesis.cpp`) on the SNES style's grid, pages and input, with no baked art: an Options screen (the groups
+as one list, then the open group's rows, labels white and values yellow), an arcade name-entry grid, and a black
+pause panel over the game in shadow (the card covers the whole screen at half black). Its colours are the theme's
+`vars` (`ink`, `dim`, `line`, `label`, `mag`, `cyan`, `red` and `chrome0`-`chrome6`), its type the Blast faces.
 
 For an SNES or Genesis theme, `tools/check-themes.py` also checks that every plain `{art}` picture exists. A
 neighborhood made by `gen-street.py` has to match a fresh run of it. For Blast, `gen-blast.py` is run into a temp
@@ -177,7 +181,7 @@ bands, so one stop per unit of the line paints it row by row and keeps to the pa
 Fonts are named in the theme's `fonts` (`"title": "mine/Title.ttf"`) or are built in: `pixel`, `pixel-medium`
 (Pixelify Sans), `inter`, `inter-medium`, `inter-semibold`, `inter-bold`, and Banana's own pixel faces `banana` and
 `banana-title` (`tools/make-pixel-font.py`, ASCII and Latin-1), with the Genesis style's leaning pair `banana-blast`
-(the HUD face, leaned a cell every 3 rows) and `banana-blast-title` (doubled, thick-stemmed, leaned a cell every 4 rows).
+(the HUD face, leaned a cell every 3 rows, with a bridging cell where a step would split a "/" stroke) and `banana-blast-title` (doubled, thick-stemmed, leaned a cell every 4 rows).
 They are drawn on a grid of 100 font units per art pixel, so they come out hard-edged with no grey at `size` 12 (the
 plain faces) and 24 (the titles) on a `"canvas": { "w": 310 }` theme. The leaning faces keep the upright advance, so
 each row keeps its gap to the next letter and the last letter's top overhangs the measured width by up to 4 units.
@@ -185,7 +189,9 @@ each row keeps its gap to the next letter and the last letter's top overhangs th
 ### image
 
 `src`, `fallback` (another source when `src` is empty or doesn't load), `fit` (`cover`, `contain`, `fill`, `coverTop`,
-`pixel` stretched without smoothing, `pixelContain` whole multiples of its pixels), `radius`, `tint` (multiplied),
+`pixel` stretched without smoothing, `pixelContain` whole multiples of its pixels, `ditherContain` and
+`dither9Contain` contained at a texel a unit through a 4x4 ordered dither to 15-bit or 9-bit colour, for the SNES and
+Genesis styles; an image with alpha takes `contain`), `radius`, `tint` (multiplied),
 `crop` (`cardLabel`: a real DS card scan's artwork, `noStrip`: a DS box without its white strip), `placeholder` (a
 colour shown while it loads or when there is nothing). Pictures are decoded and fitted off the main thread.
 

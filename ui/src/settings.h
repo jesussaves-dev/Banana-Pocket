@@ -129,6 +129,24 @@ namespace banana
 		std::string bananaDir, snesArt;
 		std::shared_ptr<rnds::Font> B;
 		rnds::Color sInk, sPaper, sGold, sDim, sMuted, sRed;
+		// the Genesis style (settings_genesis.cpp): the SNES style's grid, pages and input (snes is set for it too),
+		// drawn on true black in the Blast faces with no baked art: Options, name entry, the pause panel, the pill
+		bool genesis = false;
+		std::shared_ptr<rnds::Font> BT;		// the chrome title face, BananaBlastTitle.ttf at 24
+		rnds::Color gInk, gDim, gLine, gLabel, gMag, gCyan, gRed, gChrome[24];
+		void renderOptions();
+		void renderNameEntry();
+		void pauseBlast(const PauseView& v);
+		void levelBlast(const std::string& label, int percent);
+		void noticeBlast(const std::string& title, const std::string& body, int percent, bool charging);
+		void toastBlast(const char* const* sign);
+		Result genesisTouch(float cx, float cy);	// the Options list's touch (the other pages are snesTouch's)
+		float gText(const std::string& t, float x, float y, const rnds::Color& c);	// outlined in black
+		float gChromeText(const std::string& t, float x, float y, bool measureOnly = false);	// the title face, banded
+		void gChip(const std::string& key, const std::string& label, float x, float y);
+		float gChipWidth(const std::string& key, const std::string& label);
+		void gBox(float x, float y, float w, float h, const rnds::Color& c, float t = 1);
+		void gCursor(float x, float y, const rnds::Color& c);
 		void renderWorkshop();
 		void renderPhoneBook();					// the keyboard (search, passwords) as the phone book, book.png
 		void renderTicket(const PauseView& v);	// the pause menu as a ticket, ticket.png
@@ -140,6 +158,8 @@ namespace banana
 		static constexpr int LEDGER_VIS = 9;
 		static int ledgerFirst(int sel, int n);
 		void renderLedger(const std::string& title, const std::string& count, const std::string& status, const std::vector<SRow>& rows,
+			int sel, const std::string& empty, const std::string& help, bool helpIsMessage, const std::vector<SChip>& left, const SChip& right);
+		void ledgerBlast(const std::string& title, const std::string& count, const std::string& status, const std::vector<SRow>& rows,
 			int sel, const std::string& empty, const std::string& help, bool helpIsMessage, const std::vector<SChip>& left, const SChip& right);
 		void levelSnes(const std::string& label, int percent);	// the pill, pill.png
 		void noticeSnes(const std::string& title, const std::string& body, int percent, bool charging);	// notice.png

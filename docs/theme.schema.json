@@ -350,7 +350,7 @@
         "fit": {
           "description": "How the picture fits its box.",
           "anyOf": [
-            { "enum": ["cover", "contain", "fill", "coverTop", "pixel", "pixelContain"] },
+            { "enum": ["cover", "contain", "fill", "coverTop", "pixel", "pixelContain", "ditherContain", "dither9Contain"] },
             { "type": "string", "pattern": "^\\s*(=|\\{)", "description": "An =expression or {template} that yields one of the values above." }
           ]
         },

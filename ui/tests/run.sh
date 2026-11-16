@@ -480,9 +480,13 @@ for size in 640x557; do
     done
     # the Mega Drive's rules over the whole course, the chrome title's hard bands too: 9-bit colours only, and a
     # true-black sky
-    nb=$(convert "$OUT/$size-blast-home.png" -depth 8 txt:- 2>/dev/null | grep -v '^#' |
-        grep -o '#[0-9A-F]\{6\}' | sort -u | grep -cvE '^#((00|24|49|6D|92|B6|DB|FF)){3}$' || true)
+    off9() { convert "$1" -depth 8 txt:- 2>/dev/null | grep -v '^#' |
+        grep -o '#[0-9A-F]\{6\}' | sort -u | grep -cvE '^#((00|24|49|6D|92|B6|DB|FF)){3}$' || true; }
+    nb=$(off9 "$OUT/$size-blast-home.png")
     [ "$nb" = 0 ] || { echo "FAIL $size: blast's course has $nb colours off the 9-bit grid"; fail=1; }
+    # the cart rack too: its box art through dither9Contain, its heart baked by gen-blast.py
+    nb=$(off9 "$OUT/$size-blast-lib.png")
+    [ "$nb" = 0 ] || { echo "FAIL $size: blast's cart rack has $nb colours off the 9-bit grid"; fail=1; }
     [ "$(convert "$OUT/$size-blast-home.png" -crop 1240x280+0+100 +repage -fill white +opaque black -format '%[fx:mean<0.1]' info:)" = 1 ] ||
         { echo "FAIL $size: blast's sky isn't true black"; fail=1; }
     # speed lines (white, in the sky above the billboards) on the boost's first frame, none once it has arrived
@@ -495,6 +499,34 @@ for size in 640x557; do
     [ "$(spr "$OUT/$size-blast-home.png" "$OUT/$size-blast-home2.png")" = 0 ] || { echo "FAIL $size: blast's banana moves at rest before 20 s"; fail=1; }
     [ "$(spr "$OUT/$size-blast-idle.png" "$OUT/$size-blast-idle2.png")" != 0 ] || { echo "FAIL $size: blast's banana doesn't tap its foot when idle"; fail=1; }
     for s in home lib; do golden "blast-$s" "$OUT/$size-blast-$s.png"; done
+    # its Settings (settings_genesis.cpp, on the SNES style's pages and input): Options, open Display & sound and
+    # change Night light (saved like the Classic screen's); name entry types q, w, Shift, S and a tap on E (the phone
+    # book's places), B deletes it and START looks "qwS" up; the pause panel is a whole-screen card (the game behind in
+    # shadow); then a page by touch (the Network group, 124,248 in layout px, twice), the first-time setup, the pill,
+    # the charger's notice and a toast. Every screen on the 9-bit grid.
+    sed -i '/^night_light *=/d' "$FX/data/settings.conf"
+    for run in "home 0; wait 600; press start; wait 300; shot options; press a; press down; press down; press down; press down; press down; press right; wait 300; shot options2" \
+        "home 0; wait 600; search; wait 200; press a; press right; press a; press x; press down; press a; touch 173 200; wait 100; shot name; press b; press start; wait 300; pause ticket 1" \
+        "home 0; wait 600; press start; wait 200; touch 124 248; touch 124 248; wait 300; shot network; press b; press b; setup; wait 200; shot ledger-setup; press b; wait 300; level Volume 60; shot pill; plug 80 battery; plug 81 charging; shot plug" \
+        "home 0; wait 600; toast 1|Trophy won|By finding the sword|$FX/roms/ngp/media/box/Peel Quest.png; wait 16; shot toast; wait 1"; do
+        sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/blast.json|" "$FX/data/settings.conf"
+        BANANA_RA_CHECK=0 BANANA_WIFI="$HERE/tests/fake-wifi.sh" FAKE_WIFI_CONF="$FX/data/wifi.conf" "$HERE/banana-ui" --headless "$OUT/$size-blast-" \
+            --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" --systems "$HERE/tests/systems.conf" --roms "$FX/roms" \
+            --data "$FX/data" --script "$run" 2>> "$bllog" || { echo "FAIL $size: banana-ui (blast settings) exited $?"; fail=1; }
+        sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    done
+    grep -q '^night_light = warm' "$FX/data/settings.conf" || { echo "FAIL $size: blast's Options didn't save Night light: $(grep '^night_light' "$FX/data/settings.conf")"; fail=1; }
+    sed -i '/^night_light *=/d' "$FX/data/settings.conf"
+    grep -q 'search "qwS":' "$bllog" || { echo "FAIL $size: blast's name entry: $(grep 'search' "$bllog" | tail -2)"; fail=1; }
+    grep -q 'pause ticket: card 0,0 1240x1080' "$bllog" || { echo "FAIL $size: blast's pause card: $(grep 'pause ticket' "$bllog")"; fail=1; }
+    grep -q "plug: notice Charging" "$bllog" || { echo "FAIL $size: blast's charger notice"; fail=1; }
+    for s in options options2 name ticket network ledger-setup pill plug toast; do
+        f=$OUT/$size-blast-$s.png
+        [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
+        nb=$(off9 "$f")
+        [ "$nb" = 0 ] || { echo "FAIL $size: blast's $s has $nb colours off the 9-bit grid"; fail=1; }
+        golden "blast-$s" "$f"
+    done
     # the card's banana/themes kept up to date with the image's (theme.cpp syncCardThemes): a new card gets a copy; a
     # new version refreshes what the user left alone, adds what is new and keeps an edited file; a card seeded before
     # the manifest has a differing file saved to .before-update/ and then refreshed

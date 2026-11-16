@@ -16,6 +16,7 @@ level 1 only for thin distant lines. Always night. Per palette it writes:
                       so its perspective lines sit where they belong on every line and the grid never kinks
   ride{0,1}, idle{0,1}, speed{0,1}
                       the banana on its board (wheels turning), off it tapping a foot, and the boost's speed lines
+  fav                 the favourite's heart, 8 x 8
 """
 import os, sys
 from PIL import Image
@@ -224,6 +225,13 @@ def idle(tap):
     return c
 
 
+def fav():
+    """The favourite's heart, 8 x 8: magenta with a white glint (the shared fav.png is off the 9-bit grid)."""
+    c = Canvas(8, 8)
+    spr(c, [".mm.mm..", "mwmmmmm.", "mmmmmmm.", "mmmmmmm.", ".mmmmm..", "..mmm...", "...m....", "........"], 0, 0)
+    return c
+
+
 def speed(frame):
     r = rng(13 + frame * 101)
     c = Canvas(W, 186)
@@ -251,7 +259,8 @@ def write(root):
         out = os.path.join(root, "blast", name)
         os.makedirs(os.path.join(out, "floor"), exist_ok=True)
         files = {"sky": sky(p), "stars": stars(), "shapes": shapes(p), "city": city(p),
-                 "ride0": ride(0), "ride1": ride(1), "idle0": idle(0), "idle1": idle(1), "speed0": speed(0), "speed1": speed(1)}
+                 "ride0": ride(0), "ride1": ride(1), "idle0": idle(0), "idle1": idle(1), "speed0": speed(0), "speed1": speed(1),
+                 "fav": fav()}
         for i in range(FLOOR): files["floor/row%d" % i] = floor_row(p, i + 1, across)
         for k, c in files.items():
             c.save(os.path.join(out, k + ".png"))

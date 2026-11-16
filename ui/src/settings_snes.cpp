@@ -37,7 +37,7 @@ namespace banana
 	float Settings::sText(const std::string& t, float x, float y, const Color& c, bool measureOnly)
 	{
 		if (t.empty()) return 0;
-		if (!B) B = rnds::Font::load(bananaDir + "/fonts/BananaPixel.ttf");
+		if (!B) B = rnds::Font::load(bananaDir + (genesis ? "/fonts/BananaBlast.ttf" : "/fonts/BananaPixel.ttf"));
 		if (!B) return text(t, true, 12 * u / s, x * u / s, y * u / s, c, false, 0, measureOnly) * s / u;	// (no font: Pixelify)
 		std::string key = "stxt:" + t;
 		auto it = cache.find(key);
@@ -112,7 +112,7 @@ namespace banana
 	// t wrapped to width units, at most lines lines of 12
 	void Settings::sWrap(const std::string& t, float x, float y, float width, int lines, const Color& c)
 	{
-		if (!B) B = rnds::Font::load(bananaDir + "/fonts/BananaPixel.ttf");
+		if (!B) B = rnds::Font::load(bananaDir + (genesis ? "/fonts/BananaBlast.ttf" : "/fonts/BananaPixel.ttf"));
 		if (!B || t.empty()) return;
 		rnds::TextStyle st;
 		st.font = B; st.size = 12;
@@ -431,6 +431,7 @@ namespace banana
 	void Settings::renderLedger(const std::string& title, const std::string& count, const std::string& status, const std::vector<SRow>& rows,
 		int sel, const std::string& empty, const std::string& help, bool helpIsMessage, const std::vector<SChip>& left, const SChip& right)
 	{
+		if (genesis) { ledgerBlast(title, count, status, rows, sel, empty, help, helpIsMessage, left, right); return; }
 		const Color ink = sInk;
 		be->beginScreen();
 		sFill(0, 0, 310, 270, sDim);

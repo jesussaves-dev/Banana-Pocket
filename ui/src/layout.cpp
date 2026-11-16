@@ -1341,10 +1341,13 @@ namespace banana
 				else if (j.crop == "noStrip") src = rnds::coverWithoutStrip(src);
 				rnds::Bitmap out;
 				float ox = 0, oy = 0;
-				if (j.fit == "ditherContain" && !src.alpha)
+				const bool dither9 = j.fit == "dither9Contain";
+				if ((j.fit == "ditherContain" || dither9) && !src.alpha)
 				{
-					// the picture on the theme's grid: contained at one texel a unit, snapped to 15-bit colour through
-					// a 4x4 ordered dither (the Super NES's colours, no smooth blends), then grown a unit a texel
+					// the picture on the theme's grid: contained at one texel a unit, snapped through a 4x4 ordered
+					// dither to 15-bit colour (the Super NES's) or, for dither9Contain, 9-bit (the Mega Drive's 8
+					// levels a channel), with no smooth blends, then grown a unit a texel
+					const int lv = dither9 ? 7 : 31;
 					const int u = std::max(1, (int)std::lround(s));
 					float fw, fh;
 					rnds::containSize(src.w, src.h, std::max(1, j.w / u), std::max(1, j.h / u), fw, fh);
@@ -1358,16 +1361,16 @@ namespace banana
 							const float d = (BAYER[y & 3][x & 3] + 0.5f) / 16 - 0.5f;
 							for (int ch = 0; ch < 3; ch++)
 							{
-								int k = (int)std::floor(p[ch] * 31 / 255.0f + d + 0.5f);
-								k = std::max(0, std::min(31, k));
-								p[ch] = (uint8_t)((k << 3) | (k >> 2));
+								int k = (int)std::floor(p[ch] * lv / 255.0f + d + 0.5f);
+								k = std::max(0, std::min(lv, k));
+								p[ch] = (uint8_t)(dither9 ? (k * 255 + 3) / 7 : (k << 3) | (k >> 2));
 							}
 							p[3] = p[3] >= 128 ? 255 : 0;
 						}
 					out = rnds::resizeNearest(g, gw * u, gh * u);
 					ox = std::floor((j.w / u - gw) / 2.0f) * u; oy = std::floor((j.h / u - gh) / 2.0f) * u;
 				}
-				else if (j.fit == "contain" || j.fit == "pixelContain" || j.fit == "ditherContain")
+				else if (j.fit == "contain" || j.fit == "pixelContain" || j.fit == "ditherContain" || dither9)
 				{
 					float fw, fh;
 					rnds::containSize(src.w, src.h, j.w, j.h, fw, fh);

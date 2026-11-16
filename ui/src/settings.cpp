@@ -235,7 +235,11 @@ namespace banana
 		}
 		writeOsdStyle();
 		// the SNES style: its own grid and panels for the screens it redraws (the workshop)
-		snes = themeStyle(value) == "snes";
+		const std::string style = themeStyle(value);
+		const bool wasGenesis = genesis;
+		genesis = style == "genesis";
+		snes = style == "snes" || genesis;
+		if (genesis != wasGenesis) { B.reset(); BT.reset(); }	// (sText's face is the style's)
 		if (snes)
 		{
 			u = std::max(1.0f, std::floor(640 * s / 310));
@@ -248,6 +252,17 @@ namespace banana
 			};
 			sInk = col("ink", 0x2b1a33); sPaper = col("paper", 0xfff3cf); sGold = col("gold", 0xffd21e);
 			sDim = col("dk", 0x5a3a4a); sMuted = col("paperLo", 0xd8c49a); sRed = col("awnA", 0xc8382d);
+			if (genesis)
+			{
+				// the Mega Drive's grid: every default a 9-bit colour; the chrome title one stop a row of its 24
+				gInk = col("ink", 0xffffff); gDim = col("dim", 0x929292); gLine = col("line", 0x494949);
+				gLabel = col("label", 0xffdb00); gMag = col("mag", 0xff00b6); gCyan = col("cyan", 0x00dbff);
+				gRed = col("red", 0xff2400);
+				const Color c0 = col("chrome0", 0xffffff), c1 = col("chrome1", 0xb6ffff), c2 = col("chrome2", 0x00dbff),
+					c3 = col("chrome3", 0x2449db), c4 = col("chrome4", 0xff6d00), c5 = col("chrome5", 0xffb600), c6 = col("chrome6", 0xffff49);
+				const Color bands[24] = { c0, c0, c0, c0, c0, c0, c0, c0, c1, c2, c2, c3, c4, c4, c5, c5, c6, c6, c6, c6, c6, c6, c6, c6 };
+				for (int r = 0; r < 24; r++) gChrome[r] = bands[r];
+			}
 		}
 	}
 
@@ -1003,6 +1018,7 @@ namespace banana
 		if (down) { downX = cx; downY = cy; downOnRow = true; return NONE; }
 		if (!downOnRow) return NONE;
 		downOnRow = false;
+		if (genesis && page == LIST) return genesisTouch(cx, cy);
 		if (snes && page != KEYBOARD) return snesTouch(cx, cy);	// (the phone book's keys are touchKeyboard's)
 		if (page == NETWORKS) return touchNetworks(cx, cy);
 		if (page == KEYBOARD) return touchKeyboard(cx, cy);
@@ -1301,6 +1317,7 @@ namespace banana
 
 	void Settings::notice(const std::string& title, const std::string& body, int percent, bool charging)
 	{
+		if (genesis) { noticeBlast(title, body, percent, charging); return; }
 		if (snes && !snesArt.empty()) { noticeSnes(title, body, percent, charging); return; }
 		SPal p = pal(light);
 		rememberCard(40, 344, 560, 104);
@@ -1327,6 +1344,7 @@ namespace banana
 
 	void Settings::pauseMenu(const PauseView& v)
 	{
+		if (genesis) { pauseBlast(v); return; }
 		if (snes) { renderTicket(v); return; }
 		SPal p = pal(light);
 		const float x0 = 12, y0 = 12, w = 616, h = 533;
@@ -1407,6 +1425,7 @@ namespace banana
 			"#..#.#...#..", "####.#..#.#.", "...###.#...#", "....##......", ".....#......", "............" };
 		static const char* const SUN[12] = { ".....##.....", ".#...##...#.", "..#......#..", "....####....", "...######...", "##.######.##",
 			"##.######.##", "...######...", "....####....", "..#......#..", ".#...##...#.", ".....##....." };
+		if (genesis) { levelBlast(label, percent); return; }
 		if (snes && !snesArt.empty()) { levelSnes(label, percent); return; }
 		percent = std::min(100, std::max(0, percent));
 		bool sun = label == "Brightness";
@@ -1579,10 +1598,11 @@ namespace banana
 	void Settings::render()
 	{
 		if (page == NETWORKS) { renderNetworks(); return; }
-		if (page == KEYBOARD) { if (snes) renderPhoneBook(); else renderKeyboard(); return; }
+		if (page == KEYBOARD) { if (genesis) renderNameEntry(); else if (snes) renderPhoneBook(); else renderKeyboard(); return; }
 		if (page == UPDATES) { renderUpdates(); return; }
 		if (page == SETUP) { renderSetup(); return; }
 		if (page == STATES) { renderStates(); return; }
+		if (genesis && page == LIST) { renderOptions(); return; }
 		if (snes && page == LIST) { renderWorkshop(); return; }
 		if (inGroups) { renderGroups(); return; }
 		SPal p = pal(light);
@@ -2776,6 +2796,7 @@ namespace banana
 			{ "...###...", "..#####..", "..##.##..", "....##...", "...##....", "...##....", ".........", "...##....", "...##...." },
 			{ ".........", "........#", ".......##", "......##.", "#....##..", "##..##...", ".####....", "..##.....", "........." },
 			{ "##.....##", ".##...##.", "..##.##..", "...###...", "...###...", "..##.##..", ".##...##.", "##.....##", "........." } };
+		if (genesis) { toastBlast(SIGN[std::max(0, std::min(2, toastNow.icon))]); return; }
 		if (snes && !snesArt.empty()) { toastSnes(SIGN[std::max(0, std::min(2, toastNow.icon))]); return; }
 		const Color light = Color::hex(0xf1ede2), acc = Color::hex(toastNow.accent);
 		rememberCard(8, 4, 624, 64);

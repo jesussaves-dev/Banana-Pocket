@@ -111,7 +111,7 @@
                 "color": "=pick(item.maker == 'Nintendo' ? 0 : item.maker == 'Sega' ? 1 : item.maker == 'Sony' ? 2 : item.maker == 'NEC' ? 3 : item.maker == 'SNK' ? 4 : item.maker == 'Atari' ? 5 : 6, '#ff0024', '#006dff', '#00dbff', '#ff6d00', '#ffdb00', '#ff00b6', '#6dff00')" },
               { "type": "text", "size": 12, "x": 4, "w": 92, "y": 34, "align": "center",
                 "text": "=item.games == 0 ? 'NO GAMES' : item.games == 1 ? '1 GAME' : item.games + ' GAMES'", "color": "=sel ? ink : dim" },
-              { "type": "image", "src": "fav.png", "fit": "pixel", "x": 6, "y": 6, "w": 8, "h": 8, "visible": "=item.fav" },
+              { "type": "image", "src": "{art}/fav.png", "fit": "pixel", "x": 6, "y": 6, "w": 8, "h": 8, "visible": "=item.fav" },
               // the selected one has an arrow over it, blinking yellow and white
               { "type": "group", "x": 47, "y": "=-10 + mod(floor(time / 250), 2)", "w": 7, "h": 4, "visible": "=sel",
                 "children": [
@@ -143,14 +143,20 @@
 
     "library": {
       "top": [
-        // the cart rack (a first cut; its own art comes with the screens): black, a dim red grid, the system's name
+        // the cart rack: black under a dim red grid (level 2: no near-black fills), the system's name in chrome over a
+        // rule in its maker's colour (the billboard's), the carts down the left and the box art on the right
         { "type": "rect", "x": 0, "y": 0, "w": 310, "h": 270, "fill": "=void" },
+        { "type": "list", "source": "range", "count": 15, "range": 15, "x": 0, "y": 46, "w": 310, "h": 224, "scrollMode": "none",
+          "selectedOnTop": false, "item": { "type": "rect", "x": "=i * 22", "y": 0, "w": 1, "h": 224, "fill": "#490000" } },
+        { "type": "list", "source": "range", "count": 10, "range": 10, "x": 0, "y": 46, "w": 310, "h": 224, "scrollMode": "none",
+          "selectedOnTop": false, "item": { "type": "rect", "x": 0, "y": "=22 + i * 22", "w": 310, "h": 1, "fill": "#490000" } },
         { "use": "chrome", "x": 8, "y": 20, "w": 200, "text": "{upper(sys.name)}" },
         { "type": "text", "size": 12, "right": 8, "y": 26, "w": 80, "align": "right", "text": "{cursor + 1}/{count}", "color": "=dim", "visible": "=!empty" },
-        { "type": "rect", "x": 0, "y": 44, "w": 310, "h": 2, "fill": "=mag" },
+        { "type": "rect", "x": 0, "y": 44, "w": 310, "h": 2,
+          "fill": "=pick(sys.maker == 'Nintendo' ? 0 : sys.maker == 'Sega' ? 1 : sys.maker == 'Sony' ? 2 : sys.maker == 'NEC' ? 3 : sys.maker == 'SNK' ? 4 : sys.maker == 'Atari' ? 5 : 6, '#ff0024', '#006dff', '#00dbff', '#ff6d00', '#ffdb00', '#ff00b6', '#6dff00')" },
 
         { "type": "image", "src": "{game.art}", "fallback": "{sys.icon}", "x": 182, "y": 54, "w": 120, "h": 120,
-          "fit": "=boxLook == 'original' ? 'contain' : 'ditherContain'" },
+          "fit": "=boxLook == 'original' ? 'contain' : 'dither9Contain'" },
         { "type": "text", "size": 12, "x": 182, "y": 180, "w": 120, "text": "{game.sub}", "color": "=dim", "wrap": true, "maxLines": 5 },
         { "type": "text", "size": 12, "x": 8, "w": 166, "y": 100, "align": "center", "text": "{upper(empty.title)}", "color": "=label",
           "visible": "=empty", "wrap": true },
@@ -166,7 +172,7 @@
             { "type": "rect", "x": "=sel ? 148 : 142", "y": 5, "w": 1, "h": 12, "fill": "=line" },
             { "type": "rect", "x": "=sel ? 152 : 146", "y": 5, "w": 1, "h": 12, "fill": "=line" },
             { "type": "text", "size": 12, "x": "=sel ? 13 : 7", "y": 5, "w": 124, "text": "{upper(item.title)}", "color": "=sel ? void : dim" },
-            { "type": "image", "src": "fav.png", "fit": "pixel", "right": 4, "y": 7, "w": 8, "h": 8, "visible": "=item.fav" }
+            { "type": "image", "src": "{art}/fav.png", "fit": "pixel", "right": 4, "y": 7, "w": 8, "h": 8, "visible": "=item.fav" }
           ] } },
 
         { "type": "list", "source": "hints", "direction": "row", "x": 8, "y": 255, "w": 294, "h": 13, "gap": 6, "flow": true, "scrollMode": "none",
