@@ -15,7 +15,11 @@
   // the cues, a boost for L/R and the loop, synthesised by tools/gen-blast-sounds.py (2-op FM, the PSG, crushed voice)
   "sounds": { "scroll": "blast/sounds/scroll.wav", "select": "blast/sounds/select.wav", "back": "blast/sounds/back.wav",
     "fav": "blast/sounds/fav.wav", "ready": "blast/sounds/ready.wav", "insert": "blast/sounds/insert.wav",
-    "boost": "blast/sounds/boost.wav", "bgm": "blast/sounds/bgm.wav" },
+    "boost": "blast/sounds/boost.wav", "bgm": "blast/sounds/bgm.wav",
+    // the secret's: the Blue Banana's boost, the code's fanfare, and the Sound Test's numbers past the cues
+    "rev": "blast/sounds/rev.wav", "secret": "blast/sounds/secret.wav",
+    "num0": "blast/sounds/num0.wav", "num1": "blast/sounds/num1.wav", "num2": "blast/sounds/num2.wav", "num3": "blast/sounds/num3.wav", "num4": "blast/sounds/num4.wav", "num5": "blast/sounds/num5.wav", "num6": "blast/sounds/num6.wav", "num7": "blast/sounds/num7.wav",
+    "num8": "blast/sounds/num8.wav", "num9": "blast/sounds/num9.wav", "num10": "blast/sounds/num10.wav", "num11": "blast/sounds/num11.wav", "num12": "blast/sounds/num12.wav", "num13": "blast/sounds/num13.wav", "num14": "blast/sounds/num14.wav", "num15": "blast/sounds/num15.wav" },
 
   // every colour is on the Mega Drive's grid: a channel is one of 00 24 49 6d 92 b6 db ff
   "vars": {
@@ -145,9 +149,15 @@
         { "type": "image", "src": "{art}/speed{mod(floor(abs(scroll) * 6), 2)}.png", "fit": "pixel", "x": 0, "y": 36, "w": 310, "h": 186,
           "visible": "=motion && abs(scroll - cursor) > 1.2" },
 
+        // the Blue Banana (the Sound Test's secret) leaves two afterimages behind it while boosting
+        { "type": "image", "src": "{art}/ghost-far.png", "fit": "pixel", "x": "=139 - dir * 14", "y": 201, "w": 32, "h": 22,
+          "visible": "=blue && motion && abs(scroll - cursor) > 1.2" },
+        { "type": "image", "src": "{art}/ghost-near.png", "fit": "pixel", "x": "=139 - dir * 7", "y": 201, "w": 32, "h": 22,
+          "visible": "=blue && motion && abs(scroll - cursor) > 1.2" },
+
         // the banana: on the board, wheels turning while it rolls; left alone for 20 s it steps off and taps a foot
         { "type": "image", "fit": "pixel", "x": 139, "y": 201, "w": 32, "h": 22,
-          "src": "{art}/{moved > 20000 && entered > 20000 && abs(scroll - cursor) < 0.02 ? 'idle' + mod(floor(time / 500), 2) : 'ride' + (abs(scroll - cursor) > 0.02 ? mod(floor(abs(scroll) * 8), 2) : 0)}.png" },
+          "src": "{art}/{blue ? 'blue-' : ''}{moved > 20000 && entered > 20000 && abs(scroll - cursor) < 0.02 ? 'idle' + mod(floor(time / 500), 2) : 'ride' + (abs(scroll - cursor) > 0.02 ? mod(floor(abs(scroll) * 8), 2) : 0)}.png" },
 
         // what's selected: its name in chrome, its maker under it, then the buttons
         { "use": "chrome", "x": 0, "y": 224, "w": 310, "align": "center", "text": "{upper(sys.name)}" },

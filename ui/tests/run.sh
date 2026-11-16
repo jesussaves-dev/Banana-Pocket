@@ -533,6 +533,33 @@ for size in 640x557; do
         [ "$nb" = 0 ] || { echo "FAIL $size: blast's $s has $nb colours off the 9-bit grid"; fail=1; }
         golden "blast-$s" "$f"
     done
+    # the secret: Options' Sound Test (Display & sound's 9th row) played 19 65 09 17, then Start, turns the Blue Banana
+    # on (blue_banana in settings.conf) and closes to the course; there an R boost shows the blue banana and its two
+    # afterimages, all still on the 9-bit grid
+    sed -i '/^blue_banana *=/d' "$FX/data/settings.conf"
+    sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/blast.json|" "$FX/data/settings.conf"
+    dn="press down; press down; press down; press down; press down; press down; press down; press down"
+    code="press r; press right; press right; press right; press right; press right; press right; press right; press right; press right; press a;
+        press r; press r; press r; press r; press right; press right; press right; press right; press right; press right; press a;
+        press r; press r; press r; press r; press right; press right; press right; press right; press a;
+        press r; press left; press left; press a"
+    "$HERE/banana-ui" --headless "$OUT/$size-blast-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+        --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "home 0; wait 600; press start; wait 200; press a; $dn; $code; wait 100; shot soundtest; press start; wait 600; press right; wait 1000; press r; wait 16; shot blue-boost; wait 1" \
+        2>> "$bllog" || { echo "FAIL $size: banana-ui (blast secret) exited $?"; fail=1; }
+    sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    grep -q '^blue_banana = on' "$FX/data/settings.conf" || { echo "FAIL $size: blast's Sound Test code didn't turn the Blue Banana on: $(grep '^blue_banana' "$FX/data/settings.conf")"; fail=1; }
+    sed -i '/^blue_banana *=/d' "$FX/data/settings.conf"
+    # the banana's body in the boost is the blue ramp's (1,3,7), and its afterimages trail it
+    [ "$(convert "$OUT/$size-blast-blue-boost.png" -crop 128x88+556+804 +repage -fill black +opaque '#246DFF' -fill white -opaque '#246DFF' -format '%[fx:mean>0.05]' info:)" = 1 ] ||
+        { echo "FAIL $size: blast's Blue Banana isn't blue"; fail=1; }
+    [ "$(convert "$OUT/$size-blast-blue-boost.png" -crop 300x88+300+804 +repage -fill black +opaque '#002492' -fill white -opaque '#002492' -format '%[fx:mean>0.005]' info:)" = 1 ] ||
+        { echo "FAIL $size: blast's Blue Banana has no afterimage"; fail=1; }
+    for s in soundtest blue-boost; do
+        nb=$(off9 "$OUT/$size-blast-$s.png")
+        [ "$nb" = 0 ] || { echo "FAIL $size: blast's $s has $nb colours off the 9-bit grid"; fail=1; }
+        golden "blast-$s" "$OUT/$size-blast-$s.png"
+    done
     # the card's banana/themes kept up to date with the image's (theme.cpp syncCardThemes): a new card gets a copy; a
     # new version refreshes what the user left alone, adds what is new and keeps an edited file; a card seeded before
     # the manifest has a differing file saved to .before-update/ and then refreshed

@@ -37,6 +37,9 @@ example's file name replaces that example.
       "sounds": {                  the menu's sounds (WAV): scroll, select, back, fav, ready, insert; "off"
         "scroll": "mine/tick.wav", for none. "boost" (optional) is L/R on the home screen, else the scroll.
         "fav": "off",              "bgm" is the background loop (a bgm.wav on the card still wins).
+                                   The Genesis style also knows "rev" (its secret's boost),
+                                   "secret" (the code going in) and "num0" to "num15" (its
+                                   Sound Test's numbers past the six cues and the boost).
                                    They change with the theme.
         "bgm": "mine/loop.wav"
       }

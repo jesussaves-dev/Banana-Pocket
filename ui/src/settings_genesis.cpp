@@ -136,7 +136,7 @@ namespace banana
 			std::string v = rowValue(gb + i);
 			if (!v.empty()) v = up(tr(v));
 			const bool slider = it.kind == Item::BRIGHTNESS || it.kind == Item::VOLUME || it.kind == Item::PERCENT;
-			const bool arrows = it.kind == Item::CHOICE && on;
+			const bool arrows = (it.kind == Item::CHOICE || it.kind == Item::SOUNDTEST) && on;
 			float valueW = slider ? 50 : v.empty() ? 0 : std::min(130.0f, sText(v, 0, 0, gLabel, true) + (arrows ? 13 : 0));
 			gText(sFit(up(tr(it.label)), vr - 24 - valueW - (valueW > 0 ? 8 : 0)), 24, y, on ? gLabel : gInk);
 			if (slider)
@@ -166,7 +166,7 @@ namespace banana
 
 		const Item& curIt = items[sel];
 		std::string act = inGroups ? tr("Open") : curIt.kind == Item::ACTION ? (armed == sel ? tr("Confirm") : tr(curIt.label)) :
-			curIt.kind == Item::INFO ? "" : curIt.key == "scrape" ? (scraping() ? "" : tr("Start")) : curIt.kind == Item::PAGE ? tr("Open") : tr("Change");
+			curIt.kind == Item::INFO ? "" : curIt.kind == Item::SOUNDTEST ? tr("Play") : curIt.key == "scrape" ? (scraping() ? "" : tr("Start")) : curIt.kind == Item::PAGE ? tr("Open") : tr("Change");
 		gChip("B", inGroups ? tr("Close") : tr("Back"), 8, 254);
 		if (!act.empty()) gChip("A", act, 302 - gChipWidth("A", act), 254);
 		be->endScreen();

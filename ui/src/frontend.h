@@ -66,7 +66,8 @@ namespace rnds
 		virtual bool charging() { return false; }	// the charger is plugged in: the battery icon shows a bolt
 		virtual std::string batteryMode() { return "icon"; }
 		virtual std::string boxLook() { return "pixel"; }	// Settings > Box art: "pixel" (a theme may dither it) or "original"	// ES's "show battery status": "" none, "icon", "text" (icon and %)
-		virtual bool topMotion() { return true; }	// false: the screen holds still (no rise on a move, no bob)
+		virtual bool topMotion() { return true; }
+		virtual bool blueBanana() { return false; }	// the Genesis style's secret, unlocked in its Sound Test	// false: the screen holds still (no rise on a move, no bob)
 		virtual bool online() = 0;
 
 		// actions

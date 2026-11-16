@@ -121,7 +121,10 @@ namespace banana
 	Sound::Bank Sound::load() const
 	{
 		Bank b;
-		for (const char* n : { "scroll", "select", "back", "fav", "ready", "insert", "boost" })
+		// the cues, then the optional ones a theme may have: Blast's Blue Banana boost and its Sound Test's numbers
+		std::vector<std::string> cueNames = { "scroll", "select", "back", "fav", "ready", "insert", "boost", "rev", "secret" };
+		for (int i = 0; i < 16; i++) cueNames.push_back("num" + std::to_string(i));
+		for (const std::string& n : cueNames)
 		{
 			// a user theme's own sound for it (rnds::themeFiles; "off": none), else the theme's (one that doesn't
 			// load: the theme's)

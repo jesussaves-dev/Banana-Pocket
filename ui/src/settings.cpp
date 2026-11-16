@@ -239,7 +239,17 @@ namespace banana
 		const bool wasGenesis = genesis;
 		genesis = style == "genesis";
 		snes = style == "snes" || genesis;
-		if (genesis != wasGenesis) { B.reset(); BT.reset(); }	// (sText's face is the style's)
+		if (genesis != wasGenesis)
+		{
+			B.reset(); BT.reset();	// (sText's face is the style's)
+			// the Genesis style has its Sound Test row, the others not
+			items.clear();
+			build();
+			for (auto& x : items) load(x);
+			sel = std::min(sel, (int)items.size() - 1);
+			top = std::min(top, sel);
+			stSeq.clear(); stArmed = false;
+		}
 		if (snes)
 		{
 			u = std::max(1.0f, std::floor(640 * s / 310));
@@ -332,6 +342,9 @@ namespace banana
 		add(D, "picture", "Night light", "Warmer colours at night: a panel-level tint over the menu and the games; Warmer cuts more blue.", menu, "night_light", { "Off", "Warm", "Warmer" }, { "off", "warm", "warmer" });
 		add(D, "music", "Menu sounds", "The menu's clicks, and the cartridge going into the console.", menu, "sounds", { "On", "Off" }, { "on", "off" });
 		add(D, "music", "Background Music", "An ambient loop under the menu, mixed low so the clicks stay clear. The SNES style plays its own; a bgm.wav (or music/bgm.wav) on the card plays instead. Off stops it at once.", menu, "bgm", { "On", "Off" }, { "on", "off" });
+		if (genesis)	// the era's Options screens had one
+			add(D, "music", "Sound Test", "Plays the theme's sounds by number. Left and right pick one, L and R by ten, A plays it.", "", "",
+				{}, {}, Item::SOUNDTEST);
 		add(D, "picture", "Battery", "The battery in the status bar: its icon, or its icon and how full it is.", menu, "battery", { "Icon", "Icon and %" }, { "icon", "percent" });
 		add(D, "picture", "Box art", "In the SNES style, a game's box on the counter: drawn on the street's grid in the Super NES's colours, or the picture as it is.", menu, "boxart_look", { "Pixel", "Original" }, { "pixel", "original" });
 		add(D, "picture", "Clock", "How the time in the status bar is written.", menu, "clock", { "24-hour", "12-hour" }, { "24h", "12h" });
@@ -776,6 +789,7 @@ namespace banana
 	{
 		Item& it = items[sel];
 		if (it.kind == Item::INFO) return NONE;
+		if (it.kind == Item::SOUNDTEST) { it.at = (it.at + (dir < 0 ? 99 : 1)) % 100; return MOVED; }	// a touch on its arrows
 		if (it.kind == Item::PAGE)
 		{
 			if (dir <= 0) return NONE;
@@ -951,6 +965,11 @@ namespace banana
 			}
 		}
 		if (inGroups) return pressGroups(k);
+		if (items[sel].kind == Item::SOUNDTEST)
+		{
+			Result r = pressSoundTest(k);
+			if (r != NONE) return r;
+		}
 		int g = groupOf(sel), b = groupStart(g), e = groupEnd(g);
 		switch (k)
 		{
@@ -979,6 +998,47 @@ namespace banana
 		case Key::RIGHT: case Key::A: return change(1);
 		case Key::B: inGroups = true; gsel = g; armed = -1; return MOVED;	// back to the groups
 		case Key::START: mOpen = false; return CLOSED;
+		default: return NONE;
+		}
+	}
+
+	// The Sound Test row: left and right step the number, L and R step it by ten, A plays it. Played in order,
+	// 19 65 09 17 arm it, and Start then turns the Blue Banana on or off (blue_banana in settings.conf). NONE: a key
+	// the row leaves to the list (up and down, B).
+	std::string Settings::soundTestCue(int n)
+	{
+		static const char* const cues[] = { "scroll", "select", "back", "fav", "ready", "insert", "boost" };
+		if (n < 7) return cues[n];
+		return "num" + std::to_string(n % 16);
+	}
+
+	Settings::Result Settings::pressSoundTest(Key k)
+	{
+		Item& it = items[sel];
+		switch (k)
+		{
+		case Key::LEFT: case Key::RIGHT: it.at = (it.at + (k == Key::LEFT ? 99 : 1)) % 100; return MOVED;
+		case Key::L: case Key::R: it.at = (it.at + (k == Key::L ? 90 : 10)) % 100; return MOVED;
+		case Key::A:
+		{
+			stSeq.push_back(it.at);
+			if (stSeq.size() > 4) stSeq.erase(stSeq.begin());
+			if (stSeq == std::vector<int>{ 19, 65, 9, 17 }) { stArmed = true; stSeq.clear(); cue = "secret"; }
+			else { stArmed = false; cue = soundTestCue(it.at); }
+			return CUE;
+		}
+		case Key::START:
+		{
+			if (!stArmed) return NONE;	// Start closes, as anywhere
+			stArmed = false;
+			const std::string file = data + "/settings.conf";
+			bool on = getConfValue(file, "blue_banana", "off") == "on";
+			setConfValue(file, "blue_banana", on ? "off" : "on");
+			cue = "secret";
+			mOpen = false;	// straight back to the course, to see it
+			return CHANGED;
+		}
+		case Key::UP: case Key::DOWN: case Key::B: stArmed = false; stSeq.clear(); return NONE;
 		default: return NONE;
 		}
 	}
@@ -1572,6 +1632,7 @@ namespace banana
 				"leave it off on networks you don't trust.";
 			if (ip.empty()) help += " (Not connected to Wi-Fi now.)";
 		}
+		if (cur.kind == Item::SOUNDTEST && stArmed) help = tr("Secret! Press Start.");
 		if (cur.key == "scrape" && scraping()) help = "Fetching covers and title screens. The menu shows them as they come, and it carries on if you leave this screen.";
 
 		return help;
@@ -1586,6 +1647,7 @@ namespace banana
 			v = it.at >= 0 && it.at < (int)it.names.size() ? it.names[it.at] : "";
 		else if (it.kind == Item::ACTION) v = armed == i ? tr("Press A again") : "";
 		else if (it.kind == Item::INFO) v = "";
+		else if (it.kind == Item::SOUNDTEST) { char b[4]; snprintf(b, sizeof b, "%02d", it.at % 100); v = b; }
 		// a page's row: Network the network it is on; Update the packages waiting on the card; the others nothing
 		else if (it.kind == Item::PAGE && it.key == "network") v = wstat.connected ? fit(wstat.ssid, true, 19, 300) : (wifiOn() ? tr("Choose") : "");
 		else if (it.kind == Item::PAGE && it.key == "update") v = updatesWaiting();

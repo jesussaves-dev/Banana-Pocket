@@ -377,6 +377,7 @@ int main(int argc, char** argv)
 	lib.motion = settings["motion"] != "off";
 	lib.twelveHour = settings["clock"] == "12h";
 	lib.batteryShown = settings["battery"] == "percent" ? "text" : "icon"; lib.boxLookShown = settings["boxart_look"] == "original" ? "original" : "pixel";
+	lib.blue = settings["blue_banana"] == "on";
 
 	if (!o.headless.empty())
 	{
@@ -736,20 +737,23 @@ int main(int argc, char** argv)
 	// what a change on the settings screen means for the menu (called with uiLock held)
 	auto applySettings = [&](Settings::Result r)
 	{
+		const std::string cue = settingsView.takeCue();	// the Sound Test's, in place of the result's own
 		switch (r)
 		{
 		case Settings::MOVED: sound.play("scroll"); break;
+		case Settings::CUE: sound.play(cue); break;
 		case Settings::CHANGED:
 		{
 			settings = readSettings(o.data);
 			lib.motion = settings["motion"] != "off";
 			lib.twelveHour = settings["clock"] == "12h";
 			lib.batteryShown = settings["battery"] == "percent" ? "text" : "icon"; lib.boxLookShown = settings["boxart_look"] == "original" ? "original" : "pixel";
+			lib.blue = settings["blue_banana"] == "on";
 			sound.enabled = settings["sounds"] != "off";
 			sound.setBgm(settings["bgm"] != "off");
 			configureGuard();
 			ui->dataChanged();
-			sound.play("select");
+			sound.play(cue.empty() ? "select" : cue);
 			break;
 		}
 		case Settings::THEME:
@@ -924,7 +928,9 @@ int main(int argc, char** argv)
 			dirty = true;
 			const char* s = soundOf(ev.key, before, ui->view());
 			// L/R on the home shelf jump a maker: a theme's own "boost" if it has one (Blast's whoosh)
-			if ((ev.key == Key::L || ev.key == Key::R) && before == Menu::HOME && sound.has("boost")) s = "boost";
+			// (and the Blue Banana's "rev", the whoosh with a rev-up on top)
+			if ((ev.key == Key::L || ev.key == Key::R) && before == Menu::HOME && sound.has("boost"))
+				s = lib.blue && sound.has("rev") ? "rev" : "boost";
 			if (s) sound.play(s);
 		}
 		if (ev.key == Key::LEFT || ev.key == Key::RIGHT || ev.key == Key::UP || ev.key == Key::DOWN || ev.key == Key::L || ev.key == Key::R)

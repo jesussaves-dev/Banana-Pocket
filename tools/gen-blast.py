@@ -182,33 +182,45 @@ LEGS = [['.......o..o.....', '......cc..cc....'], ['.......o..cc....', '......cc
 BOARD = ['..kmmmmmmmmmmk..', '...kkkkkkkkkk...']
 PAL = {"k": (0, 0, 0), "y": (7, 6, 0), "o": (6, 3, 0), "b": (3, 2, 0), "g": (2, 0, 4), "c": (0, 6, 7), "m": (7, 0, 5),
        "w": (7, 7, 7), "v": (4, 4, 4)}
+# the secret's Blue Banana (the Sound Test code): the same sprite with its yellows swapped for a blue ramp
+BLUE = dict(PAL, y=(1, 3, 7), o=(0, 1, 5), b=(1, 1, 3))
+# its afterimages while boosting: the silhouette, outline left out, in two steps of blue (no blending on the chip)
+GHOSTS = {"near": (0, 1, 4), "far": (0, 0, 2)}
 
 
-def spr(c, rows, x, y):
+def spr(c, rows, x, y, pal=PAL, solid=None):
     for r, row in enumerate(rows):
         for k, ch in enumerate(row):
-            if ch != '.': c.P(x + k, y + r, C(PAL[ch]))
+            if ch == '.' or (solid and ch == 'k'): continue
+            c.P(x + k, y + r, C(solid or pal[ch]))
 
 
-def ride(frame):
+def ride(frame, pal=PAL):
     """22 rows: the banana (16), its legs (2), the board (2) and the wheels (1), and a row of air under them."""
     c = Canvas(32, 22)
     x = 8
-    spr(c, BAN, x, 0); spr(c, LEGS[0], x, 16); spr(c, BOARD, x, 18)
-    wheel = C(PAL["v" if frame else "w"])
+    spr(c, BAN, x, 0, pal); spr(c, LEGS[0], x, 16, pal); spr(c, BOARD, x, 18, pal)
+    wheel = C(pal["v" if frame else "w"])
     for k in (4, 5, 10, 11): c.P(x + k, 20, wheel)
     return c
 
 
-def idle(tap):
+def ghost(col):
+    """ride()'s shape in one colour, for the Blue Banana's trail"""
+    c = Canvas(32, 22)
+    for rows, y in ((BAN, 0), (LEGS[0], 16), (BOARD, 18)): spr(c, rows, 8, y, solid=col)
+    return c
+
+
+def idle(tap, pal=PAL):
     """Off the board, tapping a foot and wagging a finger, the board parked on its edge behind."""
     c = Canvas(32, 22)
     x = 8
-    spr(c, BOARD, x + 14, 19)
+    spr(c, BOARD, x + 14, 19, pal)
     rows = list(BAN)
     if tap: rows[6] = '....kcggcggk....'
-    spr(c, rows, x, 3); spr(c, LEGS[tap], x, 19)
-    y = C(PAL["y"])
+    spr(c, rows, x, 3, pal); spr(c, LEGS[tap], x, 19, pal)
+    y = C(pal["y"])
     c.P(x + 12, 12, y); c.P(x + 13, 11, y); c.P(x + (14 if tap else 12), 10, y); c.P(x + (15 if tap else 12), 9, y)
     return c
 
@@ -247,7 +259,8 @@ def write(root):
         os.makedirs(os.path.join(out, "floor"), exist_ok=True)
         files = {"sky": sky(p), "stars": stars(), "shapes": shapes(p), "city": city(p),
                  "ride0": ride(0), "ride1": ride(1), "idle0": idle(0), "idle1": idle(1), "speed0": speed(0), "speed1": speed(1),
-                 "fav": fav()}
+                 "fav": fav(), "blue-ride0": ride(0, BLUE), "blue-ride1": ride(1, BLUE), "blue-idle0": idle(0, BLUE),
+                 "blue-idle1": idle(1, BLUE), "ghost-near": ghost(GHOSTS["near"]), "ghost-far": ghost(GHOSTS["far"])}
         for i in range(FLOOR): files["floor/row%d" % i] = floor_row(p, i + 1)
         for k, c in files.items():
             c.save(os.path.join(out, k + ".png"))

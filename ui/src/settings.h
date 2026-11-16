@@ -57,9 +57,12 @@ namespace banana
 		bool takeNightLightChanged() { bool r = nightChanged; nightChanged = false; return r; }
 		// a Shaders row changed: the menu sets the panel's mask and colour again (main.cpp)
 		bool takeShaderChanged() { bool r = shaderChanged; shaderChanged = false; return r; }
+		// the Genesis style's Sound Test: the cue its last press asked for, played by the host in place of the
+		// result's own ("" none)
+		std::string takeCue() { std::string c; c.swap(cue); return c; }
 
 		// what the host has to do after an input
-		enum Result { NONE, MOVED, CHANGED, CLOSED, THEME, REBOOT, POWEROFF, SEARCH };
+		enum Result { NONE, MOVED, CHANGED, CLOSED, THEME, REBOOT, POWEROFF, SEARCH, CUE };	// CUE: only takeCue()'s sound
 		// SELECT in the menu: the keyboard alone, for a search of the games; SEARCH when it is done, with the text in
 		// searchText (empty: the search taken away)
 		void openSearch(const std::string& start);
@@ -117,7 +120,7 @@ namespace banana
 			std::string file, key;					// where it is kept ("" for the special ones)
 			std::vector<std::string> names, values;	// shown, stored
 			int at = 0;
-			enum Kind { CHOICE, BRIGHTNESS, VOLUME, PERCENT, INFO, ACTION, PAGE } kind = CHOICE;	// PERCENT: a saved choice drawn as a slider
+			enum Kind { CHOICE, BRIGHTNESS, VOLUME, PERCENT, INFO, ACTION, PAGE, SOUNDTEST } kind = CHOICE;	// PERCENT: a saved choice drawn as a slider; SOUNDTEST: Genesis only, 00-99 in at, not saved
 		};
 		std::string themeStyle(const std::string& value);
 		Result changeStyle(Item& it, int at);
@@ -132,6 +135,12 @@ namespace banana
 		// the Genesis style (settings_genesis.cpp): the SNES style's grid, pages and input (snes is set for it too),
 		// drawn on true black in the Blast faces with no baked art: Options, name entry, the pause panel, the pill
 		bool genesis = false;
+		// the Sound Test (Genesis): the last four numbers played, and whether they were the code and Start is next
+		std::vector<int> stSeq;
+		bool stArmed = false;
+		std::string cue;
+		Result pressSoundTest(Key k);
+		static std::string soundTestCue(int n);
 		std::shared_ptr<rnds::Font> BT;		// the chrome title face, BananaBlastTitle.ttf at 24
 		rnds::Color gInk, gDim, gLine, gLabel, gMag, gCyan, gRed, gChrome[24];
 		void renderOptions();

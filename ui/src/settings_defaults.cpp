@@ -43,6 +43,7 @@ namespace banana
 			{ "bgm", "on", ENUM, ON_OFF, 0, 0 },
 			{ "battery", "icon", TEXT, nullptr, 0, 0 },
 			{ "boxart_look", "pixel", TEXT, nullptr, 0, 0 },
+			{ "blue_banana", "off", ENUM, ON_OFF, 0, 0 },
 			{ "clock", "24h", TEXT, nullptr, 0, 0 },
 			{ "splash", "on", ENUM, ON_OFF, 0, 0 },
 			{ "wifi", "on", ENUM, ON_OFF, 0, 0 },

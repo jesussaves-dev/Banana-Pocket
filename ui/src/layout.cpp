@@ -464,6 +464,7 @@ namespace banana
 			if (n == "boxLook") { out = EV(m->src->boxLook()); return true; }
 			if (n == "online") { out = EV(m->src->online() ? 1.0 : 0.0); return true; }
 			if (n == "motion") { out = EV(m->src->topMotion() ? 1.0 : 0.0); return true; }
+			if (n == "blue") { out = EV(m->src->blueBanana() ? 1.0 : 0.0); return true; }
 			if (n == "brand") { out = EV(rnds::brandNote); return true; }
 			if (n == "accent" || n == "accent.base") { out = EV(hex(rnds::accent.base)); return true; }
 			if (n == "accent.light") { out = EV(hex(rnds::accent.light)); return true; }

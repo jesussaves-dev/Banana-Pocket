@@ -5,7 +5,7 @@ squares and noise for the arps and hats, and the DAC channel's crunch for the vo
 echo (the hardware had none: a part is doubled on a second channel, later and quieter, as the era's composers did).
 Nothing is sampled; every note and every syllable is computed here, so the set is original and rebuilds the same.
 
-    tools/gen-blast-sounds.py [--voice mix|sample|shout|vox|none] [themes-dir]   writes <themes-dir>/blast/sounds/{scroll,select,back,fav,ready,insert,boost,bgm}.wav
+    tools/gen-blast-sounds.py [--voice mix|sample|shout|vox|none] [themes-dir]   writes <themes-dir>/blast/sounds/{scroll,select,back,fav,ready,insert,boost,bgm,rev,secret,num0-15}.wav
 
 The loop is an original funk breakbeat: 16 bars at 104 BPM (~37 s) in A dorian, slap FM bass, brass stabs on the
 off-beats, a lead hook in the second half, square arps and scratches, and formant-synthesised vocal chops ("yeah",
@@ -323,6 +323,35 @@ def boost():
     return out
 
 
+# ---- the secret's ---------------------------------------------------------------------------------------------------
+# Built after the loop, so the noise they draw doesn't move the loop's (it rebuilds the same).
+
+def rev():
+    """the Blue Banana's boost: the whoosh, with four quick FM blips revving up on top"""
+    out = boost()
+    for i in range(4): place(out, fm(180 + i * 70, .06, ratio=2, index=3, idecay=.02, d=.03) * .45, i * .045)
+    return out
+
+
+def secret():
+    """the code went in: a bright run up a C major arpeggio, each note doubled late and quiet"""
+    out = np.zeros(int(.75 * SR))
+    for i, f in enumerate((523, 659, 784, 1047, 1319, 1568)):
+        x = fm(f, .14, ratio=3, index=1.4, idecay=.04, d=.06)
+        place(out, x, i * .07)
+        place(out, x * .3, i * .07 + .1)
+    return out
+
+
+def num(k):
+    """Sound Test number k (0-15) past the menu's own cues: a noise sweep on 0 and 10, else an FM note whose pitch,
+    ratio and brightness all step with k, so neighbours sound different"""
+    if k % 10 == 0:
+        return psg_noise(.22, rate=SR / (2 + k // 5), d=.07)
+    f = 110 * 2 ** (((k * 7) % 36) / 12)
+    return fm(f, .28, ratio=(1, 2, 3, .5, 1.5)[k % 5], index=1 + k % 7, idecay=.06, fb=(k % 3) * .4, d=.12)
+
+
 # ---- the loop ------------------------------------------------------------------------------------------------------
 VOICE = "mix"	# --voice mix | sample (both from tools/blast-voice/) | shout | vox | none
 BPM = 104
@@ -484,7 +513,11 @@ def main():
     for name, (fn, target) in cues.items():
         write(os.path.join(out, name + ".wav"), fn(), target)
     write(os.path.join(out, "bgm.wav"), loop(), .15, whole=True)	# the street's is .18, but it is all pad
-    print("gen-blast-sounds: %d sounds in %s" % (len(cues) + 1, out))
+    extra = {"rev": (rev, .26), "secret": (secret, .28)}
+    extra.update({"num%d" % k: ((lambda k=k: num(k)), .2) for k in range(16)})
+    for name, (fn, target) in extra.items():
+        write(os.path.join(out, name + ".wav"), fn(), target)
+    print("gen-blast-sounds: %d sounds in %s" % (len(cues) + 1 + len(extra), out))
 
 
 if __name__ == "__main__":

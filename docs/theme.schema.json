@@ -134,7 +134,7 @@
     },
     "sounds": {
       "type": "object",
-      "description": "The menu's sounds (WAV, relative to the theme's JSON), by name: scroll, select, back, fav, ready, insert. \"off\" for none.",
+      "description": "The menu's sounds (WAV, relative to the theme's JSON), by name: scroll, select, back, fav, ready, insert; optional boost (L/R on home), rev (the Blue Banana's boost), secret and num0-num15 (the Genesis Sound Test). \"off\" for none.",
       "additionalProperties": { "type": "string" }
     },
     "logo": {

@@ -215,6 +215,8 @@ struct Host : Library
 	std::string batteryMode() override { return batteryShown; }
 	std::string boxLookShown = "pixel";
 	std::string boxLook() override { return boxLookShown; }
+	bool blue = false;		// blue_banana: the Genesis style's secret
+	bool blueBanana() override { return blue; }
 };
 
 
