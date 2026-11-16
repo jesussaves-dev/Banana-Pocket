@@ -1,117 +1,87 @@
 # Installing BananaOS on the Retroid Pocket Classic
 
-Two things stand between a stock Retroid Pocket Classic and BananaOS. The handheld ships with Qualcomm's own ABL,
-which boots **Android only**, so first you flash a Linux bootloader (**OpenABL**); then the card needs the Banana
-image. This page walks both, from a stock Android handheld.
+Two things stand between a stock Retroid Pocket Classic and BananaOS: a Linux bootloader (**OpenABL**, flashed once —
+the stock bootloader boots **Android only**), and the Banana image on a microSD card. Both have a tool now:
 
-> [!TIP]
-> **The easy way:** the [install page](https://jesussaves-dev.github.io/Banana-Pocket/install.html) flashes OpenABL from
-> Chrome or Edge over USB (it checks the device is a Retroid Pocket Classic and the file's sha256 first), and
-> [BananaLinux Flasher](https://github.com/jesussaves-dev/banana-linux-flasher/releases/latest) writes the card. No
-> `fastboot` or `dd` needed. The rest of this page is the manual route, and what to do when something goes wrong.
+| Step | Tool | Runs on |
+|---|---|---|
+| 1. Bootloader | [**Web installer**](https://jesussaves-dev.github.io/Banana-Pocket/install.html) | Chrome or Edge (WebUSB), any desktop OS |
+| 2. Card | [**BananaLinux Flasher**](https://github.com/jesussaves-dev/banana-linux-flasher/releases/latest) | Windows `.exe`, Linux AppImage |
+
+No `fastboot`, `dd` or Android root needed. Android and its data stay where they are.
+The manual routes are further down, under [Doing it by hand](#doing-it-by-hand).
 
 > [!CAUTION]
-> <span style="color:red">**A Retroid Pocket Classic (Qualcomm Snapdragon G1 Gen 2 / SM4450, board "Rev Q" — the one
-> this build targets).**</span> Getting the **wrong chipset's** ABL (`abl_signed-<other>.elf`) is the classic way to
-> brick the device, and flashing a bootloader is the one step here that can. It is only needed once.
+> <span style="color:red">**Retroid Pocket Classic only** (Qualcomm Snapdragon G1 Gen 2 / **SM4450**, board "Rev Q").</span>
+> A bootloader for the wrong chipset is the classic way to brick a handheld, and flashing one is the only step here
+> that can. The web installer checks the device and the file's sha256 and refuses anything else — if you go by hand,
+> do the same checks yourself.
 >
 > **I am not responsible if you accidentally brick your device.**
 
 ## What you need
 
-- A **Retroid Pocket Classic** (Qualcomm Snapdragon G1 Gen 2 / **SM4450**, board "Rev Q" — the one this build targets).
-- A **microSD card**: the image is ~0.7 GB, and the rest of the card becomes the games partition, so 32 GB or more for
-  a library. (exFAT is made on first boot; you don't format it.)
-- A **card reader** and a computer (Linux, Windows or macOS).
-- Optional but handy: a USB‑C **data** cable — for `fastboot`, for the Android ABL scripts, and later for updates.
-- The image: **`banana-retroid-pocket-classic.img.gz`** from
-  [the Releases page](https://github.com/jesussaves-dev/Banana-Pocket/releases).
+- A **Retroid Pocket Classic** (SM4450, board "Rev Q").
+- A **USB‑C data cable** (not a charge‑only one) and a computer with **Chrome or Edge** — Firefox and Safari have no
+  WebUSB.
+- A **microSD card** and a card reader. The image is ~0.7 GB and the rest of the card becomes the games partition, so
+  32 GB or more for a library. (exFAT is made on first boot; you don't format it.)
 
-## Step 1 — Install a Linux bootloader (SM4450)
+## Step 1 — Flash the bootloader (web installer)
 
-The handheld ships with Qualcomm's own ABL, which boots **Android only**. Banana needs a patched **ABL** — a menu and
-a standard Linux boot, so it reads `extlinux/extlinux.conf` from the card. **Two different projects** provide one, and
-either works with Banana (the menu differs a little):
+Open **<https://jesussaves-dev.github.io/Banana-Pocket/install.html>** and follow its three cards:
 
-- **OpenABL** — <https://github.com/OpenHandheldCollective/OpenABL> — the graphical menu; this is what Banana's docs
-  and current ROCKNIX SM4450 builds use. Its releases carry `abl_signed-SM4450.elf` (+ `.sha256`) and
-  `openabl-recovery-flashable-sm4450.zip`.
-- **ROCKNIX‑ABL** — <https://github.com/ROCKNIX/abl> — ROCKNIX's own, installed *from the device* with its
-  `update.sh` (or the `rocknix_abl` folder's `backup_abl.sh` / `flash_abl.sh` run as root from Android).
+1. **Bootloader file** — download `abl_signed-SM4450.elf` from the
+   [OpenABL v1.2 release](https://github.com/OpenHandheldCollective/OpenABL/releases) (the page links it) and pick it.
+   The page checks its sha256 before it will flash it.
+2. **Connect** — power the handheld off, hold **Volume Down** and press **Power** (fastboot), plug it in, press
+   **Connect** and pick it. The page checks it really is a Retroid Pocket Classic.
+   A stock handheld's own bootloader can't flash, so the page then asks you to **Restart into fastbootd**: press it,
+   wait for the fastbootd screen (~20 s), and press **Connect** again.
+3. **Flash OpenABL** — writes both bootloader slots (`abl_a`, `abl_b`) and restarts the handheld into the OpenABL menu.
+   Don't unplug it until the page says done.
 
-Whichever you pick, the image must be for **SM4450**, and check its `.sha256` before flashing.
+This only ever needs doing once; later Banana updates don't touch the bootloader.
 
-### 1a. OpenABL with `fastboot` (the usual way)
+**The handheld doesn't show up?**
 
-The Retroid Pocket Classic's bootloader is **already unlocked** (`fastboot getvar unlocked` says `yes`), so nothing is
-wiped. But the **stock bootloader's fastboot has no `flash` command** — it answers `unknown command` to every flash —
-so the flash goes through **fastbootd**, Android recovery's fastboot, which does. (The
-[install page](https://jesussaves-dev.github.io/Banana-Pocket/install.html) does all of this from Chrome or Edge.)
-
-1. Download `abl_signed-SM4450.elf` and its `.sha256` from the OpenABL releases and check it (`sha256sum -c`).
-2. Power off; hold **Volume Down** and press **Power** → `fastboot devices` lists the handheld.
-3. Check it is the right device: `fastboot getvar product` says `parrot`, `getvar variant` says `SGP EMMC`.
-4. Restart into fastbootd and flash **both** A/B slots:
-
-   ```sh
-   fastboot reboot fastboot        # about 20 s; `fastboot getvar is-userspace` then says yes
-   fastboot flash abl_a abl_signed-SM4450.elf
-   fastboot flash abl_b abl_signed-SM4450.elf
-   fastboot reboot bootloader
-   ```
-
-5. The OpenABL menu opens (`getvar product` now says `OpenABL`). Later, hold **Volume Down** at power‑on for it
-   (*Boot mode → Linux*, *Boot source → Auto*, *Start*). OpenABL's own fastboot flashes directly, so upgrading it later
-   needs no fastbootd.
-
-### 1b. OpenABL from a custom recovery
-
-`openabl-recovery-flashable-sm4450.zip` in a custom recovery such as TWRP: it writes ABL to both slots and adds an
-`addon.d` script that re‑flashes the other slot after an Android OTA.
-
-### 1c. ROCKNIX‑ABL, from the device
-
-ROCKNIX's `update.sh` fetches its release and writes `/dev/disk/by-partlabel/abl_a` and `abl_b`; run it on the device
-(from its Linux, or from Android with root via **Handheld Settings → Advanced → "Run script as Root"**, or the
-`rocknix_abl` folder's **`backup_abl.sh` then `flash_abl.sh`**). **Back up first** — those scripts write `abl_a.img` /
-`abl_b.img`, which is how you restore the factory bootloader.
-
-### If the flash goes wrong
-
-A bad ABL is recoverable through Qualcomm **EDL (9008)** with the device's own firmware, or from a backup of the ABL
-partitions (take one before flashing OpenABL too: from a root shell,
-`dd if=/dev/block/by-name/abl_a of=abl_a.img`). Getting the chipset wrong is the classic way to brick the device.
-
-## Step 2 — Write the Banana card
-
-Download **`banana-retroid-pocket-classic.img.gz`** and write it to the microSD card. **Everything on the card is
-erased.**
-
-- **BananaLinux Flasher** (Windows `.exe`, Linux AppImage) downloads the newest release, checks its sha256 and writes
-  it: pick *Retroid Pocket Classic*, pick the card, *Download & Flash*.
-  <https://github.com/jesussaves-dev/banana-linux-flasher/releases/latest>
-- **balenaEtcher** takes the `.gz` as it is — pick the file, pick the card, flash.
-- Or with the repository's checker (it confirms the card is removable, big enough and unmounted, then writes it and
-  reads it back sector for sector — a card that lies about writes is the usual cause of a half‑boot):
+- **Windows:** install the [Google USB driver](https://developer.android.com/studio/run/win-usb), replug, try again.
+- **Linux:** let your user open fastboot devices, then replug:
 
   ```sh
-  sudo tools/write-sd.sh banana-retroid-pocket-classic.img.gz /dev/sdX
+  echo 'SUBSYSTEM=="usb", ENV{ID_USB_INTERFACES}=="*:ff4203:*", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/51-fastboot.rules
+  sudo udevadm control --reload-rules
   ```
 
-- Or plain `dd`:
+- **Anywhere:** close anything else holding the device — a running `fastboot`, or an adb server (`adb kill-server`).
+- Try another cable or port; charge‑only cables are common.
 
-  ```sh
-  zcat banana-retroid-pocket-classic.img.gz | sudo dd of=/dev/mmcblk0 bs=4M status=progress
-  ```
+## Step 2 — Write the card (BananaLinux Flasher)
+
+Download **BananaLinux Flasher** from
+<https://github.com/jesussaves-dev/banana-linux-flasher/releases/latest> — `BananaLinuxFlasher.exe` on Windows, the
+`.AppImage` on Linux (`chmod +x` it first).
+
+1. Pick **Retroid Pocket Classic**.
+2. Insert the card, press **Refresh**, pick the card.
+3. Press **Download & Flash**. It fetches the newest Banana release, checks its sha256 and writes it. Approve the UAC
+   prompt (Windows) or type your `sudo` password in its dialog (Linux).
+
+**Everything on the card is erased.** The flasher only lists removable drives and re‑checks the one you picked before
+it writes.
+
+- Windows may show **SmartScreen** for this unsigned build: *More info → Run anyway*. Some antivirus engines
+  false‑flag PyInstaller apps; each release ships `BananaLinuxFlasher.exe.sha256` to check your download against.
+- **macOS:** no prebuilt flasher — run it from source, or use the [manual card routes](#2-the-card-by-hand).
 
 ## Step 3 — First boot
 
-Put the card in the handheld, then power on (holding **Volume Down** if the OpenABL menu is set to Android):
+Put the card in the handheld, hold **Volume Down** and press **Power** for the OpenABL menu:
 
-- In the OpenABL menu set **Boot mode → Linux** and **Boot source → Auto**, then *Start*. (Once set, an ordinary
-  power‑on boots Linux; **Volume Up** boots Android.)
-- The boot animation plays; the very first boot takes a few seconds longer, making the data partition from the rest of
-  the card.
+- Set **Boot mode → Linux** and **Boot source → Auto**, then *Start*. OpenABL remembers these, so after this an
+  ordinary power‑on boots Banana (**Volume Up** at power‑on boots Android).
+- The boot animation plays; the very first boot takes a few seconds longer while it makes the games partition from
+  the rest of the card.
 - The **first‑time setup** opens: **Wi‑Fi**, **time zone**, **RetroAchievements**, **Box art**, **Finish**. **B** skips
   it (Settings → System → First‑time setup brings it back).
 - The menu appears on the shelf of systems. There is no Nintendo DS page: this handheld has one screen and ships the
@@ -137,22 +107,94 @@ computer, over File sharing, or over SSH), then **Settings → System → Update
 the slot not in use and checks it hash by hash. **Previous version** (Settings → System) restarts into the build
 before. Nothing on the data partition — games, saves, settings — is touched.
 
+Re‑running the flasher also works, but it **erases the whole card**, games and saves included.
+
 ## Booting Android again, or uninstalling
 
-In the bootloader menu set **Boot mode → Android**. Installing OpenABL (or ROCKNIX‑ABL) does **not** remove Android or
-its data — the bootloader is already unlocked and nothing is wiped to flash it. An ABL backup (`abl_a.img` /
-`abl_b.img`) is your way back to the factory bootloader.
+In the OpenABL menu set **Boot mode → Android**. Installing OpenABL does **not** remove Android or its data — the
+bootloader is already unlocked and nothing is wiped to flash it. To go fully back to the factory bootloader you need a
+backup of the stock ABL partitions (see [below](#back-up-the-stock-bootloader)).
 
 ## When something is wrong
 
 `banana/logs/` on the card (put it in a computer) has `boot.txt` (the milestones in seconds), `dmesg.txt`, the menu's
-`banana-ui.log`, `sleep.log`, and the last game's `retroarch.log`. **`docs/FIRST-BOOT.md`** has the common cases: a
-black panel with no `BANANA` drive (the kernel or init — a serial console on `ttyMSM0`, `banana.console=1`), a black
-panel with the drive there (the menu could not open the panel), a black panel a second after a game starts (the probes
-in `docs/RPC-TEST.md`), and "can't read the card's games" (the data partition did not mount).
+`banana-ui.log`, `sleep.log`, and the last game's `retroarch.log`. **[`FIRST-BOOT.md`](FIRST-BOOT.md)** has the common
+cases: a black panel with no `BANANA` drive (the kernel or init — a serial console on `ttyMSM0`, `banana.console=1`),
+a black panel with the drive there (the menu could not open the panel), a black panel a second after a game starts
+(the probes in [`RPC-TEST.md`](RPC-TEST.md)), and "can't read the card's games" (the data partition did not mount).
 
 ---
 
-Sources for the bootloader steps: the [OpenABL project](https://github.com/OpenHandheldCollective/OpenABL) and the
-[ROCKNIX](https://rocknix.org) SM4450 ABL install (the `rocknix_abl` scripts). The card's own layout, the A/B slots
-and the update flow are in `docs/ARCHITECTURE.md`.
+## Doing it by hand
+
+For when the tools don't fit — no Chromium browser, macOS, a custom recovery already installed, or you just prefer a
+terminal. The result is the same.
+
+### 1. The bootloader by hand
+
+Banana needs **OpenABL** — <https://github.com/OpenHandheldCollective/OpenABL> — a patched ABL with a graphical menu
+that offers a Linux boot and reads `extlinux/extlinux.conf` from the card. It is the only bootloader Banana supports.
+Its releases carry `abl_signed-SM4450.elf` (+ `.sha256`) and `openabl-recovery-flashable-sm4450.zip`. It must be the
+**SM4450** build, and check its `.sha256` before flashing.
+
+#### OpenABL with `fastboot`
+
+The bootloader is **already unlocked** (`fastboot getvar unlocked` says `yes`), so nothing is wiped. But the **stock
+bootloader's fastboot has no `flash` command** — it answers `unknown command` — so the flash goes through
+**fastbootd**, Android recovery's fastboot, which does. (This is exactly what the web installer does.)
+
+1. Download `abl_signed-SM4450.elf` and its `.sha256` and check it (`sha256sum -c`).
+2. Power off; hold **Volume Down** and press **Power** → `fastboot devices` lists the handheld.
+3. Check it is the right device: `fastboot getvar product` says `parrot`, `getvar variant` says `SGP EMMC`.
+4. Restart into fastbootd and flash **both** A/B slots:
+
+   ```sh
+   fastboot reboot fastboot        # about 20 s; `fastboot getvar is-userspace` then says yes
+   fastboot flash abl_a abl_signed-SM4450.elf
+   fastboot flash abl_b abl_signed-SM4450.elf
+   fastboot reboot bootloader
+   ```
+
+5. The OpenABL menu opens (`getvar product` now says `OpenABL`). OpenABL's own fastboot flashes directly, so upgrading
+   it later needs no fastbootd.
+
+#### OpenABL from a custom recovery
+
+Flash `openabl-recovery-flashable-sm4450.zip` in a custom recovery such as TWRP: it writes ABL to both slots and adds
+an `addon.d` script that re‑flashes the other slot after an Android OTA.
+
+#### Back up the stock bootloader
+
+Before flashing any ABL by hand, from a root shell on Android:
+
+```sh
+dd if=/dev/block/by-name/abl_a of=abl_a.img
+dd if=/dev/block/by-name/abl_b of=abl_b.img
+```
+
+Keep those two files off the device; they are your way back to the factory bootloader. A bad ABL is also recoverable
+through Qualcomm **EDL (9008)** with the device's own firmware.
+
+### 2. The card by hand
+
+Download **`banana-retroid-pocket-classic.img.gz`** from
+[the Releases page](https://github.com/jesussaves-dev/Banana-Pocket/releases). **Everything on the card is erased.**
+
+- **balenaEtcher** (also macOS) takes the `.gz` as it is — pick the file, pick the card, flash.
+- The repository's checker confirms the card is removable, big enough and unmounted, then writes it and reads it back
+  sector for sector — a card that lies about writes is the usual cause of a half‑boot:
+
+  ```sh
+  sudo tools/write-sd.sh banana-retroid-pocket-classic.img.gz /dev/sdX
+  ```
+
+- Or plain `dd`:
+
+  ```sh
+  zcat banana-retroid-pocket-classic.img.gz | sudo dd of=/dev/mmcblk0 bs=4M status=progress
+  ```
+
+---
+
+Source for the bootloader steps: the [OpenABL project](https://github.com/OpenHandheldCollective/OpenABL). The card's
+own layout, the A/B slots and the update flow are in [`ARCHITECTURE.md`](ARCHITECTURE.md).
