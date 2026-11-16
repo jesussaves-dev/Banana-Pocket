@@ -8,6 +8,8 @@
 # "failed: <why>"...).
 #   update list                     the packages in banana/updates/ on the card: path, version, board
 #   update apply <package>          write it to the other slot and make it the default (then restart)
+#   update stage <package>          write it to the other slot but leave the default: a test boot. Pick that slot once
+#                                   in OpenABL's Boot entries (Vol- + Power); any later boot runs the default again
 #   update switch [a|b]             make the other slot (or the one named) the default, when it holds a system
 #   update status                   which slot is running, which is the default, what each holds
 #   update prune                    keep the two newest packages (and the running version's), delete the rest
@@ -61,9 +63,13 @@ switch)
     status "switched $to"
     echo "the next boot runs slot $to"
     ;;
-apply)
-    P=$2
+apply|stage)
+    VERB=$1; P=$2
     [ -e "$P" ] || fail "no such package: $P"
+    # a test boot (a staged slot picked once from OpenABL) runs the slot that is not the default: the other slot is
+    # then the known-good one, and writing it would leave nothing to fall back to
+    D=$(default_slot)
+    [ -z "$D" ] || [ "$D" = "$SLOT" ] || fail "this is a test boot of slot $SLOT (the default is $D): restart into $D first"
     # bananad must not idle-sleep through this: a 200 MB slot write and its verify, minutes of the card being written
     echo $$ > /run/banana/awake.pid
     trap 'rm -f /run/banana/awake.pid' EXIT INT TERM
@@ -120,11 +126,15 @@ apply)
     # device trees the package doesn't have would be old ones: they go
     for f in /boot/$TO/*.dtb; do [ -f "$DIR/$(basename "$f")" ] || rm -f "$f"; done
     boot_ro
-    set_default $TO
+    [ "$VERB" = stage ] || set_default $TO
     [ -d "$UPDATES/.unpack" ] && rm -rf "$UPDATES/.unpack"
-    mkdir -p /data/banana/logs; echo "$(date '+%Y-%m-%d %H:%M:%S') $PV to slot $TO from $(basename "$P")" >> /data/banana/logs/updates.log
+    mkdir -p /data/banana/logs; echo "$(date '+%Y-%m-%d %H:%M:%S') $PV to slot $TO from $(basename "$P")$([ "$VERB" = stage ] && echo " (staged, default stays $SLOT)")" >> /data/banana/logs/updates.log
     status "done $PV"
-    echo "update $PV written to slot $TO; restart to run it"
+    if [ "$VERB" = stage ]; then
+        echo "update $PV staged in slot $TO; the default stays $SLOT. To test it once: restart holding Vol-, Boot entries, $TO"
+    else
+        echo "update $PV written to slot $TO; restart to run it"
+    fi
     ;;
 prune)
     # Every release leaves a ~240 MB package in banana/updates and nothing removed them (31 packages, 6.9 GB once).
