@@ -165,3 +165,31 @@ serial-base/port: 3
 serial/rsinput: 1
 soundwire/wcd9370-codec: 2
 spmi/pmic-spmi: 4
+
+== Sleep/wake, 20 cycles on K1.2c #8 (slot b), 2026-11-16 18:47-18:49
+kernel suspend_stats: success 20, fail 0 (every failed_* counter 0), mem_sleep [deep]
+dmesg: 20x "PM: suspend entry (deep)" / "PM: suspend exit"
+sleep.log lines 489-568: 20 sleeps, 20 wakes, wake source power key on all 20
+  "game and menu back" 0.3-0.9 ms after the kernel on all 20
+  panel off 298-315 ms; menu sound released in 0-21 ms
+  "(it did not take)" on all 20 is bananad's asleep < 5 s label (bananad.c:888); the
+  presses were 0-4 s apart. The kernel suspended every time.
+prep 1477-1875 ms (avg 1588) against ~800 ms before 15:51. Not the kernel:
+  wake_audio_fast went off on 2026-11-16 (~14:50), so 20-sound now runs its pre-hook,
+  and that hook waits for pipewire to exit (measured on the unit: kill 20 ms,
+  exit 1030 ms; the whole hook 1050-1130 ms). This is the cost of saving drain while asleep.
+Result: pass.
+
+== docs/RPC-TEST.md on K1.2c #8, 2026-11-16
+backlight ae94000.dsi.0: wrote 1/64/128/192/255, actual_brightness followed each; restored to 95.
+  Checked in sysfs only. Nobody watched the panel change during this sweep.
+charging: qcom-battmgr-usb online (CDP), ucsi source "Charging", battery 100% "Full", 4.41 V.
+  The battery was full, so a rising percentage could not be seen.
+Wi-Fi: wlan0 up, 192.168.1.112/24, gateway ping 3/3, 17 ms average.
+USB NCM: udc "configured", host enp0s20f0u1 169.254.170.1 <-> 169.254.170.2, ping 5/5, 4.0 ms average.
+  ssh over NCM: 64 MB in 10.1 s = 6.3 MB/s (the doc says about 7).
+adb: adbd up, the whole session ran over it.
+SMB (ksmbd module, SMB3, guest): listed //169.254.170.2/banana; read logs/boot.txt and wrote a
+  200-byte file, md5 matched both ways; test file removed, share left on as Tom had it.
+Noise, not new: ath10k "chan info: invalid frequency 0 (idx 41 out of bounds)" during scans.
+Result: pass.
