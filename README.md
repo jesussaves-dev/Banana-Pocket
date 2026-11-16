@@ -115,9 +115,12 @@ you stand still, the banana's one-pixel bob is the only thing that moves, and **
 
 Pick one in **Settings > Display & sound > Theme**.
 
-## Two styles
+## Three styles
 
 **Style** sits right above Theme. **SNES** is Banana Street and its neighborhoods, and it's the default on a new card.
+**Genesis** is Banana Blast: a neon course at night, with a billboard for each system and the banana on a
+skateboard. **L** and **R** boost to the next maker. It follows the Mega Drive's rules, and its blacks are true
+black, so the AMOLED's pixels stay off.
 **Classic** is the menu from before 0.7: a carousel of chunky tiles with a gold highlight, in `pocket`, `pocket-ocean`,
 `pocket-sakura`, `pocket-sunset`, `pocket-terminal`, `fantasy` and six four-shade LCD themes. Each style remembers the
 theme you last used in it.
@@ -282,7 +285,7 @@ ui/                banana-ui: the menu (rnds engine, software Backend, KMS Displ
 system/bananad/    the daemon and its sleep test
 system/rootfs/     the root filesystem: init, rcS, the launchers, the themes and their art
 buildroot/         the Buildroot external tree: the board, the kernel fragment, the defconfig
-tools/             gen-street.py (the street's art), gen-readme-art.py (these pictures), qemu-boot.sh, the benchmark
+tools/             gen-street.py (the street's art), gen-blast.py (Banana Blast's), gen-readme-art.py (these pictures), qemu-boot.sh, the benchmark
 docs/              the architecture, the roadmap and the hardware notes
 ```
 
@@ -321,8 +324,8 @@ The system and handheld icons in `ui/assets/rnds/icons` are **[Ben Jelter's Cons
 tiles, generic kind icons and the systems the pack doesn't cover are drawn in-repo (`tools/gen-icons.py`,
 `tools/make-blueprints.py`).
 
-The street, its neighborhoods, the banana and Banana's pixel fonts are original, generated in-repo by
-[`tools/gen-street.py`](tools/gen-street.py) and [`tools/make-pixel-font.py`](tools/make-pixel-font.py).
+The street, its neighborhoods, the neon course, the banana and Banana's pixel fonts are original, generated in-repo by
+[`tools/gen-street.py`](tools/gen-street.py), [`tools/gen-blast.py`](tools/gen-blast.py) and [`tools/make-pixel-font.py`](tools/make-pixel-font.py).
 
 The Game Boy, Game Boy Color and Game Boy Advance screen bezels are **[SkyWalker541's Retroid Pocket Classic Overlays](https://github.com/SkyWalker541/Retroid-Pocket-Classic-Overlays)**,
 released under CC0. Three of his `bezel_grid_integer` frames ship in `system/rootfs/usr/share/banana/overlays`, with

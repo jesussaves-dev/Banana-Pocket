@@ -77,6 +77,19 @@ search keyboard and pause menu are drawn by the menu's own SNES painter on the s
 `book.png` for the keyboard and `ticket.png` for the pause menu. `tools/gen-street.py` makes Banana Street's; its
 colours come from the theme's `vars` (`ink`, `paper`, `paperLo`, `gold`, `dk`, `awnA`).
 
+`"style": "genesis"` puts a theme under Genesis. `blast.json` (Banana Blast) is the first one: a neon course at night
+on the same 310 grid, drawn to the Mega Drive's rules (9-bit colour, levels 0-7 a channel; true #000 backdrops for
+the AMOLED; checker dithers, never gradients). `tools/gen-blast.py` bakes its art into `blast/night/`: the sky, three
+parallax layers, the banana's frames and the floor as 119 one-scanline pictures, each drawn by a `"source": "range"`
+list at its own x (the per-line horizontal scroll). The twinkling stars are 20 one-pixel rects whose positions come
+from `tools/gen-blast.py --twinkle`. So far a Genesis theme's Settings, keyboard and pause menu are still the Classic
+painter's.
+
+For an SNES or Genesis theme, `tools/check-themes.py` also checks that every plain `{art}` picture exists. A
+neighborhood made by `gen-street.py` has to match a fresh run of it. For Blast, `gen-blast.py` is run into a temp
+folder and every picture has to match byte for byte (none missing, none changed, none left over), and the twinkle
+lists have to match its `--twinkle` output. After changing the generator, run it and paste in the new lists.
+
 ## Values: literals, expressions, templates
 
 Any property can be:

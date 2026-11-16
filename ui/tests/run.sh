@@ -459,6 +459,41 @@ for size in 640x557; do
         golden "street-$hood-home" "$OUT/$size-street-$hood-home.png"
     done
     sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    # Banana Blast (the Genesis style, tools/gen-blast.py): the neon course at 1240x1080 (scale 4). Its first frame
+    # asks for ~130 pictures (119 floor lines) and the decode queue keeps 32, so a first shot warms it up. R boosts
+    # to the next maker with speed lines; left alone for 20 s the banana steps off its board and taps a foot.
+    bllog=$OUT/$size-blast.log
+    sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/blast.json|" "$FX/data/settings.conf"
+    "$HERE/banana-ui" --headless "$OUT/$size-blast-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+        --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "home 0; wait 500; shot warm; wait 16; shot home; wait 500; shot home2; press right; wait 1000; press r; wait 16; shot boost; wait 1000; shot arrived; press l; wait 21000; shot idle; wait 500; shot idle2; press a; wait 1000; shot lib" \
+        2> "$bllog" || { echo "FAIL $size: banana-ui (blast) exited $?"; fail=1; }
+    sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    grep -q "theme:" "$bllog" && { echo "FAIL $size: the blast theme: $(grep 'theme:' "$bllog" | head -3)"; fail=1; }
+    grep -q "press r: used, view 0 sys 4 " "$bllog" || { echo "FAIL $size: blast's R (the next maker): $(grep 'press r' "$bllog")"; fail=1; }
+    grep -q "press l: used, view 0 sys 1 " "$bllog" || { echo "FAIL $size: blast's L (back a maker): $(grep 'press l' "$bllog")"; fail=1; }
+    grep -q "press a: used, view 1 sys 1 " "$bllog" || { echo "FAIL $size: blast's A (the library)"; fail=1; }
+    for s in home boost idle lib; do
+        f=$OUT/$size-blast-$s.png
+        [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
+        [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ] || { echo "FAIL $size: $f is blank"; fail=1; }
+    done
+    # the Mega Drive's rules above the title (the chrome font is not 9-bit yet): 9-bit colours only, and a true-black sky
+    nb=$(convert "$OUT/$size-blast-home.png" -crop 1240x896+0+0 +repage -depth 8 txt:- 2>/dev/null | grep -v '^#' |
+        grep -o '#[0-9A-F]\{6\}' | sort -u | grep -cvE '^#((00|24|49|6D|92|B6|DB|FF)){3}$' || true)
+    [ "$nb" = 0 ] || { echo "FAIL $size: blast's course has $nb colours off the 9-bit grid"; fail=1; }
+    [ "$(convert "$OUT/$size-blast-home.png" -crop 1240x280+0+100 +repage -fill white +opaque black -format '%[fx:mean<0.1]' info:)" = 1 ] ||
+        { echo "FAIL $size: blast's sky isn't true black"; fail=1; }
+    # speed lines (white, in the sky above the billboards) on the boost's first frame, none once it has arrived
+    wl() { convert "$1" -crop 1240x150+0+140 +repage -fill black +opaque '#FFFFFF' -fill white -opaque '#FFFFFF' -format '%[fx:mean>0.002]' info:; }
+    [ "$(wl "$OUT/$size-blast-boost.png")" = 1 ] || { echo "FAIL $size: blast's boost has no speed lines"; fail=1; }
+    [ "$(wl "$OUT/$size-blast-arrived.png")" = 0 ] || { echo "FAIL $size: blast's speed lines stay after the boost"; fail=1; }
+    # the banana (32x22 units at 139,201): still on its board at rest, tapping its foot after 20 s
+    spr() { convert "$1" -crop 128x88+556+804 +repage "$OUT/spr-a.png"; convert "$2" -crop 128x88+556+804 +repage "$OUT/spr-b.png"
+        compare -metric AE "$OUT/spr-a.png" "$OUT/spr-b.png" null: 2>&1 | cut -d' ' -f1; }
+    [ "$(spr "$OUT/$size-blast-home.png" "$OUT/$size-blast-home2.png")" = 0 ] || { echo "FAIL $size: blast's banana moves at rest before 20 s"; fail=1; }
+    [ "$(spr "$OUT/$size-blast-idle.png" "$OUT/$size-blast-idle2.png")" != 0 ] || { echo "FAIL $size: blast's banana doesn't tap its foot when idle"; fail=1; }
+    for s in home lib; do golden "blast-$s" "$OUT/$size-blast-$s.png"; done
     # the card's banana/themes kept up to date with the image's (theme.cpp syncCardThemes): a new card gets a copy; a
     # new version refreshes what the user left alone, adds what is new and keeps an edited file; a card seeded before
     # the manifest has a differing file saved to .before-update/ and then refreshed

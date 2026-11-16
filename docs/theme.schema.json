@@ -16,7 +16,7 @@
     },
     "style": {
       "type": "string",
-      "description": "The whole look the theme belongs to, chosen in Settings > Display & sound > Style; the Theme row lists that style's themes. \"snes\" is Banana Street's; a theme with none is \"classic\" (Pocket and its family)."
+      "description": "The whole look the theme belongs to, chosen in Settings > Display & sound > Style; the Theme row lists that style's themes. \"snes\" is Banana Street's, \"genesis\" is Banana Blast's; a theme with none is \"classic\" (Pocket and its family)."
     },
     "author": {
       "type": "string",

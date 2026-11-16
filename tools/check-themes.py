@@ -191,6 +191,44 @@ def snes_checks(path, themes_dir):
     return sorted(set(errors))
 
 
+def genesis_checks(path, themes_dir):
+    """A Genesis theme's baked art. Every plain "src" under {art} has to exist. A theme drawn from tools/gen-blast.py
+    also has to match a fresh bake byte for byte (none missing, none changed, none left over), and its twinkling
+    stars have to carry the pick() lists and count that `gen-blast.py --twinkle` prints."""
+    text = open(path, encoding="utf-8").read()
+    doc = json.loads(strip_comments(text))
+    if str(doc.get("style", "")).lower() != "genesis":
+        return []
+    errors = []
+    art = (doc.get("vars") or {}).get("art", "")
+    if not art or not os.path.isdir(os.path.join(themes_dir, art)):
+        return ["art: no folder %s" % (art or "(no \"art\" var)")]
+    for src in re.findall(r'"src":\s*"([^"]*)"', text):
+        t = src.replace("{art}", art)
+        if "{art}" in src and "{" not in t and not os.path.isfile(os.path.join(themes_dir, t)):
+            errors.append("art: no %s" % t)
+    if art.split("/")[0] == "blast":
+        try:
+            import filecmp, importlib.util, tempfile
+            spec = importlib.util.spec_from_file_location("gen_blast", os.path.join(os.path.dirname(os.path.abspath(__file__)), "gen-blast.py"))
+            gen = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(gen)
+            with tempfile.TemporaryDirectory() as tmp:
+                made = set(f for f in gen.write(tmp) if f.startswith(art + "/"))
+                have = set(os.path.relpath(os.path.join(d, f), themes_dir)
+                           for d, _, fs in os.walk(os.path.join(themes_dir, art)) for f in fs if f.endswith(".png"))
+                errors += ["art: no %s (run tools/gen-blast.py)" % f for f in sorted(made - have)]
+                errors += ["art: %s is not baked by tools/gen-blast.py" % f for f in sorted(have - made)]
+                errors += ["art: %s is out of date (run tools/gen-blast.py)" % f for f in sorted(made & have)
+                           if not filecmp.cmp(os.path.join(tmp, f), os.path.join(themes_dir, f), shallow=False)]
+            n, xs, ys = gen.twinkle_picks()
+            if xs not in text or ys not in text or not re.search(r'"count":\s*%s,\s*"range":\s*%s\b' % (n, n), text):
+                errors.append("twinkle: the stars' lists or count differ from `tools/gen-blast.py --twinkle`")
+        except Exception as e:	# (PIL missing: the src check above still ran)
+            errors.append("could not regenerate it to compare: %s" % e)
+    return sorted(set(errors))
+
+
 def main(argv):
     if "--selftest" in argv:
         return selftest()
@@ -211,7 +249,7 @@ def main(argv):
     for name in files:
         errors = check(os.path.join(themes_dir, name), schema)
         if not errors:
-            errors = snes_checks(os.path.join(themes_dir, name), themes_dir)
+            errors = snes_checks(os.path.join(themes_dir, name), themes_dir) + genesis_checks(os.path.join(themes_dir, name), themes_dir)
         if errors:
             failed += 1
             print("FAIL %s" % name)

@@ -239,7 +239,13 @@ def main():
         return
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     root = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "system", "rootfs", "usr", "share", "banana", "themes")
-    n = 0
+    print("gen-blast: %d images in %s" % (len(write(root)), os.path.join(root, "blast")))
+
+
+def write(root):
+    """Bakes every palette under <root>/blast and returns the paths written, relative to root (check-themes.py
+    regenerates into a temp dir and compares, so the output must stay byte-for-byte reproducible)."""
+    done = []
     across = floor_lines()
     for name, p in PALETTES.items():
         out = os.path.join(root, "blast", name)
@@ -247,8 +253,10 @@ def main():
         files = {"sky": sky(p), "stars": stars(), "shapes": shapes(p), "city": city(p),
                  "ride0": ride(0), "ride1": ride(1), "idle0": idle(0), "idle1": idle(1), "speed0": speed(0), "speed1": speed(1)}
         for i in range(FLOOR): files["floor/row%d" % i] = floor_row(p, i + 1, across)
-        for k, c in files.items(): c.save(os.path.join(out, k + ".png")); n += 1
-    print("gen-blast: %d images in %s" % (n, os.path.join(root, "blast")))
+        for k, c in files.items():
+            c.save(os.path.join(out, k + ".png"))
+            done.append(os.path.join("blast", name, k + ".png"))
+    return done
 
 
 if __name__ == "__main__":
