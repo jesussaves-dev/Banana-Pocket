@@ -15,3 +15,4 @@ Status: `open` · `claimed` · `in review` · `done`
 | K1.1 | 0.2 | Driver inventory: what probes + what rcS modprobes, from the baseline | `docs/KERNEL-CONFIG.md` | K0.3 | Claude | kernel-k1-inventory | done |
 | K1.2 | 0.2 | `linux-banana.config` as a defconfig (Kconfig defaults + this board), grouped and explained; defconfig points at it | `board/.../linux-banana.config`, fragments, defconfig, `docs/KERNEL-CONFIG.md` §5 | K1.2a | Claude | kernel-k1-draft | in review |
 | K1.2a | 0.2 | Draft config from `allnoconfig`: deps resolved, builds | `board/.../linux-banana.config` | K1.1 | DeepSeek | kernel-k1-draft | done (#13) |
+| K1.2b | 0.2 | NLS codepage 437 + iso8859-1 for vfat `/boot` (the K1.2 config dropped them; updates broke in the QEMU test); rcS marks a failed `/boot` mount | `linux-banana.config`, `rcS`, `docs/KERNEL-CONFIG.md` | K1.2 | Claude | kernel-k1-nls | in review |
