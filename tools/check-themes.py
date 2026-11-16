@@ -193,7 +193,8 @@ def snes_checks(path, themes_dir):
 
 def genesis_checks(path, themes_dir):
     """A Genesis theme's baked art. Every plain "src" under {art} has to exist. A theme drawn from tools/gen-blast.py
-    also has to match a fresh bake byte for byte (none missing, none changed, none left over), and its twinkling
+    also has to match a fresh bake pixel for pixel (none missing, none changed, none left over; the PNG bytes differ
+    between Pillow/zlib versions, so the decoded RGBA is compared, not the file), and its twinkling
     stars have to carry the pick() lists and count that `gen-blast.py --twinkle` prints. A blast-<palette>.json has to
     match what gen-blast.py rewrites from blast.json, and every palette it bakes needs its blast-<palette>.json."""
     text = open(path, encoding="utf-8").read()
@@ -210,7 +211,12 @@ def genesis_checks(path, themes_dir):
             errors.append("art: no %s" % t)
     if art.split("/")[0] == "blast":
         try:
-            import filecmp, importlib.util, tempfile
+            import importlib.util, tempfile
+            from PIL import Image
+
+            def same(a, b):
+                with Image.open(a) as x, Image.open(b) as y:
+                    return x.size == y.size and x.convert("RGBA").tobytes() == y.convert("RGBA").tobytes()
             spec = importlib.util.spec_from_file_location("gen_blast", os.path.join(os.path.dirname(os.path.abspath(__file__)), "gen-blast.py"))
             gen = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(gen)
@@ -221,7 +227,7 @@ def genesis_checks(path, themes_dir):
                 errors += ["art: no %s (run tools/gen-blast.py)" % f for f in sorted(made - have)]
                 errors += ["art: %s is not baked by tools/gen-blast.py" % f for f in sorted(have - made)]
                 errors += ["art: %s is out of date (run tools/gen-blast.py)" % f for f in sorted(made & have)
-                           if not filecmp.cmp(os.path.join(tmp, f), os.path.join(themes_dir, f), shallow=False)]
+                           if not same(os.path.join(tmp, f), os.path.join(themes_dir, f))]
             m = re.match(r"blast-(\w+)\.json$", os.path.basename(path))
             if m and m.group(1) in gen.PALETTES and gen.theme_text(themes_dir, m.group(1)) != text:
                 errors.append("out of date with blast.json: run tools/gen-blast.py")
