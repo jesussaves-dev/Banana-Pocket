@@ -14,3 +14,4 @@ Status: `open` · `claimed` · `in review` · `done`
 | K8.2 | 0.2 | Image carries only the running kernel's modules: post-build removes every `/lib/modules/*` not named after `kernel.release` (an incremental build after a version bump leaves the old dir) | `board/.../post-build.sh` | K8.1 | | | open |
 | K1.1 | 0.2 | Driver inventory: what probes + what rcS modprobes, from the baseline | `docs/KERNEL-CONFIG.md` | K0.3 | Claude | kernel-k1-inventory | done |
 | K1.2 | 0.2 | `linux-banana.config` from `allnoconfig`, grouped and explained | `board/.../linux-banana.config`, defconfig | K1.1 | | | open |
+| K1.2a | 0.2 | Draft config from `allnoconfig`: deps resolved, builds | `board/.../linux-banana.config` | K1.1 | DeepSeek | kernel-k1-draft | claimed |
