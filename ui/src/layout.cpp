@@ -96,6 +96,7 @@ namespace banana
 		double movedAt = -1e9, enteredAt = -1e9;
 		int moveDir = 1;
 		float scroll = 0;				// the cursor's eased position
+		float travel = 0;				// how far scroll has moved in all, either way (only grows)
 		double launchAt = -1;
 		double wakeAt = -1, wakeMs = 450;	// the wake's transition: started at the next update after woke()
 		bool wakePending = false;
@@ -472,6 +473,7 @@ namespace banana
 			if (pre("palette.", rest)) { rnds::Color c; if (rnds::themeColor(rest.c_str(), c)) { out = EV(hex(c)); return true; } out = EV(""); return true; }
 			if (n == "cursor") { out = EV((double)cursor()); return true; }
 			if (n == "scroll") { out = EV((double)scroll); return true; }
+			if (n == "travel") { out = EV((double)travel); return true; }
 			if (n == "count") { out = EV((double)count()); return true; }
 			if (n == "moved") { out = EV(now - movedAt); return true; }
 			if (n == "entered") { out = EV(now - enteredAt); return true; }
@@ -1680,8 +1682,10 @@ namespace banana
 		if (minute != d->clockMinute) { d->clockMinute = minute; d->clock = src->clockText(); d->date = src->dateText(); d->phase = dayPhase(); }
 		float to = (float)d->cursor();
 		float k = 1 - (float)std::exp(-dt / std::max(1.0, d->scrollMs));
+		const float was = d->scroll;
 		d->scroll += (to - d->scroll) * k;
 		if (std::fabs(to - d->scroll) < 0.002f) d->scroll = to;
+		d->travel = std::fmod(d->travel + std::fabs(d->scroll - was), 4096.0f);	// wrapped: kept precise, a whole number of cells
 		if (d->wakePending) { d->wakePending = false; d->wakeAt = t; }
 		else if (d->wakeAt >= 0 && t - d->wakeAt >= d->wakeMs) d->wakeAt = -1;
 		if (d->launchAt >= 0)

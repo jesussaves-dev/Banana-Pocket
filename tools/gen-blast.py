@@ -13,7 +13,7 @@ level 1 only for thin distant lines. Always night. Per palette it writes:
                       holds the steady stars, and the twinkling ones are 1x1 rects in blast.json (see --twinkle)
   floor/row<i>.png    the neon floor, one picture per scanline below the horizon (i = 0..118, depth d = i + 1): the
                       Mega Drive's per-line horizontal scroll. Each row is drawn at x = -round(mod(scroll*130, 32)*d/26),
-                      so its perspective lines sit where they belong on every line and the grid never kinks
+                      so its rails sit where they belong on every line and never kink (the cross lines are live, in blast.json)
   ride{0,1}, idle{0,1}, speed{0,1}
                       the banana on its board (wheels turning), off it tapping a foot, and the boost's speed lines
   fav                 the favourite's heart, 8 x 8
@@ -154,25 +154,13 @@ def city(p):
     return c
 
 
-def floor_lines():
-    """The depths whose scanline carries a cross line: every 16 units of distance, while they stay two rows apart."""
-    out, k = [], 1
-    while True:
-        d = round(100 / k)
-        if d < 4 or (out and out[-1] - d < 2): break
-        out.append(d); k += 1
-    return set(out)
-
-
-def floor_row(p, d, across):
-    """Scanline d below the horizon. Lit wholly when a cross line runs along it; otherwise a dot where each rail
-    crosses it, the rails CELL apart at depth NEAR and converging on the centre. Wide enough for one cell's scroll."""
+def floor_row(p, d):
+    """Scanline d below the horizon: a dot where each rail crosses it (the cross lines are live rects in blast.json,
+    rolling toward you while the course moves), the rails CELL apart at depth NEAR and converging on the centre. Wide enough for one cell's scroll."""
     span = CELL * d / NEAR
     c = Canvas(W + int(span) + 2, 1)
     lv = min(7, 2 + d // 16)
-    if d in across:
-        c.R(0, 0, c.im.width, 1, S(p["h"], lv))
-    elif d >= 3:
+    if d >= 3:
         # each rail joined to where it crosses the next scanline down, so a shallow rail is a line and not dots;
         # far out, where that join would be wider than half a cell, a dot (the distance's shimmer)
         col = S(p["v"], max(2, lv - 1))
@@ -254,14 +242,13 @@ def write(root):
     """Bakes every palette under <root>/blast and returns the paths written, relative to root (check-themes.py
     regenerates into a temp dir and compares, so the output must stay byte-for-byte reproducible)."""
     done = []
-    across = floor_lines()
     for name, p in PALETTES.items():
         out = os.path.join(root, "blast", name)
         os.makedirs(os.path.join(out, "floor"), exist_ok=True)
         files = {"sky": sky(p), "stars": stars(), "shapes": shapes(p), "city": city(p),
                  "ride0": ride(0), "ride1": ride(1), "idle0": idle(0), "idle1": idle(1), "speed0": speed(0), "speed1": speed(1),
                  "fav": fav()}
-        for i in range(FLOOR): files["floor/row%d" % i] = floor_row(p, i + 1, across)
+        for i in range(FLOOR): files["floor/row%d" % i] = floor_row(p, i + 1)
         for k, c in files.items():
             c.save(os.path.join(out, k + ".png"))
             done.append(os.path.join("blast", name, k + ".png"))

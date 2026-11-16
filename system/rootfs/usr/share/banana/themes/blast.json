@@ -90,6 +90,17 @@
         { "use": "layer", "with": { "name": "shapes", "speed": 19 } },
         { "use": "layer", "with": { "name": "city", "speed": 45 } },
 
+        // the cross lines, rolling toward you while the course moves (travel grows with every system passed, so a
+        // boost rolls them fast): line i is 40 * (i + 1) units away less the distance rolled, and lands on row
+        // 1600 / z under the horizon, Night Drive's magenta at level 2 far out to 7 close (9-bit, as gen-blast's S()).
+        // Drawn first, so the rails cross over them. Motion off: they hold still.
+        { "type": "list", "source": "range", "count": 10, "range": 10, "x": 0, "y": 0, "w": 310, "h": 270, "scrollMode": "none",
+          "selectedOnTop": false,
+          "item": { "type": "rect", "x": 0, "w": 310, "h": 1,
+            "y": "=150 + ceil(1600 / (40 * (i + 1) - mod(motion ? travel * 40 : 0, 40)))",
+            "visible": "=1600 / (40 * (i + 1) - mod(motion ? travel * 40 : 0, 40)) >= 4 && 1600 / (40 * (i + 1) - mod(motion ? travel * 40 : 0, 40)) <= 119",
+            "fill": "=rgb(round(min(7, 2 + floor(ceil(1600 / (40 * (i + 1) - mod(motion ? travel * 40 : 0, 40))) / 16)) * 255 / 7), 0, round(round(5 * min(7, 2 + floor(ceil(1600 / (40 * (i + 1) - mod(motion ? travel * 40 : 0, 40))) / 16)) / 7) * 255 / 7))" } },
+
         // the floor: one scanline a row, each scrolled by its own depth (the Mega Drive's per-line scroll), so the
         // rails converge on the horizon and slide past at the right speed on every line
         { "type": "list", "source": "range", "count": 119, "direction": "column", "x": 0, "y": 151, "w": 310, "h": 119,
