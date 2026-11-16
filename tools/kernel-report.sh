@@ -62,18 +62,20 @@ mkdir -p "$(dirname "$OUT")"
     echo "== config"
     if run 'test -s /proc/config.gz'; then
         run 'zcat /proc/config.gz' > "$CONF"
-        echo "file: $CONF"
-        echo "=y: $(grep -c '=y' "$CONF")"
-        echo "=m: $(grep -c '=m' "$CONF")"
+        echo "file: ${CONF##*/}"
+        # Anchored to a bare value so a string ("...=y") cannot match; symbols may be mixed case (CONFIG_ARM_CCI5xx_PMU).
+        echo "=y: $(grep -c '^CONFIG_[A-Za-z0-9_]*=y$' "$CONF")"
+        echo "=m: $(grep -c '^CONFIG_[A-Za-z0-9_]*=m$' "$CONF")"
     else
         echo "(no /proc/config.gz: CONFIG_IKCONFIG_PROC is off, or the kernel booted without it)"
     fi
     echo
     echo "== probed drivers"
-    # Only drivers with at least one bound device: the symlinks next to bind/unbind/uevent are the devices.
+    # Only drivers with at least one bound device: the symlinks next to bind/unbind/uevent are the devices. Built-in
+    # driver dirs still carry a "module" symlink, so skip that one or every built-in counts as probed.
     run 'for d in /sys/bus/*/drivers/*/; do
              [ -d "$d" ] || continue
-             n=$(ls -l "$d" | grep -c "^l")
+             n=$(ls -l "$d" | grep "^l" | grep -vc " module -> ")
              [ "$n" -gt 0 ] || continue
              bus=${d#/sys/bus/}; bus=${bus%%/*}
              drv=${d%/}; drv=${drv##*/}
