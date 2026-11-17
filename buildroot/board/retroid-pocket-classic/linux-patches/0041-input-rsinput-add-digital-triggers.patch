@@ -3,6 +3,7 @@ From: Jacob Cook <jacobmcook1984@gmail.com>
 Date: Tue, 13 Oct 2026 17:00:00 -0400
 Subject: [PATCH] input: rsinput: add digital-triggers
 
+K5 audit: keep as community code (Jacob Cook): drop together with rsinput once banana-pad replaces it.
 ---
  drivers/input/joystick/rsinput.c | 26 ++++++++++++++++++++------
  1 file changed, 20 insertions(+), 6 deletions(-)

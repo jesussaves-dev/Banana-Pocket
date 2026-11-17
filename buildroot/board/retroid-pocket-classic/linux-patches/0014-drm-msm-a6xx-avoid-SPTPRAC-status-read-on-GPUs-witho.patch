@@ -4,6 +4,7 @@ Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] drm/msm/a6xx: avoid SPTPRAC status read on GPUs without
  SPTPRAC
 
+K5 audit: send upstream (K6): SPTPRAC status read only on A630/A615 family, not in mainline v7.3.
 ---
  drivers/gpu/drm/msm/adreno/a6xx_gmu.c | 5 +++++
  1 file changed, 5 insertions(+)
