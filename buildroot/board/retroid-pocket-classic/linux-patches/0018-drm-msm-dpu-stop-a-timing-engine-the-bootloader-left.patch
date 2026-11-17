@@ -3,6 +3,7 @@ From: sunshineinabox <aqemail@gmail.com>
 Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] drm/msm/dpu: stop a timing engine the bootloader left running
 
+K5 audit: keep as community code (sunshineinabox): bootloader-splash handoff, not in mainline v7.3.
 ---
  drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c | 41 +++++++++++++++++++++++++
  1 file changed, 41 insertions(+)

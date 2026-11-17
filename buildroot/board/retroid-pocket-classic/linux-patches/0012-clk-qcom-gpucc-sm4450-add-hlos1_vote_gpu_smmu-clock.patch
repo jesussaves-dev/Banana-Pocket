@@ -3,6 +3,7 @@ From: sunshineinabox <aqemail@gmail.com>
 Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] clk: qcom: gpucc-sm4450: add hlos1_vote_gpu_smmu clock
 
+K5 audit: send upstream (K6): missing GPU SMMU vote clock and binding ID, not in mainline v7.3.
 ---
  drivers/clk/qcom/gpucc-sm4450.c               | 14 ++++++++++++++
  include/dt-bindings/clock/qcom,sm4450-gpucc.h |  1 +
