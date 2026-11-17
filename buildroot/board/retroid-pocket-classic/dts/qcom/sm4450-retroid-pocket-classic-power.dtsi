@@ -251,8 +251,9 @@
 
 		};
 
-		pm6450_pwm: pwm {
+		pm6450_pwm: pwm@e800 {
 			compatible = "qcom,pm6450-pwm";
+			reg = <0xe800>;	/* one LPG channel; stock DT qcom,pwms@e800 */
 			#pwm-cells = <2>;
 		};
 	};
