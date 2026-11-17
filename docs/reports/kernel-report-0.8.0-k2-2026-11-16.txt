@@ -1,0 +1,192 @@
+# Banana kernel report
+# host: root@169.254.170.2   collected: 2026-11-16 19:24:40 EST
+
+== identity
+version: 0.8.0
+slot: a
+uname: 7.2.0-Bananix0.2
+cmdline: root=PARTLABEL=banana-root-a rootfstype=squashfs ro rootwait quiet loglevel=3 init=/sbin/init
+
+== image
+Image 17969664 bytes
+sm4450-retroid-pocket-classic-revq.dtb 60049 bytes
+
+== modules
+60 files, 3286728 bytes
+lsmod:
+Module                  Size  Used by    Tainted: G  
+pm8xxx_vibrator        12288  0 
+ksmbd                 339968  0 
+libsha512              24576  1 ksmbd
+smb_compress           12288  1 ksmbd
+nls_ucs2_utils         12288  1 ksmbd
+libmd5                 16384  1 ksmbd
+ath10k_snoc            45056  0 
+qcom_battmgr           20480  0 
+pwm_fan                16384  0 
+snd_soc_sc8280xp       12288  7 
+snd_soc_qcom_sdw       12288  1 snd_soc_sc8280xp
+snd_soc_qcom_common    12288  1 snd_soc_sc8280xp
+snd_soc_wcd937x        73728  1 
+snd_soc_wcd937x_sdw    12288  1 snd_soc_wcd937x
+regmap_sdw             12288  1 snd_soc_wcd937x_sdw
+snd_soc_wcd_classh     16384  1 snd_soc_wcd937x
+snd_soc_wcd_mbhc       20480  1 snd_soc_wcd937x
+snd_soc_wcd_common     12288  2 snd_soc_wcd937x,snd_soc_wcd937x_sdw
+soundwire_qcom         24576  2 
+slimbus                20480  1 soundwire_qcom
+soundwire_bus        1122304  6 snd_soc_qcom_sdw,snd_soc_wcd937x,snd_soc_wcd937x_sdw,regmap_sdw,snd_soc_wcd_common,soundwire_qcom
+snd_soc_lpass_va_macro    49152  3 
+snd_soc_lpass_tx_macro    90112  2 
+snd_soc_lpass_rx_macro   102400  2 
+snd_soc_lpass_macro_common    12288  3 snd_soc_lpass_va_macro,snd_soc_lpass_tx_macro,snd_soc_lpass_rx_macro
+q6prm_clocks           12288 14 
+q6prm                  12288  1 q6prm_clocks
+q6apm_lpass_dais       12288  1 
+q6apm_dai              16384  1 
+snd_q6apm              40960  4 q6prm,q6apm_lpass_dais,q6apm_dai
+snd_q6dsp_common       45056  2 q6prm_clocks,q6apm_lpass_dais
+qcom_q6v5_pas          36864  0 
+qcom_pil_info          12288  1 qcom_q6v5_pas
+qcom_q6v5              12288  1 qcom_q6v5_pas
+qcom_sysmon            16384  2 qcom_q6v5_pas,qcom_q6v5
+qcom_common            12288  2 ath10k_snoc,qcom_q6v5_pas
+
+== boot
+rcS marks (/run/banana/boot-times):
+rcS: started                   0.54 s
+rcS: slot a booted             0.55 s
+rcS: data partition ready      0.76 s
+rcS: audio: adsp modprobe      0.80 s
+rcS: audio: adsp running       1.23 s
+rcS: audio: q6apm+q6prm        1.25 s
+rcS: audio: macros+soundwire   1.27 s
+rcS: audio: wcd937x            1.30 s
+rcS: audio: machine            1.32 s
+rcS: audio: card               5.55 s
+rcS: sound                     5.57 s
+banana-ui: panel open          6.24 s
+banana-ui: the menu            9.97 s
+init: [    0.462548] Run /sbin/init as init process
+
+== config
+file: k2-report.txt.config
+=y: 1262
+=m: 61
+
+== probed drivers
+aprbus/qcom-apm: 1
+aprbus/qcom-prm: 1
+auxiliary/aux_bridge.aux_bridge: 1
+auxiliary/aux_hpd_bridge.aux_hpd_bridge: 1
+auxiliary/pmic_glink_altmode.pmic_glink_altmode: 1
+auxiliary/qcom_battmgr.pmic_glink_power_supply: 1
+auxiliary/qcom_pd_mapper.qcom-pdm-mapper: 2
+auxiliary/ucsi_glink.pmic_glink_ucsi: 1
+faux/faux_driver: 4
+gadget/configfs-gadget.banana: 1
+genpd_provider/genpd_provider: 25
+i2c/aw88166: 2
+i2c/edt_ft5x06: 1
+mipi-dsi/panel-ch13726a-amoled: 1
+mmc/mmcblk: 1
+platform/adreno: 1
+platform/arch-timer-mmio: 1
+platform/arm-smmu: 2
+platform/ath10k_snoc: 1
+platform/bcm_voter: 1
+platform/clk-rpmh: 1
+platform/cmd-db: 1
+platform/dispcc-sm4450: 1
+platform/dwc3-qcom: 1
+platform/gcc-sm4450: 1
+platform/geni_i2c: 2
+platform/geni_se_qup: 2
+platform/gpi: 1
+platform/gpio-keys: 1
+platform/gpucc-sm4450: 1
+platform/msm-mdss: 1
+platform/msm_dpu: 1
+platform/msm_dsi: 1
+platform/msm_dsi_phy: 1
+platform/pm8941-pwrkey: 2
+platform/pm8xxx-vib: 1
+platform/psci-cpuidle-domain: 1
+platform/pwrseq-qcom_wcn: 1
+platform/q6apm-dai: 1
+platform/q6apm-lpass-dais: 1
+platform/q6prm-lpass-clock: 1
+platform/qcom,qfprom: 1
+platform/qcom,spmi-sdam: 10
+platform/qcom-cpufreq-hw: 1
+platform/qcom-ipcc: 1
+platform/qcom-pon: 1
+platform/qcom-qmp-combo-phy: 1
+platform/qcom-rpmh-regulator: 2
+platform/qcom-rpmhpd: 1
+platform/qcom-sm8450-lpass-lpi-pinctrl: 1
+platform/qcom-smem: 1
+platform/qcom-snps-hs-femto-v2-phy: 1
+platform/qcom-socinfo: 1
+platform/qcom-soundwire: 2
+platform/qcom-spmi-adc5: 2
+platform/qcom-spmi-gpio: 3
+platform/qcom-tsens: 2
+platform/qcom_aoss_qmp: 1
+platform/qcom_geni_serial: 3
+platform/qcom_hwspinlock: 1
+platform/qcom_pdc: 1
+platform/qcom_pmic_glink: 1
+platform/qcom_q6v5_pas: 2
+platform/qcom_scm: 1
+platform/qcom_smp2p: 2
+platform/qcom_stats: 1
+platform/qnoc-sm4450: 9
+platform/ramoops: 1
+platform/reg-fixed-voltage: 8
+platform/rpmh: 1
+platform/rtc-pm8xxx: 1
+platform/rx_macro: 1
+platform/sdhci_msm: 1
+platform/simple-pm-bus: 1
+platform/sm4450-tlmm: 1
+platform/snd-sc8280xp: 1
+platform/spmi-temp-alarm: 1
+platform/spmi_pmic_arb: 1
+platform/tx_macro: 1
+platform/va_macro: 1
+platform/wcd937x_codec: 1
+rpmsg/qcom,apr: 1
+rpmsg/qcom_pmic_glink_rpmsg: 1
+rpmsg/qcom_smd_qrtr: 2
+rpmsg/rpmsg_ctrl: 2
+serial-base/ctrl: 3
+serial-base/port: 3
+serial/rsinput: 1
+soundwire/wcd9370-codec: 2
+spmi/pmic-spmi: 4
+
+== K2 device tree (dts split by subsystem + node removals, 698929c) on #8 (slot a), 2026-11-16
+probed drivers: identical to kernel-report-0.8.0-k12c-2026-11-16.txt (diff: one trailing blank line).
+removed nodes absent from /proc/device-tree (mmc@7c4000, interconnect@16c0000); 22 regulators, all in use.
+dtc: 0 warnings before and after. Built dtbs byte-identical to the ones checked off-tree.
+pwm-fan "deferred probe pending: Could not get PWM": present before K2 as well. LEDS_QCOM_LPG is off in this
+  config and in the 0.8.0 one, and pwm-fan is in neither probed list. Tracked separately.
+
+== Sleep/wake, 20 cycles on K2 (slot a), 2026-11-16 19:27-19:29
+kernel suspend_stats: success 20, fail 0 (every failed_* counter 0), mem_sleep [deep]
+dmesg: 20x "PM: suspend entry (deep)" / "PM: suspend exit"
+sleep.log: 20 sleeps, 20 wakes, wake source power key on all 20
+  prep 1210-1602 ms (avg 1525; K1.2c 1588), panel off 294-309 ms, menu sound released in 0-21 ms
+  "game and menu back" 0.3-1.1 ms after the kernel
+dmesg warnings (device link, dummy supplies, qcom-apm CMD timeout) are all in the previous boot's dmesg too.
+Result: pass.
+
+== docs/RPC-TEST.md on K2 (slot a), 2026-11-16
+sound-test: 14/14.
+backlight ae94000.dsi.0: wrote 1/64/128/192/255, actual_brightness followed each; restored. sysfs only.
+charging: qcom-battmgr-usb online, ucsi source "Charging", battery 100% "Full".
+Wi-Fi: wlan0 192.168.1.112/24, gateway ping 3/3, 14.5 ms average.
+USB NCM: udc "configured"; adb and ssh over it for the whole session.
+SMB (SMB3, guest): wrote and read back a 200-byte file, md5 matched; test file removed.
+Result: pass.
