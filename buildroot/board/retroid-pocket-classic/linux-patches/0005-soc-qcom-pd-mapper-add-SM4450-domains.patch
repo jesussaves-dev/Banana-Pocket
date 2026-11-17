@@ -3,6 +3,7 @@ From: sunshineinabox <aqemail@gmail.com>
 Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] soc: qcom: pd-mapper: add SM4450 domains
 
+K5 audit: send upstream (K6): not in mainline v7.3; no binding needed (qcom,sm4450 is in v7.3 qcom.yaml), so the easiest first review.
 ---
  drivers/soc/qcom/qcom_pd_mapper.c | 10 ++++++++++
  1 file changed, 10 insertions(+)

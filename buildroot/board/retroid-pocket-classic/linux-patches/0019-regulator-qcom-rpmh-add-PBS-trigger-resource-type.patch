@@ -3,14 +3,16 @@ From: sunshineinabox <aqemail@gmail.com>
 Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] regulator: qcom-rpmh: add PBS trigger resource type
 
+K5 audit: send upstream (K6): not in mainline v7.3; needs binding text for the PBS trigger nodes. Now also carries the pbs_sd/pbs_px2 PM6450 entries, so the series bisects.
+
 Some AOP firmwares sequence rail power through dedicated PBS trigger
 resources. Identical to downstream.
 ---
- drivers/regulator/qcom-rpmh-regulator.c | 22 +++++++++++++++++++---
- 1 file changed, 19 insertions(+), 3 deletions(-)
+ drivers/regulator/qcom-rpmh-regulator.c | 25 ++++++++++++++++++++++---
+ 1 file changed, 22 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/regulator/qcom-rpmh-regulator.c b/drivers/regulator/qcom-rpmh-regulator.c
-index c73cc6fd5ddebd3586f8bbd1d0434c446115b204..110023d2d87b6a994e1d868d471f510cf846b876 100644
+index bb06657e23c393159a8212c3e67310219c16fe74..110023d2d87b6a994e1d868d471f510cf846b876 100644
 --- a/drivers/regulator/qcom-rpmh-regulator.c
 +++ b/drivers/regulator/qcom-rpmh-regulator.c
 @@ -26,10 +26,14 @@
@@ -88,3 +90,13 @@ index c73cc6fd5ddebd3586f8bbd1d0434c446115b204..110023d2d87b6a994e1d868d471f510c
  static const struct rpmh_vreg_hw_data pmic5_pldo = {
  	.regulator_type = VRM,
  	.ops = &rpmh_regulator_vrm_drms_ops,
+@@ -1531,6 +1547,9 @@ static const struct rpmh_vreg_init_data pm6450_vreg_data[] = {
+ 	RPMH_VREG("ldo26",  LDO,  26, &pmic5_pldo,      NULL),
+ 	RPMH_VREG("ldo27",  LDO,  27, &pmic5_pldo,      NULL),
+ 	RPMH_VREG("ldo28",  LDO,  28, &pmic5_pldo,      NULL),
++	/* PBS trigger resources sequencing the SD card rails */
++	{ .name = "pbs_sd",  .resource_name = "vrm.sd",  .hw_data = &pmic5_pbs },
++	{ .name = "pbs_px2", .resource_name = "vrm.px2", .hw_data = &pmic5_pbs },
+ 	{}
+ };
+ 
