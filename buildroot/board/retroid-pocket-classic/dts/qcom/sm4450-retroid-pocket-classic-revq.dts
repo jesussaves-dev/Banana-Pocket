@@ -237,17 +237,18 @@
 	};
 };
 
-// The fan's curve, on the CPU cluster and the GPU: below 60 C it is off (the driver's own default is full speed),
-// then a step every 10 C, with the last step near the throttle point. The zones poll once a second so the level
+// The fan's curve, on the CPU cluster and the GPU: below 50 C it is off (the driver's own default is full speed;
+// idle sits near 41 C and a 140 s six-core load peaked at 56 C, so 50 C engages the fan under sustained load),
+// then steps at 58, 70 and 85 C, with the last step near the throttle point. The zones poll once a second so the level
 // follows the temperature; the governor is step_wise, so it climbs and falls one level at a time.
 &cpuss0_thermal {
 	polling-delay = <1000>;
 
 	trips {
-		fan_cpuss0_1: fan-cpuss0-trip1 { temperature = <60000>; hysteresis = <3000>; type = "active"; };
-		fan_cpuss0_2: fan-cpuss0-trip2 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
-		fan_cpuss0_3: fan-cpuss0-trip3 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
-		fan_cpuss0_4: fan-cpuss0-trip4 { temperature = <88000>; hysteresis = <3000>; type = "active"; };
+		fan_cpuss0_1: fan-cpuss0-trip1 { temperature = <50000>; hysteresis = <3000>; type = "active"; };
+		fan_cpuss0_2: fan-cpuss0-trip2 { temperature = <58000>; hysteresis = <3000>; type = "active"; };
+		fan_cpuss0_3: fan-cpuss0-trip3 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+		fan_cpuss0_4: fan-cpuss0-trip4 { temperature = <85000>; hysteresis = <3000>; type = "active"; };
 	};
 
 	cooling-maps {
@@ -262,10 +263,10 @@
 	polling-delay = <1000>;
 
 	trips {
-		fan_gpu_1: fan-gpu-trip1 { temperature = <60000>; hysteresis = <3000>; type = "active"; };
-		fan_gpu_2: fan-gpu-trip2 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
-		fan_gpu_3: fan-gpu-trip3 { temperature = <80000>; hysteresis = <3000>; type = "active"; };
-		fan_gpu_4: fan-gpu-trip4 { temperature = <88000>; hysteresis = <3000>; type = "active"; };
+		fan_gpu_1: fan-gpu-trip1 { temperature = <50000>; hysteresis = <3000>; type = "active"; };
+		fan_gpu_2: fan-gpu-trip2 { temperature = <58000>; hysteresis = <3000>; type = "active"; };
+		fan_gpu_3: fan-gpu-trip3 { temperature = <70000>; hysteresis = <3000>; type = "active"; };
+		fan_gpu_4: fan-gpu-trip4 { temperature = <85000>; hysteresis = <3000>; type = "active"; };
 	};
 
 	cooling-maps {
