@@ -60,55 +60,19 @@
 	};
 };
 
-/* ---- RPMh regulators (PM6450 "b", PM7250B "e") ---- */
+/* ---- RPMh regulators on PM6450 ("b") and the "e" PMIC (pm8010 register layout)
+ * Only rails something in this tree consumes are listed (the rest showed 0 users on the device and
+ * Linux never enabled them; listing them only cast an HPM mode vote). ---- */
 
 &apps_rsc {
 	/* Voltage constraints extracted from the live parrot (RP Classic) DT */
 	regulators-0 {
 		compatible = "qcom,pm6450-rpmh-regulators";
 		qcom,pmic-id = "b";
-
-		vreg_s7b_1p12: smps7 {
-			regulator-name = "vreg_s7b_1p12";
-			regulator-min-microvolt = <1010000>;
-			regulator-max-microvolt = <1170000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-		vreg_s8b_1p352: smps8 {
-			regulator-name = "vreg_s8b_1p352";
-			regulator-min-microvolt = <382000>;
-			regulator-max-microvolt = <1744000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-		vreg_s9b_1p872: smps9 {
-			regulator-name = "vreg_s9b_1p872";
-			regulator-min-microvolt = <1856000>;
-			regulator-max-microvolt = <2040000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-		vreg_l1b_0p504: ldo1 {
-			regulator-name = "vreg_l1b_0p504";
-			regulator-min-microvolt = <312000>;
-			regulator-max-microvolt = <650000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-		vreg_l3b_0p904: ldo3 {
-			regulator-name = "vreg_l3b_0p904";
-			regulator-min-microvolt = <870000>;
-			regulator-max-microvolt = <970000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-
 		vreg_l5b_0p88: ldo5 {
 			regulator-name = "vreg_l5b_0p88";
 			regulator-min-microvolt = <312000>;
 			regulator-max-microvolt = <1052000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-		vreg_l6b_0p824: ldo6 {
-			regulator-name = "vreg_l6b_0p824";
-			regulator-min-microvolt = <751000>;
-			regulator-max-microvolt = <824000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 		vreg_l7b_0p912: ldo7 {
@@ -117,28 +81,10 @@
 			regulator-max-microvolt = <920000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
-		vreg_l10b_0p824: ldo10 {
-			regulator-name = "vreg_l10b_0p824";
-			regulator-min-microvolt = <824000>;
-			regulator-max-microvolt = <901000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
 		vreg_l11b_0p348: ldo11 {
 			regulator-name = "vreg_l11b_0p348";
 			regulator-min-microvolt = <312000>;
 			regulator-max-microvolt = <752000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-		vreg_l12b_1p08: ldo12 {
-			regulator-name = "vreg_l12b_1p08";
-			regulator-min-microvolt = <1080000>;
-			regulator-max-microvolt = <1304000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-		vreg_l13b_1p2: ldo13 {
-			regulator-name = "vreg_l13b_1p2";
-			regulator-min-microvolt = <1080000>;
-			regulator-max-microvolt = <1304000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 		vreg_l14b_1p15: ldo14 {
@@ -153,18 +99,6 @@
 			regulator-max-microvolt = <1260000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
-		vreg_l18b_1p504: ldo18 {
-			regulator-name = "vreg_l18b_1p504";
-			regulator-min-microvolt = <1504000>;
-			regulator-max-microvolt = <2000000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-		vreg_l19b_1p8: ldo19 {
-			regulator-name = "vreg_l19b_1p8";
-			regulator-min-microvolt = <1700000>;
-			regulator-max-microvolt = <1950000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
 		vreg_l20b_1p7: ldo20 {
 			regulator-name = "vreg_l20b_1p7";
 			regulator-min-microvolt = <1700000>;
@@ -173,12 +107,6 @@
 		};
 		vreg_l21b_1p8: ldo21 {
 			regulator-name = "vreg_l21b_1p8";
-			regulator-min-microvolt = <1504000>;
-			regulator-max-microvolt = <2000000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-		vreg_l22b_1p8: ldo22 {
-			regulator-name = "vreg_l22b_1p8";
 			regulator-min-microvolt = <1504000>;
 			regulator-max-microvolt = <2000000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
@@ -201,18 +129,6 @@
 			regulator-max-microvolt = <3544000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
-		vreg_l26b_1p62: ldo26 {
-			regulator-name = "vreg_l26b_1p62";
-			regulator-min-microvolt = <1620000>;
-			regulator-max-microvolt = <3300000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-		vreg_l27b_1p62: ldo27 {
-			regulator-name = "vreg_l27b_1p62";
-			regulator-min-microvolt = <1620000>;
-			regulator-max-microvolt = <3300000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
 		vreg_l28b_2p96: ldo28 {
 			regulator-name = "vreg_l28b_2p96";
 			regulator-min-microvolt = <1800000>;
@@ -224,27 +140,8 @@
 	regulators-1 {
 		compatible = "qcom,pm8010-rpmh-regulators";
 		qcom,pmic-id = "e";
-
-		vreg_l1e_0p53: ldo1 {
-			regulator-name = "vreg_l1e_0p53";
-			regulator-min-microvolt = <528000>;
-			regulator-max-microvolt = <536000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-		vreg_l3e_2p7: ldo3 {
-			regulator-name = "vreg_l3e_2p7";
-			regulator-min-microvolt = <2700000>;
-			regulator-max-microvolt = <3300000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
 		vreg_l4e_3p0: ldo4 {
 			regulator-name = "vreg_l4e_3p0";
-			regulator-min-microvolt = <3000000>;
-			regulator-max-microvolt = <3312000>;
-			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-		};
-		vreg_l6e_3: ldo6 {
-			regulator-name = "vreg_l6e_3";
 			regulator-min-microvolt = <3000000>;
 			regulator-max-microvolt = <3312000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
@@ -366,7 +263,4 @@
 			reg = <0x5300>;
 		};
 	};
-};
-
-&pm7250b_gpios {
 };

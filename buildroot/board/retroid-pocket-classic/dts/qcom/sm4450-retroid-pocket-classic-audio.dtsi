@@ -346,7 +346,7 @@
 	};
 };
 
-/* ---- Speaker amps on I2C8 (the USB-C mux on the same bus is in -connectivity) ---- */
+/* ---- Speaker amps on I2C8 ---- */
 
 &qupv3_id_0 {
 	i2c8: i2c@a8c000 {

@@ -6,7 +6,9 @@
  * Maintained by Banana as its own description of this handheld (it started as ROCKNIX's tree).
  *
  * The WCN3950 Wi-Fi and Bluetooth chip (power sequencer, the WPSS that runs its firmware, the
- * Bluetooth UART) and USB: the controller, both PHYs, the Type-C port and the FSA4480 mux.
+ * Bluetooth UART) and USB: the controller, both PHYs, and the Type-C port.
+ * The Type-C port is run by the ADSP (pmic_glink, UCSI); the PM7250B Type-C and VBUS blocks stay
+ * disabled. The FSA4480 mux on I2C8 (0x42) has no node: Banana builds no driver for it.
  *
  * Included from sm4450-retroid-pocket-classic-common.dtsi; do not include it on its own.
  */
@@ -375,58 +377,6 @@
 
 				usb_1_qmpphy_usb_ss_in: endpoint {
 					remote-endpoint = <&usb_1_dwc3_ss>;
-				};
-			};
-		};
-	};
-};
-
-&i2c8 {
-	typec_mux: typec-mux@42 {
-		compatible = "fcs,fsa4480";
-		reg = <0x42>;
-		/* TODO verify: VCC rail (2.7-5.5V)
-		 * vcc-supply = <&vreg_l25b_3p072>; */
-		mode-switch;
-		orientation-switch;
-
-		port {
-			fsa4480_sbu: endpoint {
-				/* remote-endpoint = <&pm7250b_sbu_out>; */
-			};
-		};
-	};
-};
-
-&pm7250b_vbus {
-	/* 500mA-1.5A OTG boost,
-	 * TODO verify against stock OTG current limit */
-	regulator-min-microamp = <500000>;
-	regulator-max-microamp = <1500000>;
-};
-
-&pm7250b_typec {
-
-	connector {
-		compatible = "usb-c-connector";
-
-		power-role = "dual";
-		data-role = "dual";
-		self-powered;
-
-		typec-power-opmode = "default";
-		pd-disable;
-
-		vbus-supply = <&pm7250b_vbus>;
-
-		ports {
-			#address-cells = <1>;
-			#size-cells = <0>;
-
-			port@0 {
-				reg = <0>;
-				pm7250b_hs_in: endpoint {
-					/* remote-endpoint = <&usb_1_dwc3_hs_out>; */
 				};
 			};
 		};

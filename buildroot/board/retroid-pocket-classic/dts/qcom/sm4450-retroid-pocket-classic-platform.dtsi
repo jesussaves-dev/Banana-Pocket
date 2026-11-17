@@ -43,7 +43,6 @@
 		};
 	};
 
-	/* TODO: Display rails */
 	mc_virt: interconnect-0 {
 		compatible = "qcom,sm4450-mc-virt";
 		#interconnect-cells = <2>;
@@ -409,14 +408,6 @@
 		qcom,bcm-voters = <&apps_bcm_voter>;
 	};
 
-	pcie_anoc: interconnect@16c0000 {
-		compatible = "qcom,sm4450-pcie-anoc";
-		reg = <0x0 0x016c0000 0x0 0x7080>;
-		#interconnect-cells = <2>;
-		qcom,bcm-voters = <&apps_bcm_voter>;
-		status = "disabled";
-	};
-
 	aggre1_noc: interconnect@16e0000 {
 		compatible = "qcom,sm4450-aggre1-noc";
 		reg = <0x0 0x016e0000 0x0 0x13080>;
@@ -432,22 +423,6 @@
 		clocks = <&rpmhcc RPMH_IPA_CLK>,
 				 <&gcc GCC_AGGRE_USB3_PRIM_AXI_CLK>;
 		qcom,bcm-voters = <&apps_bcm_voter>;
-	};
-
-	video_aggre_noc: interconnect@1760000 {
-		compatible = "qcom,sm4450-video-aggre-noc";
-		reg = <0x0 0x01760000 0x0 0x1100>;
-		#interconnect-cells = <2>;
-		qcom,bcm-voters = <&apps_bcm_voter>;
-		status = "disabled";
-	};
-
-	lpass_ag_noc: interconnect@3c40000 {
-		compatible = "qcom,sm4450-lpass-ag-noc";
-		reg = <0x0 0x03c40000 0x0 0x17200>;
-		#interconnect-cells = <2>;
-		qcom,bcm-voters = <&apps_bcm_voter>;
-		status = "disabled";
 	};
 
 	spmi_bus: spmi@c400000 {
@@ -552,28 +527,9 @@
 	status = "okay";
 };
 
-/* ---- Storage: an eMMC controller (no eMMC is fitted) and the microSD slot Banana runs from ---- */
+/* ---- Storage: the microSD slot, which Banana boots and runs from (the internal UFS is left alone) ---- */
 
 &soc {
-	sdhc_1: mmc@7c4000 {
-		compatible = "qcom,sm4450-sdhci", "qcom,sdhci-msm-v5";
-		reg = <0x0 0x007c4000 0x0 0x1000>,
-		      <0x0 0x007c5000 0x0 0x1000>;
-		reg-names = "hc", "cqhci";
-		interrupts = <GIC_SPI 135 IRQ_TYPE_LEVEL_HIGH>,
-			     <GIC_SPI 137 IRQ_TYPE_LEVEL_HIGH>;
-		interrupt-names = "hc_irq", "pwr_irq";
-		clocks = <&gcc GCC_SDCC1_AHB_CLK>,
-			 <&gcc GCC_SDCC1_APPS_CLK>,
-			 <&rpmhcc RPMH_CXO_CLK>;
-		clock-names = "iface", "core", "xo";
-		power-domains = <&rpmhpd RPMHPD_CX>;
-		bus-width = <8>;
-		supports-cqe;
-		non-removable;
-		status = "disabled";
-	};
-
 	sdhc_2: mmc@8804000 {
 		compatible = "qcom,sm4450-sdhci", "qcom,sdhci-msm-v5";
 		reg = <0x0 0x08804000 0x0 0x1000>;

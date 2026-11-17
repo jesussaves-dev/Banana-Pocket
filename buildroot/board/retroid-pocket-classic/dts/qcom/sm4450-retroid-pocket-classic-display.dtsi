@@ -22,7 +22,7 @@
 	status = "okay";
 };
 
-/* mainline dtsi does not have clocks, yet */
+/* mainline sm4450.dtsi gives gpucc no power domains yet */
 &gpucc {
 	power-domains = <&rpmhpd RPMHPD_CX>,
 			<&rpmhpd RPMHPD_MX>;
