@@ -200,3 +200,23 @@ Kernel tree: linux-7.2 plus the board's 49 patches, with Buildroot's `aarch64-li
 
 The Image + modules + revq dtb build passes with no warnings. Nothing has been built in Buildroot, booted in QEMU or
 flashed yet. RPC-TEST, sound, sleep and `tools/qemu-boot.sh` are the next checks.
+
+### K1.2c: timers, preemption, thermal, GPU devfreq (found on the device)
+
+A default dropping out is only caught by a test that exercises it, and nothing in QEMU did. On the handheld the menu's
+sound came out slow and crunchy, the CPUs had no cooling device, and the GPU had no devfreq. Each one is now named in
+`linux-banana.config`, matching the 0.8.0 kernel:
+
+| Lines | Default without them | What broke |
+|---|---|---|
+| `PREEMPT`, `HIGH_RES_TIMERS`, `NO_HZ_IDLE` | `PREEMPT_LAZY`, 4 ms timer resolution, `HZ_PERIODIC` | The menu's 15 ms PCM buffer, fed through PipeWire's ALSA plugin, underran: slow, crunchy menu sound. Games were fine (bigger buffers). Runtime `preempt=full` alone did not fix it, so the timers were the cause. |
+| `CPU_THERMAL`, `CPU_FREQ_THERMAL` | off | The board dts's cooling-maps for cpu0-7 bound nothing. The only cooling device was `ath10k_thermal`, so a hot SoC was never throttled. |
+| `PM_DEVFREQ`, `DEVFREQ_GOV_{SIMPLE_ONDEMAND,PERFORMANCE,POWERSAVE}`, `DEVFREQ_THERMAL` | off | "Couldn't initialize GPU devfreq": no `/sys/class/devfreq`, so `banana-perf`'s GPU governor writes went nowhere |
+
+With NO_HZ back, the cpuidle governor default also goes back from `ladder` to `menu`. Result on the device: timer
+resolution 1 ns, preempt `full`, cooling devices `cpufreq-cpu0`, `cpufreq-cpu6`, `devfreq-3d00000.gpu`, the GPU on
+`powersave` in the menu, sound-test 14/14, and menu and game sound reported good. Image 17.97 MB, 1262 =y / 61 =m,
+60 `.ko` files (`docs/reports/kernel-report-0.8.0-k12c-2026-11-16.txt`). The one savedefconfig line not in the files,
+`# CONFIG_GCC_PLUGINS is not set`, comes from Buildroot's `linux.mk` fixup and was already there in K1.2.
+`QCOM_LMH` stays off: its driver matches `qcom,sdm845-lmh` and neither dts has such a node. On this SoC,
+qcom-cpufreq-hw handles the dcvsh (LMh) interrupts itself.
