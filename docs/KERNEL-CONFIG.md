@@ -63,7 +63,7 @@ Modules pulled in only as dependencies (visible in `lsmod`, no `modprobe` of the
 | Config | Bound |
 |---|---|
 | `JOYSTICK_RSINPUT` (ROCKNIX patch) | `serial/rsinput` — the pad MCU on a GENI UART |
-| `JOYSTICK_BANANA_PAD` | `serial/banana-pad`: clean-room pad MCU driver, compatible `banana,pad`; rsinput stays default until K4.x switches the DT |
+| `JOYSTICK_BANANA_PAD` | `serial/banana-pad`: clean-room pad MCU driver, compatible `banana,pad`; both board DTS use it since K4.1 (#21); rsinput is still built in |
 | `TOUCHSCREEN_EDT_FT5X06` | `i2c/edt_ft5x06` |
 | `KEYBOARD_GPIO` | `gpio-keys` (volume) |
 | `INPUT_PM8941_PWRKEY` | `pm8941-pwrkey` ×2 (power, resin) |
