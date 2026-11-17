@@ -3,6 +3,8 @@ From: Tengfei Fan <quic_tengfan@quicinc.com>
 Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] interconnect: qcom: add SM4450 driver
 
+K5 audit: keep as community code (Tengfei Fan, Qualcomm's Sep 2023 series + ROCKNIX regmap fix): not in mainline v7.3; coordinate with the original author before K6.
+
 Adapted from the Sep 2023 SM4450 interconnect series;
 ROCKNIX: virt provider regmap fix
 ---
