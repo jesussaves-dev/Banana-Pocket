@@ -10,7 +10,7 @@ K5 audit: send upstream (K6): SPTPRAC status read only on A630/A615 family, not 
  1 file changed, 5 insertions(+)
 
 diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
-index 2e5d7b53a0c380c664a1bd66eb7e51be8a151b93..ddcfa2d0bf64f59e0d13f61abc5d325fd6cc46ed 100644
+index 6d49c51df1a2793ed4615e36bc2af8b5482cda80..0ae9367b071368a16473257a4c92d692a3fb7713 100644
 --- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
 +++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
 @@ -78,12 +78,17 @@ static irqreturn_t a6xx_hfi_irq(int irq, void *data)

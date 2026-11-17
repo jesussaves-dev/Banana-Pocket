@@ -29,10 +29,10 @@ Signed-off-by: Banana <banana@localhost>
  2 files changed, 50 insertions(+), 20 deletions(-)
 
 diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
-index f652ef108f96a689fe8a646dce5f2ad4cb708cef..0b2d6a2fbd0fdbbef3343be5f1e18937910c89ff 100644
+index 2b4ab9c15ff953e1ac764c709644aa05088bb929..3d4b3e9beca1d91fe61eeeda1fc5b7e003b07748 100644
 --- a/sound/soc/codecs/aw88166.c
 +++ b/sound/soc/codecs/aw88166.c
-@@ -11,6 +11,7 @@
+@@ -12,6 +12,7 @@
  #include <linux/firmware.h>
  #include <linux/gpio/consumer.h>
  #include <linux/i2c.h>
@@ -40,7 +40,7 @@ index f652ef108f96a689fe8a646dce5f2ad4cb708cef..0b2d6a2fbd0fdbbef3343be5f1e18937
  #include <linux/minmax.h>
  #include <linux/regmap.h>
  #include <sound/soc.h>
-@@ -24,6 +25,7 @@ struct aw88166 {
+@@ -25,6 +26,7 @@ struct aw88166 {
  	struct mutex lock;
  	struct gpio_desc *reset_gpio;
  	struct delayed_work start_work;
@@ -48,7 +48,7 @@ index f652ef108f96a689fe8a646dce5f2ad4cb708cef..0b2d6a2fbd0fdbbef3343be5f1e18937
  	struct regmap *regmap;
  	struct aw_container *aw_cfg;
  
-@@ -1080,28 +1082,52 @@ static int aw88166_dev_fw_update(struct aw88166 *aw88166, bool up_dsp_fw_en, boo
+@@ -1081,28 +1083,52 @@ static int aw88166_dev_fw_update(struct aw88166 *aw88166, bool up_dsp_fw_en, boo
  
  static void aw88166_start_pa(struct aw88166 *aw88166)
  {

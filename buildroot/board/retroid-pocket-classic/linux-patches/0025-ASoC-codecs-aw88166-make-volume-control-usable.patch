@@ -26,10 +26,10 @@ Adapted for aw88166 from Val Packett's aw88261 series.
  2 files changed, 21 insertions(+), 26 deletions(-)
 
 diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
-index 886eb4e8c7c9879c310fec2a476c514b297323b3..f652ef108f96a689fe8a646dce5f2ad4cb708cef 100644
+index 48bab499692f125c32a4bcc7ac9da97755eb46bf..2b4ab9c15ff953e1ac764c709644aa05088bb929 100644
 --- a/sound/soc/codecs/aw88166.c
 +++ b/sound/soc/codecs/aw88166.c
-@@ -15,6 +15,7 @@
+@@ -16,6 +16,7 @@
  #include <linux/regmap.h>
  #include <sound/soc.h>
  #include <sound/pcm_params.h>
@@ -37,7 +37,7 @@ index 886eb4e8c7c9879c310fec2a476c514b297323b3..f652ef108f96a689fe8a646dce5f2ad4
  #include "aw88166.h"
  #include "aw88395/aw88395_device.h"
  
-@@ -614,24 +615,10 @@ static int aw_dev_dsp_check(struct aw_device *aw_dev)
+@@ -615,24 +616,10 @@ static int aw_dev_dsp_check(struct aw_device *aw_dev)
  
  static int aw_dev_set_volume(struct aw_device *aw_dev, unsigned int value)
  {
@@ -65,7 +65,7 @@ index 886eb4e8c7c9879c310fec2a476c514b297323b3..f652ef108f96a689fe8a646dce5f2ad4
  }
  
  static void aw88166_dev_mute(struct aw_device *aw_dev, bool is_mute)
-@@ -1450,7 +1437,8 @@ static int aw88166_volume_get(struct snd_kcontrol *kcontrol,
+@@ -1447,7 +1434,8 @@ static int aw88166_volume_get(struct snd_kcontrol *kcontrol,
  	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(codec);
  	struct aw_volume_desc *vol_desc = &aw88166->aw_pa->volume_desc;
  
@@ -75,7 +75,7 @@ index 886eb4e8c7c9879c310fec2a476c514b297323b3..f652ef108f96a689fe8a646dce5f2ad4
  
  	return 0;
  }
-@@ -1463,12 +1451,13 @@ static int aw88166_volume_set(struct snd_kcontrol *kcontrol,
+@@ -1460,12 +1448,13 @@ static int aw88166_volume_set(struct snd_kcontrol *kcontrol,
  	struct aw_volume_desc *vol_desc = &aw88166->aw_pa->volume_desc;
  	struct soc_mixer_control *mc =
  		(struct soc_mixer_control *)kcontrol->private_value;
@@ -91,7 +91,7 @@ index 886eb4e8c7c9879c310fec2a476c514b297323b3..f652ef108f96a689fe8a646dce5f2ad4
  	if (vol_desc->ctl_volume != value) {
  		vol_desc->ctl_volume = value;
  		aw_dev_set_volume(aw88166->aw_pa, vol_desc->ctl_volume);
-@@ -1595,10 +1584,16 @@ static int aw88166_request_firmware_file(struct aw88166 *aw88166)
+@@ -1590,10 +1579,16 @@ static int aw88166_request_firmware_file(struct aw88166 *aw88166)
  	return ret;
  }
  
@@ -111,7 +111,7 @@ index 886eb4e8c7c9879c310fec2a476c514b297323b3..f652ef108f96a689fe8a646dce5f2ad4
  	SOC_SINGLE_EXT("Calib", 0, 0, AW88166_CALI_RE_MAX, 0,
  		aw88166_re_get, aw88166_re_set),
  	AW88166_PROFILE_EXT("AW88166 Profile Set", aw88166_profile_info,
-@@ -1727,7 +1722,7 @@ static int aw88166_init(struct aw88166 *aw88166, struct i2c_client *i2c, struct
+@@ -1721,7 +1716,7 @@ static int aw88166_init(struct aw88166 *aw88166, struct i2c_client *i2c, struct
  	aw_dev->channel = AW88166_DEV_DEFAULT_CH;
  	aw_dev->fw_status = AW88166_DEV_FW_FAILED;
  

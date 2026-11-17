@@ -9,7 +9,7 @@ K5 audit: keep downstream: global SWRM_EE_CPU=0 would affect other SoCs; needs p
  1 file changed, 5 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/soundwire/qcom.c b/drivers/soundwire/qcom.c
-index 3d8f5a81eff19511d80e33c76f54972691ccf530..1e2d561b6c88b9835c82a113a86a043676167c0e 100644
+index 55678a30cd4a1eeea7439ee403d236f0f74eb109..0fc3ce8b161898d96131946515e038ea6add564e 100644
 --- a/drivers/soundwire/qcom.c
 +++ b/drivers/soundwire/qcom.c
 @@ -25,7 +25,7 @@
@@ -21,7 +21,7 @@ index 3d8f5a81eff19511d80e33c76f54972691ccf530..1e2d561b6c88b9835c82a113a86a0436
  #define SWRM_FRM_GEN_ENABLED					BIT(0)
  #define SWRM_VERSION_1_3_0					0x01030000
  #define SWRM_VERSION_1_5_1					0x01050001
-@@ -826,6 +826,10 @@ static irqreturn_t qcom_swrm_irq_handler(int irq, void *dev_id)
+@@ -825,6 +825,10 @@ static irqreturn_t qcom_swrm_irq_handler(int irq, void *dev_id)
  			case SWRM_INTERRUPT_STATUS_CLK_STOP_FINISHED_V2:
  				break;
  			case SWRM_INTERRUPT_STATUS_EXT_CLK_STOP_WAKEUP:

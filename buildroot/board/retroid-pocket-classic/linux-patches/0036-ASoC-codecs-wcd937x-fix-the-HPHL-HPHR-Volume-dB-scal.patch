@@ -20,10 +20,10 @@ Describe the range the hardware actually has.
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/sound/soc/codecs/wcd937x.c b/sound/soc/codecs/wcd937x.c
-index e0169e783ee96c59a752546b058dcce3559a1d52..e8389ca03a5f63f8ec564e82081213cbab8a1564 100644
+index 0dd05604f5b8874d01d7e6fb5219ea88a079407f..c110f4373f9d4610577e55e30c8ee0a4ede294b0 100644
 --- a/sound/soc/codecs/wcd937x.c
 +++ b/sound/soc/codecs/wcd937x.c
-@@ -113,7 +113,7 @@ static const char * const wcd937x_supplies[] = {
+@@ -114,7 +114,7 @@ static const char * const wcd937x_supplies[] = {
  };
  
  static const SNDRV_CTL_TLVD_DECLARE_DB_MINMAX(ear_pa_gain, 600, -1800);

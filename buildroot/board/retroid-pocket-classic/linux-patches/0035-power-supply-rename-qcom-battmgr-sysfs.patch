@@ -9,10 +9,10 @@ K5 audit: keep downstream: sysfs ABI rename, not acceptable upstream.
  1 file changed, 4 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
-index bff2aeffcd02f0e0c338149c7d5fa4db983e3158..b71d42ff1595f6fc394b8d4ab5f4f298b8b497af 100644
+index dd91b85b5dd6d1f885352a969acefdd21300e777..82dfc5e1ac35c04c43b53067e9b42aed35931c45 100644
 --- a/drivers/power/supply/qcom_battmgr.c
 +++ b/drivers/power/supply/qcom_battmgr.c
-@@ -818,7 +818,7 @@ static const enum power_supply_property sc8280xp_bat_props[] = {
+@@ -819,7 +819,7 @@ static const enum power_supply_property sc8280xp_bat_props[] = {
  };
  
  static const struct power_supply_desc sc8280xp_bat_psy_desc = {
@@ -21,7 +21,7 @@ index bff2aeffcd02f0e0c338149c7d5fa4db983e3158..b71d42ff1595f6fc394b8d4ab5f4f298
  	.type = POWER_SUPPLY_TYPE_BATTERY,
  	.properties = sc8280xp_bat_props,
  	.num_properties = ARRAY_SIZE(sc8280xp_bat_props),
-@@ -853,7 +853,7 @@ static const enum power_supply_property x1e80100_bat_props[] = {
+@@ -854,7 +854,7 @@ static const enum power_supply_property x1e80100_bat_props[] = {
  };
  
  static const struct power_supply_desc x1e80100_bat_psy_desc = {
@@ -30,7 +30,7 @@ index bff2aeffcd02f0e0c338149c7d5fa4db983e3158..b71d42ff1595f6fc394b8d4ab5f4f298
  	.type = POWER_SUPPLY_TYPE_BATTERY,
  	.properties = x1e80100_bat_props,
  	.num_properties = ARRAY_SIZE(x1e80100_bat_props),
-@@ -887,7 +887,7 @@ static const enum power_supply_property sm8350_bat_props[] = {
+@@ -888,7 +888,7 @@ static const enum power_supply_property sm8350_bat_props[] = {
  };
  
  static const struct power_supply_desc sm8350_bat_psy_desc = {
@@ -39,7 +39,7 @@ index bff2aeffcd02f0e0c338149c7d5fa4db983e3158..b71d42ff1595f6fc394b8d4ab5f4f298
  	.type = POWER_SUPPLY_TYPE_BATTERY,
  	.properties = sm8350_bat_props,
  	.num_properties = ARRAY_SIZE(sm8350_bat_props),
-@@ -921,7 +921,7 @@ static const enum power_supply_property sm8550_bat_props[] = {
+@@ -922,7 +922,7 @@ static const enum power_supply_property sm8550_bat_props[] = {
  };
  
  static const struct power_supply_desc sm8550_bat_psy_desc = {

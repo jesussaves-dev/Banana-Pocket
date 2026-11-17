@@ -12,10 +12,10 @@ resources. Identical to downstream.
  1 file changed, 22 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/regulator/qcom-rpmh-regulator.c b/drivers/regulator/qcom-rpmh-regulator.c
-index bb06657e23c393159a8212c3e67310219c16fe74..110023d2d87b6a994e1d868d471f510cf846b876 100644
+index a20c1a4323f4d14da4bef55095cc581cbc21f445..6665c74c75017e07b1ae5041b0b31b8b46e95529 100644
 --- a/drivers/regulator/qcom-rpmh-regulator.c
 +++ b/drivers/regulator/qcom-rpmh-regulator.c
-@@ -26,10 +26,14 @@
+@@ -27,10 +27,14 @@
   *		and mode of LDO, SMPS, and BOB type PMIC regulators.
   * @XOB:	RPMh XOB accelerator which supports voting on the enable state
   *		of PMIC regulators.
@@ -30,15 +30,15 @@ index bb06657e23c393159a8212c3e67310219c16fe74..110023d2d87b6a994e1d868d471f510c
  };
  
  /**
-@@ -62,6 +66,7 @@ static const struct resource_name_formats vreg_rsc_name_lookup[NUM_REGULATOR_TYP
- 
- #define RPMH_REGULATOR_REG_VRM_VOLTAGE		0x0
+@@ -67,6 +71,7 @@ static const struct resource_name_formats vreg_rsc_name_lookup[NUM_REGULATOR_TYP
  #define RPMH_REGULATOR_REG_ENABLE		0x4
+ #define RPMH_REGULATOR_ENABLE_MASK		BIT(0)
+ 
 +#define RPMH_REGULATOR_REG_PBS_ENABLE		0x0
  #define RPMH_REGULATOR_REG_VRM_MODE		0x8
+ #define RPMH_REGULATOR_MODE_MASK		GENMASK(2, 0)
  
- #define PMIC4_LDO_MODE_RETENTION		4
-@@ -183,6 +188,7 @@ struct rpmh_vreg_init_data {
+@@ -191,6 +196,7 @@ struct rpmh_vreg_init_data {
  	int				index;
  	const char			*supply_name;
  	const struct rpmh_vreg_hw_data	*hw_data;
@@ -46,7 +46,7 @@ index bb06657e23c393159a8212c3e67310219c16fe74..110023d2d87b6a994e1d868d471f510c
  };
  
  /**
-@@ -265,7 +271,8 @@ static int rpmh_regulator_set_enable_state(struct regulator_dev *rdev,
+@@ -298,7 +304,8 @@ static int rpmh_regulator_set_enable_state(struct regulator_dev *rdev,
  {
  	struct rpmh_vreg *vreg = rdev_get_drvdata(rdev);
  	struct tcs_cmd cmd = {
@@ -56,7 +56,7 @@ index bb06657e23c393159a8212c3e67310219c16fe74..110023d2d87b6a994e1d868d471f510c
  		.data = enable,
  	};
  	int ret;
-@@ -468,7 +475,10 @@ static int rpmh_regulator_init_vreg(struct rpmh_vreg *vreg, struct device *dev,
+@@ -517,7 +524,10 @@ static int rpmh_regulator_init_vreg(struct rpmh_vreg *vreg, struct device *dev,
  		return -EINVAL;
  	}
  
@@ -68,7 +68,7 @@ index bb06657e23c393159a8212c3e67310219c16fe74..110023d2d87b6a994e1d868d471f510c
  		rsc_name = vreg_rsc_name_lookup[rpmh_data->vreg_hw_type].rsc_name_fmt;
  		scnprintf(rpmh_resource_name, sizeof(rpmh_resource_name),
  			  rsc_name, rpmh_data->index, pmic_id);
-@@ -512,7 +522,7 @@ static int rpmh_regulator_init_vreg(struct rpmh_vreg *vreg, struct device *dev,
+@@ -561,7 +571,7 @@ static int rpmh_regulator_init_vreg(struct rpmh_vreg *vreg, struct device *dev,
  	if (!init_data)
  		return -ENOMEM;
  
@@ -77,7 +77,7 @@ index bb06657e23c393159a8212c3e67310219c16fe74..110023d2d87b6a994e1d868d471f510c
  	    init_data->constraints.min_uV &&
  	    init_data->constraints.min_uV == init_data->constraints.max_uV) {
  		vreg->rdesc.fixed_uV = init_data->constraints.min_uV;
-@@ -777,6 +787,12 @@ static const struct rpmh_vreg_hw_data pmic4_lvs = {
+@@ -894,6 +904,12 @@ static const struct rpmh_vreg_hw_data pmic4_lvs = {
  	/* LVS hardware does not support voltage or mode configuration. */
  };
  
@@ -90,7 +90,7 @@ index bb06657e23c393159a8212c3e67310219c16fe74..110023d2d87b6a994e1d868d471f510c
  static const struct rpmh_vreg_hw_data pmic5_pldo = {
  	.regulator_type = VRM,
  	.ops = &rpmh_regulator_vrm_drms_ops,
-@@ -1531,6 +1547,9 @@ static const struct rpmh_vreg_init_data pm6450_vreg_data[] = {
+@@ -1649,6 +1665,9 @@ static const struct rpmh_vreg_init_data pm6450_vreg_data[] = {
  	RPMH_VREG("ldo26",  LDO,  26, &pmic5_pldo,      NULL),
  	RPMH_VREG("ldo27",  LDO,  27, &pmic5_pldo,      NULL),
  	RPMH_VREG("ldo28",  LDO,  28, &pmic5_pldo,      NULL),

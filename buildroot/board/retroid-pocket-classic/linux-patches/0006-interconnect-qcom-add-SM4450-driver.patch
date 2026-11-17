@@ -17,10 +17,10 @@ ROCKNIX: virt provider regmap fix
  create mode 100644 include/dt-bindings/interconnect/qcom,sm4450-rpmh.h
 
 diff --git a/drivers/interconnect/qcom/Kconfig b/drivers/interconnect/qcom/Kconfig
-index 5b8a094ca4ede39dd3a3f74c85710590582dc0ab..ffc2e24bb17277fc10652e3ab1179fc2074f934d 100644
+index b3187acf90b8d3b93787ebb253c67477fd05b323..836b11aca568a4bdd36be53a076fc96993a40986 100644
 --- a/drivers/interconnect/qcom/Kconfig
 +++ b/drivers/interconnect/qcom/Kconfig
-@@ -338,6 +338,15 @@ config INTERCONNECT_QCOM_SHIKRA
+@@ -348,6 +348,15 @@ config INTERCONNECT_QCOM_SHIKRA
  	  This is a driver for the Qualcomm Network-on-Chip on shikra-based
  	  platforms.
  
@@ -37,10 +37,10 @@ index 5b8a094ca4ede39dd3a3f74c85710590582dc0ab..ffc2e24bb17277fc10652e3ab1179fc2
  	tristate "Qualcomm SM6115 interconnect driver"
  	depends on INTERCONNECT_QCOM
 diff --git a/drivers/interconnect/qcom/Makefile b/drivers/interconnect/qcom/Makefile
-index 1c7d410b40cc9e3ea81c621d89dd127edff58871..dc27edd56b2ef498c9ce478fb2698c534e331171 100644
+index 5f139a370bbea57f4067f063437f98cd578bb21d..94a5d5cfb9fd4103fc31d37362a5ede68ae20396 100644
 --- a/drivers/interconnect/qcom/Makefile
 +++ b/drivers/interconnect/qcom/Makefile
-@@ -38,6 +38,7 @@ qnoc-sdx55-objs				:= sdx55.o
+@@ -39,6 +39,7 @@ qnoc-sdx55-objs				:= sdx55.o
  qnoc-sdx65-objs				:= sdx65.o
  qnoc-sdx75-objs				:= sdx75.o
  qnoc-shikra-objs			:= shikra.o
@@ -48,7 +48,7 @@ index 1c7d410b40cc9e3ea81c621d89dd127edff58871..dc27edd56b2ef498c9ce478fb2698c53
  qnoc-sm6115-objs			:= sm6115.o
  qnoc-sm6350-objs			:= sm6350.o
  qnoc-sm7150-objs			:= sm7150.o
-@@ -86,6 +87,7 @@ obj-$(CONFIG_INTERCONNECT_QCOM_SDX55) += qnoc-sdx55.o
+@@ -88,6 +89,7 @@ obj-$(CONFIG_INTERCONNECT_QCOM_SDX55) += qnoc-sdx55.o
  obj-$(CONFIG_INTERCONNECT_QCOM_SDX65) += qnoc-sdx65.o
  obj-$(CONFIG_INTERCONNECT_QCOM_SDX75) += qnoc-sdx75.o
  obj-$(CONFIG_INTERCONNECT_QCOM_SHIKRA) += qnoc-shikra.o

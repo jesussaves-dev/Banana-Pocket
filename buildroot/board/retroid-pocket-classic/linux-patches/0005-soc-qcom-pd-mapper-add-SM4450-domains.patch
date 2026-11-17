@@ -9,10 +9,10 @@ K5 audit: send upstream (K6): not in mainline v7.3; no binding needed (qcom,sm44
  1 file changed, 10 insertions(+)
 
 diff --git a/drivers/soc/qcom/qcom_pd_mapper.c b/drivers/soc/qcom/qcom_pd_mapper.c
-index 0dc1a7946050c6d63c4a756bff5613605ab7099b..72aeb361631773bc90240c71061f5fed4b6ce45e 100644
+index 64ca99d7fad92075aa0060acc9375478045c7d42..09c21221718ee8dde8321699c2ce0222acd9a1fe 100644
 --- a/drivers/soc/qcom/qcom_pd_mapper.c
 +++ b/drivers/soc/qcom/qcom_pd_mapper.c
-@@ -502,6 +502,15 @@ static const struct qcom_pdm_domain_data *sdm845_domains[] = {
+@@ -538,6 +538,15 @@ static const struct qcom_pdm_domain_data *sdm845_domains[] = {
  	NULL,
  };
  
@@ -28,7 +28,7 @@ index 0dc1a7946050c6d63c4a756bff5613605ab7099b..72aeb361631773bc90240c71061f5fed
  static const struct qcom_pdm_domain_data *sm6115_domains[] = {
  	&adsp_audio_pd,
  	&adsp_root_pd,
-@@ -613,6 +622,7 @@ static const struct of_device_id qcom_pdm_domains[] __maybe_unused = {
+@@ -651,6 +660,7 @@ static const struct of_device_id qcom_pdm_domains[] __maybe_unused = {
  	{ .compatible = "qcom,sdm670", .data = sdm670_domains, },
  	{ .compatible = "qcom,sdm845", .data = sdm845_domains, },
  	{ .compatible = "qcom,sm4250", .data = sm6115_domains, },

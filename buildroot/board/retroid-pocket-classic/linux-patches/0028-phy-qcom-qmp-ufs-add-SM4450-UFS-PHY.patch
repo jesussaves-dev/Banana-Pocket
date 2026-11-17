@@ -23,10 +23,10 @@ https://github.com/cupid-development/android_kernel_xiaomi_sm8450/blob/060fed194
  2 files changed, 161 insertions(+)
 
 diff --git a/Documentation/devicetree/bindings/phy/qcom,sc8280xp-qmp-ufs-phy.yaml b/Documentation/devicetree/bindings/phy/qcom,sc8280xp-qmp-ufs-phy.yaml
-index b2c5c9a375a356b425d3e72a457db0df675b6841..89d73fb9f0d13235481b5ee4ce7d2af12f8377c3 100644
+index 4efe40c0dc97418796b55964c528c2b0799cd64f..ca7fda18f3142321c86c792413a0948a290fbcd3 100644
 --- a/Documentation/devicetree/bindings/phy/qcom,sc8280xp-qmp-ufs-phy.yaml
 +++ b/Documentation/devicetree/bindings/phy/qcom,sc8280xp-qmp-ufs-phy.yaml
-@@ -47,6 +47,7 @@ properties:
+@@ -48,6 +48,7 @@ properties:
            - qcom,sc8180x-qmp-ufs-phy
            - qcom,sc8280xp-qmp-ufs-phy
            - qcom,sdm845-qmp-ufs-phy
@@ -34,7 +34,7 @@ index b2c5c9a375a356b425d3e72a457db0df675b6841..89d73fb9f0d13235481b5ee4ce7d2af1
            - qcom,sm6115-qmp-ufs-phy
            - qcom,sm6125-qmp-ufs-phy
            - qcom,sm6350-qmp-ufs-phy
-@@ -116,6 +117,7 @@ allOf:
+@@ -118,6 +119,7 @@ allOf:
                - qcom,sc8180x-qmp-ufs-phy
                - qcom,sc8280xp-qmp-ufs-phy
                - qcom,sdm845-qmp-ufs-phy
@@ -43,10 +43,10 @@ index b2c5c9a375a356b425d3e72a457db0df675b6841..89d73fb9f0d13235481b5ee4ce7d2af1
                - qcom,sm6125-qmp-ufs-phy
                - qcom,sm6350-qmp-ufs-phy
 diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c b/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
-index 0f4ad24aa4058481cd171638fc5117089b9ac0e9..c7a3bb1316906dbe5b5ab01fee7693c1253d52fe 100644
+index d4aca22c181e4314736a532c17ae69da521bad1b..31508e35012d5264aa698ffa8d71b97ea5115b0c 100644
 --- a/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
 +++ b/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c
-@@ -785,6 +785,114 @@ static const struct qmp_phy_init_tbl sm8350_ufsphy_g4_pcs[] = {
+@@ -794,6 +794,114 @@ static const struct qmp_phy_init_tbl sm8350_ufsphy_g4_pcs[] = {
  	QMP_PHY_INIT_CFG(QPHY_V5_PCS_UFS_BIST_FIXED_PAT_CTRL, 0x0a),
  };
  
@@ -161,7 +161,7 @@ index 0f4ad24aa4058481cd171638fc5117089b9ac0e9..c7a3bb1316906dbe5b5ab01fee7693c1
  static const struct qmp_phy_init_tbl sm8475_ufsphy_serdes[] = {
  	QMP_PHY_INIT_CFG(QSERDES_V6_COM_SYSCLK_EN_SEL, 0xd9),
  	QMP_PHY_INIT_CFG(QSERDES_V6_COM_CMN_CONFIG_1, 0x16),
-@@ -1267,6 +1375,11 @@ static const struct regulator_bulk_data sm7150_ufsphy_vreg_l[] = {
+@@ -1276,6 +1384,11 @@ static const struct regulator_bulk_data sm7150_ufsphy_vreg_l[] = {
  	{ .supply = "vdda-pll", .init_load_uA = 18300 },
  };
  
@@ -173,7 +173,7 @@ index 0f4ad24aa4058481cd171638fc5117089b9ac0e9..c7a3bb1316906dbe5b5ab01fee7693c1
  static const struct regulator_bulk_data sm8150_ufsphy_vreg_l[] = {
  	{ .supply = "vdda-phy", .init_load_uA = 90200 },
  	{ .supply = "vdda-pll", .init_load_uA = 19000 },
-@@ -1503,6 +1616,49 @@ static const struct qmp_phy_cfg sdm845_ufsphy_cfg = {
+@@ -1526,6 +1639,49 @@ static const struct qmp_phy_cfg sdm845_ufsphy_cfg = {
  	.no_pcs_sw_reset	= true,
  };
  
@@ -223,7 +223,7 @@ index 0f4ad24aa4058481cd171638fc5117089b9ac0e9..c7a3bb1316906dbe5b5ab01fee7693c1
  static const struct qmp_phy_cfg sm6115_ufsphy_cfg = {
  	.lanes			= 1,
  
-@@ -2285,6 +2441,9 @@ static const struct of_device_id qmp_ufs_of_match_table[] = {
+@@ -2424,6 +2580,9 @@ static const struct of_device_id qmp_ufs_of_match_table[] = {
  	}, {
  		.compatible = "qcom,sdm845-qmp-ufs-phy",
  		.data = &sdm845_ufsphy_cfg,

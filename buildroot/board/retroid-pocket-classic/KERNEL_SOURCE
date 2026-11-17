@@ -1,5 +1,5 @@
 # Where linux-patches/ comes from (K3, docs/KERNEL-REPO.md). The patch dir is generated from this tag with
 # tools/kernel-patches-gen.sh; CI checks that the two match. Bump TAG with every regenerated patch dir.
 BANANA_LINUX_URL=https://github.com/jesussaves-dev/banana-linux
-BANANA_LINUX_BASE=v7.2
-BANANA_LINUX_TAG=banana-7.2-9
+BANANA_LINUX_BASE=v7.3
+BANANA_LINUX_TAG=banana-7.3-1

@@ -12,7 +12,7 @@ K5 audit: keep downstream: exported global serial number used to derive MAC/bdad
  4 files changed, 205 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/bluetooth/btqca.c b/drivers/bluetooth/btqca.c
-index 10c496eaea2c18dc7db576ac01d35af92c60f088..547fcd28f6fcaa4b4f9da245bf6a5f66ac78edf5 100644
+index 22b08ab05b829bef2452cacad9c25eb8a63cda19..ef275fb83a67c52c5bb72ff53203ff2ce942eb69 100644
 --- a/drivers/bluetooth/btqca.c
 +++ b/drivers/bluetooth/btqca.c
 @@ -13,6 +13,108 @@
@@ -124,7 +124,7 @@ index 10c496eaea2c18dc7db576ac01d35af92c60f088..547fcd28f6fcaa4b4f9da245bf6a5f66
  int qca_read_soc_version(struct hci_dev *hdev, struct qca_btsoc_version *ver,
  			 enum qca_btsoc_type soc_type)
  {
-@@ -699,7 +801,7 @@ int qca_set_bdaddr_rome(struct hci_dev *hdev, const bdaddr_t *bdaddr)
+@@ -680,7 +782,7 @@ int qca_set_bdaddr_rome(struct hci_dev *hdev, const bdaddr_t *bdaddr)
  }
  EXPORT_SYMBOL_GPL(qca_set_bdaddr_rome);
  
@@ -133,7 +133,7 @@ index 10c496eaea2c18dc7db576ac01d35af92c60f088..547fcd28f6fcaa4b4f9da245bf6a5f66
  {
  	struct hci_rp_read_bd_addr *bda;
  	struct sk_buff *skb;
-@@ -1010,7 +1112,7 @@ int qca_uart_setup(struct hci_dev *hdev, uint8_t baudrate,
+@@ -992,7 +1094,7 @@ int qca_uart_setup(struct hci_dev *hdev, uint8_t baudrate,
  		break;
  	}
  
@@ -267,7 +267,7 @@ index 8e604697d6c20d692bb1f53d8f33ccf639a95d38..746867b6a1d310d721533cc3a53f989d
  	SET_IEEE80211_PERM_ADDR(ar->hw, ar->mac_addr);
  
 diff --git a/drivers/soc/qcom/socinfo.c b/drivers/soc/qcom/socinfo.c
-index af418adad7aaf3855ca12c797f0ec2abd07b0474..8763d731a53f121e770effa542233416e08ccd00 100644
+index 1836e226a2945d77644f609b6cfaf210a10d60c2..7f18104730138fb8f02a2724b6ac5f37a43f56cd 100644
 --- a/drivers/soc/qcom/socinfo.c
 +++ b/drivers/soc/qcom/socinfo.c
 @@ -237,6 +237,10 @@ struct smem_image_version {
@@ -281,7 +281,7 @@ index af418adad7aaf3855ca12c797f0ec2abd07b0474..8763d731a53f121e770effa542233416
  struct qcom_socinfo {
  	struct soc_device *soc_dev;
  	struct soc_device_attribute attr;
-@@ -925,6 +929,9 @@ static int qcom_socinfo_probe(struct platform_device *pdev)
+@@ -926,6 +930,9 @@ static int qcom_socinfo_probe(struct platform_device *pdev)
  							le32_to_cpu(info->serial_num));
  		if (!qs->attr.serial_number)
  			return -ENOMEM;
@@ -291,7 +291,7 @@ index af418adad7aaf3855ca12c797f0ec2abd07b0474..8763d731a53f121e770effa542233416
  	}
  
  	qs->soc_dev = soc_device_register(&qs->attr);
-@@ -948,6 +955,9 @@ static void qcom_socinfo_remove(struct platform_device *pdev)
+@@ -949,6 +956,9 @@ static void qcom_socinfo_remove(struct platform_device *pdev)
  	soc_device_unregister(qs->soc_dev);
  
  	socinfo_debugfs_exit(qs);
