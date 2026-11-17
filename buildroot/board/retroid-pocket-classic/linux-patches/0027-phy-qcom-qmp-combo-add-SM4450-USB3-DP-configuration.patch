@@ -3,6 +3,8 @@ From: sunshineinabox <aqemail@gmail.com>
 Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] phy: qcom: qmp-combo: add SM4450 USB3/DP configuration
 
+K5 audit: send upstream (K6): not in mainline v7.3; needs a new binding for qcom,sm4450-qmp-usb3-dp-phy.
+
 Nearly identical to sm8350, but some diverging tunigns.
 Ported frmo downstream.
 

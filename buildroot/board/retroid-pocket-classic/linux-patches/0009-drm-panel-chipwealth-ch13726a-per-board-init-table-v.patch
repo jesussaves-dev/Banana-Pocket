@@ -4,6 +4,8 @@ Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] drm/panel: chipwealth-ch13726a: per-board init table, vendor
  timings, Retroid Pocket Classic
 
+K5 audit: send upstream (K6): v7.3 has the driver but not these boards; binding change is in this patch.
+
 Add both Retroid Pocket Classic boards. Rev Q is the same module as the
 Thor bottom panel. The original board carries a different module.
 ---

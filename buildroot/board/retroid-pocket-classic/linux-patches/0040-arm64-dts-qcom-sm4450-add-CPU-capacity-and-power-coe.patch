@@ -4,6 +4,8 @@ Date: Tue, 22 Sep 2026 23:30:00 +0100
 Subject: [PATCH] arm64: dts: qcom: sm4450: add CPU capacity and power
  coefficients
 
+K5 audit: send upstream (K6): not in mainline v7.3; capacity and power values are copied from sm6350, unmeasured.
+
 Without capacity-dmips-mhz the scheduler sees the six Cortex-A55 and two
 Cortex-A78 cores as equal and may leave a heavy thread on an A55. Add
 the capacity and dynamic-power-coefficient values sm6350 uses for its

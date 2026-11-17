@@ -4,6 +4,7 @@ Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] Bluetooth: hci_qca: drop baudrate-change vendor event for
  WCN3950
 
+K5 audit: drop at the v7.3 rebase: v7.3 hci_qca already has WCN3950 in set_speed.
 ---
  drivers/bluetooth/hci_qca.c | 2 ++
  1 file changed, 2 insertions(+)

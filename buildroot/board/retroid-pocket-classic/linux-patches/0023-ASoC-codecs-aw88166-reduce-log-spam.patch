@@ -3,6 +3,8 @@ From: sunshineinabox <aqemail@gmail.com>
 Date: Mon, 27 Jul 2026 20:29:21 -0700
 Subject: [PATCH] ASoC: codecs: aw88166: reduce log spam
 
+K5 audit: consolidate with the other aw88166 patches, then send upstream (K6): not in mainline v7.3.
+
 This driver would create a wall of logspam during initialization due to
 e.g. the PLL not being ready while waiting for it to stabilize.
 Change intermediate dev_err calls to dev_dbg to reduce the noise,

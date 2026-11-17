@@ -3,6 +3,8 @@ From: sunshineinabox <aqemail@gmail.com>
 Date: Mon, 27 Jul 2026 20:31:43 -0700
 Subject: [PATCH] ASoC: codecs: aw88166: remove fade in/out on start/stop
 
+K5 audit: consolidate with the other aw88166 patches, then send upstream (K6): not in mainline v7.3.
+
 This "feature" was copied from downstream, but it does not belong in
 the kernel at all. Remove it to simplify the driver.
 

@@ -3,6 +3,8 @@ From: Daniel Martin <dmanlfc@gmail.com>
 Date: Tue, 22 Sep 2026 19:30:00 +0100
 Subject: [PATCH] ASoC: codecs: wcd937x: fix the HPHL/HPHR Volume dB scale
 
+K5 audit: send upstream (K6): wcd938x already uses this scale in v7.3.
+
 The headphone PA gain is a 0..20 attenuator in 1.5 dB steps (-30 dB to
 0 dB), the same block wcd938x describes with
 DECLARE_TLV_DB_SCALE(line_gain, -3000, 150, 0). wcd937x instead

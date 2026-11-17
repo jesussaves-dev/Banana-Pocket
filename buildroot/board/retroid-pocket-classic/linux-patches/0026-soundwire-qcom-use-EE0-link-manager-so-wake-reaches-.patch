@@ -3,6 +3,7 @@ From: sunshineinabox <aqemail@gmail.com>
 Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] soundwire: qcom: use EE0 link manager so wake reaches the CPU
 
+K5 audit: keep downstream: global SWRM_EE_CPU=0 would affect other SoCs; needs per-SoC data to go upstream.
 ---
  drivers/soundwire/qcom.c | 6 +++++-
  1 file changed, 5 insertions(+), 1 deletion(-)
