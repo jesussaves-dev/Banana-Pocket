@@ -3,7 +3,7 @@ on:
   push:
     # only main: a release tag is the same tree the push already ran, and the local build makes the images -- a tag
     # run would just repeat the checks (and a red one there is another email for nothing)
-    branches: [ main ]
+    branches: [ main, kernel ]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -143,6 +143,102 @@ jobs:
         with:
           path: ~/.buildroot-ccache
           key: ccache-cores-${{ github.run_id }}
+
+  # The kernel (K3, docs/KERNEL-REPO.md): linux-patches/ must be what banana-linux generates, the kernel and its
+  # modules must build, and they must boot. The boot is tools/qemu-boot.sh on the latest released image with slot a's
+  # kernel and /lib/modules replaced by this build (tools/kernel-into-image.sh): the whole boot test, without
+  # building the rest of the system. It runs for every push and pull request on the kernel branch, and elsewhere when
+  # something the kernel is built from changed.
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      BR2_DL_DIR: ${{ github.workspace }}/dl
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Does the kernel need testing
+        id: changed
+        run: |
+          run=no
+          branch="${{ github.base_ref || github.ref_name }}"
+          if [ "${{ github.event_name }}" = workflow_dispatch ] || [ "$branch" = kernel ]; then
+            run=yes
+          else
+            if [ "${{ github.event_name }}" = pull_request ]; then base="${{ github.event.pull_request.base.sha }}"; else base="${{ github.event.before }}"; fi
+            if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+              git diff --name-only "$base" "${{ github.sha }}" | grep -qE \
+                '^buildroot/board/retroid-pocket-classic/(linux-|dts/|KERNEL_)|^buildroot/configs/|^tools/(qemu-boot|kernel-)|^\.github/workflows/ci\.yml$' && run=yes
+            else
+              run=yes
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"; echo "kernel test: $run"
+      - name: Packages
+        if: steps.changed.outputs.run == 'yes'
+        run: sudo apt-get update && sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev unzip rsync cpio file wget python3-dev swig libgnutls28-dev qemu-system-arm qemu-utils mtools squashfs-tools fakeroot exfatprogs exfat-fuse
+      - name: linux-patches/ is generated from banana-linux
+        if: steps.changed.outputs.run == 'yes'
+        run: |
+          . buildroot/board/retroid-pocket-classic/KERNEL_SOURCE
+          # no checkout: the base commit and the Banana commits on top of it are all format-patch needs
+          n=$(ls buildroot/board/retroid-pocket-classic/linux-patches/*.patch | wc -l)
+          git init -q --bare "$RUNNER_TEMP/banana-linux"
+          git -C "$RUNNER_TEMP/banana-linux" fetch -q --depth=1 "$BANANA_LINUX_URL" "refs/tags/${BANANA_LINUX_BASE}:refs/tags/${BANANA_LINUX_BASE}"
+          git -C "$RUNNER_TEMP/banana-linux" fetch -q --depth=$((n + 1)) "$BANANA_LINUX_URL" "refs/tags/${BANANA_LINUX_TAG}:refs/tags/${BANANA_LINUX_TAG}"
+          tools/kernel-patches-gen.sh --check "$RUNNER_TEMP/banana-linux" "$BANANA_LINUX_BASE" "$BANANA_LINUX_TAG"
+      - name: Restore downloads
+        if: steps.changed.outputs.run == 'yes'
+        uses: actions/cache/restore@v4
+        with:
+          path: dl
+          key: dl-kernel-${{ github.run_id }}
+          restore-keys: dl-
+      - name: Restore compiler cache
+        if: steps.changed.outputs.run == 'yes'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.buildroot-ccache
+          key: ccache-kernel-${{ github.run_id }}
+          restore-keys: ccache-kernel-
+      - name: Build the kernel and its modules
+        if: steps.changed.outputs.run == 'yes'
+        run: |
+          make buildroot-patched
+          make -s -C .buildroot BR2_EXTERNAL="$PWD/buildroot" O="$PWD/output/kernel" banana_retroid_pocket_classic_defconfig
+          make -C output/kernel linux
+          ls -l output/kernel/images/Image output/kernel/target/lib/modules/
+      - name: Save downloads
+        if: always() && steps.changed.outputs.run == 'yes'
+        uses: actions/cache/save@v4
+        with:
+          path: dl
+          key: dl-kernel-${{ github.run_id }}
+      - name: Save compiler cache
+        if: always() && steps.changed.outputs.run == 'yes'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.buildroot-ccache
+          key: ccache-kernel-${{ github.run_id }}
+      - name: Boot it in QEMU (the released image, this kernel)
+        if: steps.changed.outputs.run == 'yes'
+        run: |
+          gh release download --pattern 'banana-retroid-pocket-classic.img.gz' --dir release
+          sh tools/kernel-into-image.sh release/banana-retroid-pocket-classic.img.gz output/kernel/images/Image \
+            output/kernel/target/lib/modules banana-retroid-pocket-classic.img
+          sh tools/qemu-boot.sh banana-retroid-pocket-classic.img qemu-out
+      - name: Serial log on failure
+        if: failure() && steps.changed.outputs.run == 'yes'
+        run: tail -n 80 qemu-out/serial.log
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.changed.outputs.run == 'yes'
+        with:
+          name: qemu-boot-kernel
+          path: |
+            qemu-out/*.png
+            qemu-out/*.log
 
   image:
     if: github.event_name == 'workflow_dispatch' && inputs.image
