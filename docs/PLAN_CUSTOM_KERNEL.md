@@ -169,6 +169,10 @@ Banana's, with the generic SoC support still community code on its way upstream.
   replace; tag `banana-7.2-1`; document the rebase recipe (`git rebase --onto v7.3 v7.2`), conflict notes per
   patch; a CI job that builds the kernel + modules and runs the QEMU boot test on every push.
 - **Verify:** the generated patch dir is byte-identical to today's; CI green.
+- **Result (2026-11-16):** the old dir was hand-kept (bare diffs, missing `From:`/`Date:`), so no format-patch run
+  reproduces it. Owner's call: normalize it once. The generated dir differs in headers and hunk context, but the
+  kernel source it gives is identical (same `patch -p1` tree). From then on the dir must match
+  `tools/kernel-patches-gen.sh` output byte for byte, and CI checks that. Details: `docs/KERNEL-REPO.md`.
 
 ### K4 — Banana-written drivers for what makes it a Banana Pocket · M each
 Start with the ones that are the device's identity, smallest first:
