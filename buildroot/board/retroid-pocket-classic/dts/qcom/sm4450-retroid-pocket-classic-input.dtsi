@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX).
+ *
+ * Retroid Pocket Classic (SM4450 "parrot"): input.
+ * Maintained by Banana as its own description of this handheld (it started as ROCKNIX's tree).
+ *
+ * The buttons: volume up on a GPIO, power and volume down on the PMIC, the touchscreen on I2C1 and
+ * the UART3 the gamepad MCU talks on (its serdev child is per board revision, in the .dts files).
+ *
+ * Included from sm4450-retroid-pocket-classic-common.dtsi; do not include it on its own.
+ */
+
+/ {
+	gpio_keys: gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&vol_up_n>;
+		pinctrl-names = "default";
+
+		key-volume-up {
+			label = "volume_up";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&tlmm 53 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+			wakeup-source;
+		};
+	};
+};
+
+&qupv3_id_1 {
+	i2c1: i2c@984000 {
+		compatible = "qcom,geni-i2c";
+		reg = <0x0 0x00984000 0x0 0x4000>;
+		clocks = <&gcc GCC_QUPV3_WRAP0_S1_CLK>;
+		clock-names = "se";
+		interrupts = <GIC_SPI 602 IRQ_TYPE_LEVEL_HIGH>;
+		dmas = <&gpi_dma0 0 1 QCOM_GPI_I2C>,
+		       <&gpi_dma0 1 1 QCOM_GPI_I2C>;
+		dma-names = "tx", "rx";
+		interconnects = <&clk_virt MASTER_QUP_CORE_0 QCOM_ICC_TAG_ALWAYS
+				 &clk_virt SLAVE_QUP_CORE_0 QCOM_ICC_TAG_ALWAYS>,
+				<&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ALWAYS
+				 &config_noc SLAVE_QUP_0 QCOM_ICC_TAG_ALWAYS>,
+				<&aggre1_noc MASTER_QUP_0 QCOM_ICC_TAG_ALWAYS
+				 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
+		interconnect-names = "qup-core", "qup-config", "qup-memory";
+		pinctrl-0 = <&qup_i2c1_default>;
+		pinctrl-names = "default";
+		clock-frequency = <400000>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		status = "okay";
+
+		touchscreen@38 {
+			compatible = "focaltech,ft5452";
+			reg = <0x38>;
+
+			interrupt-parent = <&tlmm>;
+			interrupts = <13 IRQ_TYPE_LEVEL_LOW>;
+			reset-gpios = <&tlmm 12 GPIO_ACTIVE_LOW>;
+
+			vcc-supply = <&vreg_l4e_3p0>;
+
+			pinctrl-0 = <&ts_active>;
+			pinctrl-1 = <&ts_int_suspend &ts_reset_suspend>;
+			pinctrl-names = "default", "sleep";
+
+			touchscreen-size-x = <1080>;
+			touchscreen-size-y = <1240>;
+		};
+	};
+
+	uart3: serial@98c000 {
+		compatible = "qcom,geni-uart";
+		reg = <0x0 0x0098c000 0x0 0x4000>;
+		clocks = <&gcc GCC_QUPV3_WRAP0_S3_CLK>;
+		clock-names = "se";
+		interrupts = <GIC_SPI 604 IRQ_TYPE_LEVEL_HIGH>;
+		interconnects = <&clk_virt MASTER_QUP_CORE_0 QCOM_ICC_TAG_ALWAYS
+				 &clk_virt SLAVE_QUP_CORE_0 QCOM_ICC_TAG_ALWAYS>,
+				<&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ALWAYS
+				 &config_noc SLAVE_QUP_0 QCOM_ICC_TAG_ALWAYS>;
+		interconnect-names = "qup-core", "qup-config";
+		pinctrl-0 = <&qup_uart3_tx>, <&qup_uart3_rx>;
+		pinctrl-names = "default";
+		status = "okay";
+
+	};
+};
+
+&tlmm {
+	qup_uart3_tx: qup-uart3-tx-state {
+		pins = "gpio20";
+		function = "qup0_se3";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	qup_uart3_rx: qup-uart3-rx-state {
+		pins = "gpio21";
+		function = "qup0_se3";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	vol_up_n: vol-up-n-state {
+		pins = "gpio53";
+		function = "gpio";
+		bias-pull-up;
+	};
+
+	qup_i2c1_default: qup-i2c1-default-state {
+		pins = "gpio10", "gpio11";
+		function = "qup0_se1";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	ts_active: ts-active-state {
+		pins = "gpio12", "gpio13";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+
+	ts_int_suspend: ts-int-suspend-state {
+		pins = "gpio13";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	ts_reset_suspend: ts-reset-suspend-state {
+		pins = "gpio12";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+};
+
+&pon_pwrkey {
+	/* A 15.6 ms debounce: the pwrkey is the only armed wake source and its IRQ (edge-both) can fire on a glitch, so
+	 * without this a stray edge lights the panel in the night. The driver ignores events before the debounce ends. */
+	debounce = <15625>;
+	status = "okay";
+};
+
+&pon_resin {
+	linux,code = <KEY_VOLUMEDOWN>;
+	status = "okay";
+};

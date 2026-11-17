@@ -64,7 +64,7 @@ data || {
 /usr/libexec/banana/data-layout
 mark "rcS: data partition ready"
 # the boot partition, read-only
-mount -t vfat -o ro,noatime ${DISK}p1 /boot 2>/dev/null
+mount -t vfat -o ro,noatime ${DISK}p1 /boot 2>/dev/null || mark "rcS: /boot NOT mounted"
 
 # The sound, before the menu opens it. The RPC's audio is all modules and nothing loads them without udev, and the
 # order matters, because each step needs the one before it to have probed:

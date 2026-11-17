@@ -1,0 +1,389 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX).
+ *
+ * Retroid Pocket Classic (SM4450 "parrot"): display and GPU.
+ * Maintained by Banana as its own description of this handheld (it started as ROCKNIX's tree).
+ *
+ * Display clocks, the MDSS/DPU with the DSI host and PHY for the built-in panel, and the Adreno GPU
+ * with its GMU wrapper and SMMU. The panel node itself is per board revision, in the .dts files.
+ *
+ * Included from sm4450-retroid-pocket-classic-common.dtsi; do not include it on its own.
+ */
+
+&dispcc {
+	clocks = <&rpmhcc RPMH_CXO_CLK>,
+		 <&rpmhcc RPMH_CXO_CLK_A>,
+		 <&gcc GCC_DISP_AHB_CLK>,
+		 <&sleep_clk>,
+		 <&mdss_dsi0_phy DSI_BYTE_PLL_CLK>,
+		 <&mdss_dsi0_phy DSI_PIXEL_PLL_CLK>;
+	power-domains = <&rpmhpd RPMHPD_MX>;
+	status = "okay";
+};
+
+/* mainline sm4450.dtsi gives gpucc no power domains yet */
+&gpucc {
+	power-domains = <&rpmhpd RPMHPD_CX>,
+			<&rpmhpd RPMHPD_MX>;
+};
+
+&soc {
+	mdss: display-subsystem@ae00000 {
+		compatible = "qcom,sm4450-mdss";
+		reg = <0x0 0x0ae00000 0x0 0x1000>;
+		reg-names = "mdss";
+
+		interrupts = <GIC_SPI 83 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-controller;
+		#interrupt-cells = <1>;
+
+		clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
+			 <&gcc GCC_DISP_HF_AXI_CLK>,
+			 <&dispcc DISP_CC_MDSS_MDP_CLK>;
+		clock-names = "iface", "bus", "core";
+
+		power-domains = <&dispcc DISP_CC_MDSS_CORE_GDSC>;
+
+		interconnects = <&mmss_noc MASTER_MDP QCOM_ICC_TAG_ALWAYS
+				 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>,
+				<&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ACTIVE_ONLY
+				 &config_noc SLAVE_DISPLAY_CFG QCOM_ICC_TAG_ACTIVE_ONLY>;
+		interconnect-names = "mdp0-mem", "cpu-cfg";
+
+		iommus = <&apps_smmu 0x800 0x402>;
+
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+
+		mdss_mdp: display-controller@ae01000 {
+			compatible = "qcom,sm4450-dpu";
+			reg = <0x0 0x0ae01000 0x0 0x8f000>,
+			      <0x0 0x0aeb0000 0x0 0x2008>;
+			reg-names = "mdp", "vbif";
+
+			clocks = <&gcc GCC_DISP_HF_AXI_CLK>,
+				 <&dispcc DISP_CC_MDSS_AHB_CLK>,
+				 <&dispcc DISP_CC_MDSS_MDP_LUT_CLK>,
+				 <&dispcc DISP_CC_MDSS_MDP_CLK>,
+				 <&dispcc DISP_CC_MDSS_VSYNC_CLK>;
+			clock-names = "bus",
+				      "iface",
+				      "lut",
+				      "core",
+				      "vsync";
+
+			assigned-clocks = <&dispcc DISP_CC_MDSS_VSYNC_CLK>;
+			assigned-clock-rates = <19200000>;
+
+			operating-points-v2 = <&mdp_opp_table>;
+			power-domains = <&rpmhpd RPMHPD_CX>;
+
+			interrupt-parent = <&mdss>;
+			interrupts = <0>;
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+					dpu_intf1_out: endpoint {
+						remote-endpoint = <&mdss_dsi0_in>;
+					};
+				};
+			};
+
+			/* TODO Verify */
+			mdp_opp_table: opp-table {
+				compatible = "operating-points-v2";
+
+				opp-200000000 {
+					opp-hz = /bits/ 64 <200000000>;
+					required-opps = <&rpmhpd_opp_low_svs>;
+				};
+
+				opp-325000000 {
+					opp-hz = /bits/ 64 <325000000>;
+					required-opps = <&rpmhpd_opp_svs>;
+				};
+
+				opp-380000000 {
+					opp-hz = /bits/ 64 <380000000>;
+					required-opps = <&rpmhpd_opp_svs_l1>;
+				};
+
+				opp-506000000 {
+					opp-hz = /bits/ 64 <506000000>;
+					required-opps = <&rpmhpd_opp_nom>;
+				};
+
+				opp-608000000 {
+					opp-hz = /bits/ 64 <608000000>;
+					required-opps = <&rpmhpd_opp_turbo>;
+				};
+			};
+		};
+
+		mdss_dsi0: dsi@ae94000 {
+			compatible = "qcom,sm4450-dsi-ctrl", "qcom,mdss-dsi-ctrl";
+			reg = <0x0 0x0ae94000 0x0 0x400>;
+			reg-names = "dsi_ctrl";
+
+			interrupt-parent = <&mdss>;
+			interrupts = <4>;
+
+			clocks = <&dispcc DISP_CC_MDSS_BYTE0_CLK>,
+				 <&dispcc DISP_CC_MDSS_BYTE0_INTF_CLK>,
+				 <&dispcc DISP_CC_MDSS_PCLK0_CLK>,
+				 <&dispcc DISP_CC_MDSS_ESC0_CLK>,
+				 <&dispcc DISP_CC_MDSS_AHB_CLK>,
+				 <&gcc GCC_DISP_HF_AXI_CLK>;
+			clock-names = "byte",
+				      "byte_intf",
+				      "pixel",
+				      "core",
+				      "iface",
+				      "bus";
+
+			assigned-clocks = <&dispcc DISP_CC_MDSS_BYTE0_CLK_SRC>,
+					  <&dispcc DISP_CC_MDSS_PCLK0_CLK_SRC>;
+			assigned-clock-parents = <&mdss_dsi0_phy DSI_BYTE_PLL_CLK>,
+						 <&mdss_dsi0_phy DSI_PIXEL_PLL_CLK>;
+
+			operating-points-v2 = <&mdss_dsi_opp_table>;
+			power-domains = <&rpmhpd RPMHPD_CX>;
+
+			phys = <&mdss_dsi0_phy>;
+			phy-names = "dsi";
+
+			/* live DT confirmed */
+			vdda-supply = <&vreg_l16b_1p2>;
+
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+					mdss_dsi0_in: endpoint {
+						remote-endpoint = <&dpu_intf1_out>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+					mdss_dsi0_out: endpoint {
+						remote-endpoint = <&panel_in>;
+						data-lanes = <0 1 2 3>;
+					};
+				};
+			};
+
+			mdss_dsi_opp_table: opp-table {
+				compatible = "operating-points-v2";
+
+				opp-187500000 {
+					opp-hz = /bits/ 64 <187500000>;
+					required-opps = <&rpmhpd_opp_low_svs>;
+				};
+
+				opp-300000000 {
+					opp-hz = /bits/ 64 <300000000>;
+					required-opps = <&rpmhpd_opp_svs>;
+				};
+
+				opp-358000000 {
+					opp-hz = /bits/ 64 <358000000>;
+					required-opps = <&rpmhpd_opp_svs_l1>;
+				};
+			};
+
+		};
+
+		mdss_dsi0_phy: phy@ae94400 {
+			compatible = "qcom,sm4450-dsi-phy-5nm", "qcom,sm8450-dsi-phy-5nm";
+			reg = <0x0 0x0ae94400 0x0 0x200>,
+			      <0x0 0x0ae94600 0x0 0x280>,
+			      <0x0 0x0ae94900 0x0 0x260>;
+			reg-names = "dsi_phy",
+				    "dsi_phy_lane",
+				    "dsi_pll";
+
+			#clock-cells = <1>;
+			#phy-cells = <0>;
+
+			clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
+				 <&rpmhcc RPMH_CXO_CLK>;
+			clock-names = "iface", "ref";
+
+			/* live DT confirmed */
+			vdds-supply = <&vreg_l5b_0p88>;
+		};
+	};
+
+	gpu: gpu@3d00000 {
+		compatible = "qcom,adreno-613.0", "qcom,adreno";
+		reg = <0x0 0x03d00000 0x0 0x40000>,
+		      <0x0 0x03d9e000 0x0 0x1000>,
+		      <0x0 0x03d61000 0x0 0x800>;
+		reg-names = "kgsl_3d0_reg_memory",
+			    "cx_mem",
+			    "cx_dbgc";
+
+		interrupts = <GIC_SPI 300 IRQ_TYPE_LEVEL_HIGH>;
+
+		clocks = <&gpucc GPU_CC_GX_GFX3D_CLK>,
+			 <&gpucc GPU_CC_AHB_CLK>,
+			 <&gcc GCC_DDRSS_GPU_AXI_CLK>,
+			 <&gcc GCC_GPU_MEMNOC_GFX_CLK>,
+			 <&gpucc GPU_CC_CX_GMU_CLK>,
+			 <&gpucc GPU_CC_CXO_CLK>,
+			 <&gpucc GPU_CC_HUB_CX_INT_CLK>;
+		clock-names = "core",
+			      "iface",
+			      "mem_iface",
+			      "alt_mem_iface",
+			      "gmu",
+			      "xo",
+			      "hub";
+
+		interconnects = <&gem_noc MASTER_GFX3D QCOM_ICC_TAG_ALWAYS
+				 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
+		interconnect-names = "gfx-mem";
+
+		iommus = <&adreno_smmu 0 0x400>;
+		power-domains = <&rpmhpd RPMHPD_CX>;
+
+		operating-points-v2 = <&gpu_opp_table>;
+
+		qcom,gmu = <&gmu_wrapper>;
+
+		nvmem-cells = <&gpu_speed_bin>;
+		nvmem-cell-names = "speed_bin";
+
+		#cooling-cells = <2>;
+
+		status = "okay";
+
+		zap-shader {
+			memory-region = <&gpu_microcode_mem>;
+			firmware-name = "qcom/sm4450/a613_zap.mbn";
+		};
+
+		gpu_opp_table: opp-table {
+			compatible = "operating-points-v2";
+
+			opp-340000000 {
+				opp-hz = /bits/ 64 <340000000>;
+				required-opps = <&rpmhpd_opp_low_svs>;
+				opp-peak-kBps = <2136718>;
+				opp-supported-hw = <0xf>;
+			};
+
+			opp-500000000 {
+				opp-hz = /bits/ 64 <500000000>;
+				required-opps = <&rpmhpd_opp_svs>;
+				opp-peak-kBps = <3972656>;
+				opp-supported-hw = <0xf>;
+			};
+
+			opp-605000000 {
+				opp-hz = /bits/ 64 <605000000>;
+				required-opps = <&rpmhpd_opp_svs_l1>;
+				opp-peak-kBps = <5285156>;
+				opp-supported-hw = <0xf>;
+			};
+
+			opp-765000000 {
+				opp-hz = /bits/ 64 <765000000>;
+				required-opps = <&rpmhpd_opp_nom>;
+				opp-peak-kBps = <6671875>;
+				opp-supported-hw = <0xf>;
+			};
+
+			opp-850000000 {
+				opp-hz = /bits/ 64 <850000000>;
+				required-opps = <&rpmhpd_opp_nom_l1>;
+				opp-peak-kBps = <8332031>;
+				opp-supported-hw = <0x7>;
+			};
+
+			opp-955000000 {
+				opp-hz = /bits/ 64 <955000000>;
+				required-opps = <&rpmhpd_opp_turbo>;
+				opp-peak-kBps = <8332031>;
+				opp-supported-hw = <0x7>;
+			};
+
+			opp-1010000000 {
+				opp-hz = /bits/ 64 <1010000000>;
+				required-opps = <&rpmhpd_opp_turbo_l1>;
+				opp-peak-kBps = <8332031>;
+				opp-supported-hw = <0x5>;
+			};
+		};
+	};
+
+	gmu_wrapper: gmu@3d7d000 {
+		compatible = "qcom,adreno-gmu-wrapper";
+		reg = <0x0 0x03d6a000 0x0 0x30000>;
+		reg-names = "gmu";
+		power-domains = <&gpucc GPU_CC_CX_GDSC>,
+				<&gpucc GPU_CC_GX_GDSC>;
+		power-domain-names = "cx", "gx";
+		status = "okay";
+	};
+
+	adreno_smmu: iommu@3da0000 {
+		compatible = "qcom,sm4450-smmu-500", "qcom,adreno-smmu",
+			     "qcom,smmu-500", "arm,mmu-500";
+		reg = <0x0 0x03da0000 0x0 0x10000>;
+		#iommu-cells = <2>;
+		#global-interrupts = <1>;
+		dma-coherent;
+		interrupts = <GIC_SPI 674 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 678 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 679 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 680 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 681 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 682 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 683 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 684 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 685 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 686 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 687 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 688 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 422 IRQ_TYPE_LEVEL_HIGH>;
+
+		clocks = <&gpucc GPU_CC_CX_GMU_CLK>,
+			 <&gpucc GPU_CC_HUB_CX_INT_CLK>,
+			 <&gpucc GPU_CC_HLOS1_VOTE_GPU_SMMU_CLK>,
+			 <&gcc GCC_GPU_MEMNOC_GFX_CLK>,
+			 <&gcc GCC_GPU_SNOC_DVM_GFX_CLK>,
+			 <&gpucc GPU_CC_AHB_CLK>;
+		clock-names = "gmu",
+			      "hub",
+			      "hlos",
+			      "bus",
+			      "iface",
+			      "ahb";
+
+		power-domains = <&gpucc GPU_CC_CX_GDSC>;
+		status = "okay";
+	};
+};
+
+&tlmm {
+	panel_reset_default: panel-reset-default-state {
+		pins = "gpio92";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+};

@@ -26,3 +26,16 @@ if [ -d "$HERE/firmware" ]; then
 fi
 
 rm -rf "$T/usr/share/man" "$T/usr/share/doc" "$T/usr/share/info"
+
+# Only the running kernel's modules. An incremental build after a version bump leaves the previous /lib/modules/<old>
+# in target/, and the image would carry 12.8 MB of modules no kernel can load. Naming the release also fails the build
+# when it is missing: an image with no modules for its kernel must not be built quietly. BASE_DIR (the output dir) is
+# exported to this script; BUILD_DIR is not, and the custom tarball builds in linux-custom.
+REL=$(cat "$BASE_DIR/build/linux-custom/include/config/kernel.release" 2>/dev/null) ||
+    { echo "post-build: no $BASE_DIR/build/linux-custom/include/config/kernel.release (kernel not built?)" >&2; exit 1; }
+[ -n "$REL" ] || { echo "post-build: kernel.release is empty, not deleting any modules" >&2; exit 1; }
+[ -d "$T/lib/modules/$REL" ] ||
+    { echo "post-build: no $T/lib/modules/$REL: the kernel installed no modules for $REL" >&2; exit 1; }
+for d in "$T"/lib/modules/*; do
+    [ "${d##*/}" = "$REL" ] || { echo "post-build: dropping modules for ${d##*/}"; rm -rf "$d"; }
+done

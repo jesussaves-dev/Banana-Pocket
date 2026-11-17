@@ -13,5 +13,13 @@ CONFIG_VIRTIO_INPUT=y
 # the SD card comes in on a PCI SDHCI, so it is mmcblk0 as on the handheld
 CONFIG_MMC_SDHCI_PCI=y
 CONFIG_RTC_DRV_PL031=y
-# already on in linux-rocknix.config and needed by the above: PCI, PCI_HOST_GENERIC,
-# PCI_MSI, VIRTIO, VIRTIO_PCI, VIRTIO_NET, VIRTIO_CONSOLE, ARM_AMBA.
+# what the above needs: the virt machine's PCIe host, the virtio transport, AMBA for the PL011/PL031.
+# linux-rocknix.config had these on; linux-banana.config (K1.2) does not, so this fragment carries them.
+CONFIG_ARM_AMBA=y
+CONFIG_PCI=y
+CONFIG_PCI_HOST_GENERIC=y
+CONFIG_PCI_MSI=y
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_CONSOLE=y
+CONFIG_VIRTIO_NET=y

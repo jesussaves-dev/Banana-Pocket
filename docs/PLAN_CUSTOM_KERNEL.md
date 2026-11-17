@@ -1,7 +1,43 @@
 # PLAN: Banana's own kernel (RPC / SM4450)
 
-Written 2026-11-10 · status: **proposal, nothing started** · owner decision needed per phase (kernel work needs explicit
-approval, and this plan is that request, phase by phase).
+Written 2026-11-10 · status: **approved, in progress on branch `kernel` (2026-11-16)** · owner decision still needed
+per phase before it merges to `main`.
+
+## Versioning and milestones (2026-11-16)
+
+The Banana kernel has its **own version line, separate from the distro's `VERSION`**. It starts at **0.1** because it
+is a young branch off mainline, and becomes **1.0** when it replaces the current kernel in a distro release.
+
+- **Version file:** `buildroot/board/retroid-pocket-classic/KERNEL_VERSION` (one line, e.g. `0.1`).
+- **`uname -r`:** `<mainline>-Bananix<kver>`, e.g. `7.2.0-Bananix0.1` (`CONFIG_LOCALVERSION`, set from the file; K8).
+- **Tags:** `kernel-v0.1`, `kernel-v0.2`, … `kernel-v1.0` (distro tags stay `v0.8.x`).
+- **Branch:** all kernel work lands on `kernel`; each task gets its own short branch off it (`kernel-k0-report`,
+  `kernel-k1-config`, …; git cannot nest `kernel/…` under a branch named `kernel`) and merges back by PR. `kernel` merges into `main` only at a milestone the owner approves.
+
+| Kernel version | Contains | Done when |
+|---|---|---|
+| **0.1** | K0: test-boot fallback, `tools/kernel-report.sh`, baseline from the shipped **0.8.0** kernel | baseline report committed in `docs/reports/` |
+| **0.2** | K1 + K8: own `linux-banana.config` from `allnoconfig`, `-Bananix` version string, pstore | RPC-TEST passes, sound-test 14/14, 20 sleep/wake cycles |
+| **0.3** | K2: device tree split by subsystem, unused nodes removed | probed-driver list identical to baseline |
+| **0.4** | K3: `banana-linux` repo, patch dir generated from it, CI build + QEMU boot | generated patches byte-identical; CI green |
+| **0.5–0.9** | K4.1 pad driver, K5 audit of the small patches, optional mainline bump (7.3) | per task |
+| **1.0** | the above shipped in a distro release, one week of daily play with no kernel regressions | owner sign-off |
+
+## Working with two agents (Claude + DeepSeek)
+
+Kernel work is split so the two never edit the same file at once:
+
+1. **One task = one branch = one owner.** Claim it in `docs/KERNEL-TASKS.md` (task, branch, agent, status) before
+   starting; never pick up a claimed task.
+2. **Owned files per phase:** K0 → `tools/kernel-report.sh`, `extlinux.conf.in`; K1/K8 → `linux-banana.config`,
+   `KERNEL_VERSION`, defconfig lines 29–40; K2 → `dts/`; K3 → the new repo + CI. Two tasks touching the same file
+   are done in sequence, not in parallel.
+3. **Every task ends with** a build (`make … 2>&1 | tail -n 35`), the K0 report diffed against the baseline, and a
+   handoff note in the PR body: what changed, what was tested on the device, what is left.
+4. **Device testing is the owner's.** An agent may build and run the QEMU boot test; it never claims a hardware
+   result it did not see in a log the owner provided.
+5. **Kernel patch rule on this branch:** `AGENTS.md`'s "no unapproved kernel patches" rule still applies — on
+   `kernel`, approval is given per task by this plan's phase list; anything outside it needs the owner first.
 
 ## 0. What "our own kernel" can honestly mean
 
@@ -78,14 +114,23 @@ Banana's, with the generic SoC support still community code on its way upstream.
 - **Why safe:** the whole OS lives on the **microSD card**, and each slot has its own kernel (`/boot/a`, `/boot/b`).
   A kernel that does not boot is fixed by re-writing the card on a PC — the handheld's internal Android is untouched.
 - **Steps:**
-  1. Find out whether OpenABL's `extlinux.conf` handling supports a boot menu, `TIMEOUT` or a one-shot entry. If yes,
-     add a `LABEL test` entry that boots `/boot/test/Image` once and falls back. If not, test kernels go to the
-     inactive slot with `update apply` (slot A keeps the release; **Previous version** cannot help if the new kernel
-     never reaches the menu, so keep a known-good card image at hand).
+  1. **Done (K0.1, 2026-11-16): test boots go through the inactive slot, picked once from OpenABL's menu.**
+     What OpenABL does (read from its source, v1.2 = what is flashed): it parses extlinux `TIMEOUT` but nothing uses
+     it, and the countdown menu is driven by BLS `loader.conf` only (added after v1.2, on 2026-10-31). What v1.2 does
+     have is **Boot entries** (Vol- + Power → menu): it lists every extlinux label, and *picking one boots only that
+     entry*; the next boot runs `DEFAULT` again. It also honors `LoaderEntryOneShot` (systemd BLI), but that needs
+     working EFI runtime variables from Linux, which has not been tried on this device, so it is not used.
+     The loop: `tools/rpc-push-update.sh --stage <pkg>` → `update stage` writes kernel + rootfs to the inactive slot,
+     verified, **without changing `DEFAULT`** → restart, Vol- + Power, Boot entries, pick that slot → test. A hang
+     needs only a long Power press; the release slot boots next. Keep the test build with `update switch <slot>`.
+     A separate `LABEL test` was rejected: a test kernel booting the release rootfs would not match its modules.
+     `update apply|stage` refuse to run during a test boot (running slot ≠ default), since the other slot is then the
+     known-good one. **To verify on the device:** stage a build, pick it once, confirm the next cold boot runs the
+     default.
   2. A `tools/kernel-report.sh` that records: `Image` size, module count/size, `dmesg` time to init, rcS marks,
      `lsmod`, `/proc/config.gz` (needs `CONFIG_IKCONFIG_PROC=y`), and which drivers actually probed
      (`/sys/bus/*/drivers/*/`).
-- **Verify:** a report for the shipped 0.6.0 kernel in `docs/reports/kernel-baseline-<date>.txt`.
+- **Verify:** a report for the shipped 0.8.0 kernel in `docs/reports/kernel-baseline-<date>.txt`.
 - **Stop if:** OpenABL has no fallback and you are not comfortable re-flashing the card — then every later phase uses
   the slot method only.
 
@@ -124,6 +169,10 @@ Banana's, with the generic SoC support still community code on its way upstream.
   replace; tag `banana-7.2-1`; document the rebase recipe (`git rebase --onto v7.3 v7.2`), conflict notes per
   patch; a CI job that builds the kernel + modules and runs the QEMU boot test on every push.
 - **Verify:** the generated patch dir is byte-identical to today's; CI green.
+- **Result (2026-11-16):** the old dir was hand-kept (bare diffs, missing `From:`/`Date:`), so no format-patch run
+  reproduces it. Owner's call: normalize it once. The generated dir differs in headers and hunk context, but the
+  kernel source it gives is identical (same `patch -p1` tree). From then on the dir must match
+  `tools/kernel-patches-gen.sh` output byte for byte, and CI checks that. Details: `docs/KERNEL-REPO.md`.
 
 ### K4 — Banana-written drivers for what makes it a Banana Pocket · M each
 Start with the ones that are the device's identity, smallest first:
@@ -160,7 +209,7 @@ Async probing for slow drivers, the energy model and cpu capacities (0057) check
 `none`). Each one measured with K0's report, one at a time.
 
 ### K8 — Identity · S
-`CONFIG_LOCALVERSION="-banana"` and a Banana build string (so `uname -r` reads e.g. `7.2.0-banana1`), panic → reboot
+`CONFIG_LOCALVERSION="-Bananix<kver>"` and a Banana build string (so `uname -r` reads e.g. `7.2.0-Bananix0.2`), panic → reboot
 after N s with the last `dmesg` saved to `/data` on the next boot (pstore/ramoops), and a Banana line in the kernel's
 early console for the serial log.
 

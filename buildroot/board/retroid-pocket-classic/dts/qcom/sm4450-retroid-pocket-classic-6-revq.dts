@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /*
  * Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX).
+ *
+ * Retroid Pocket Classic 6 (Rev Q board).
+ * Maintained by Banana as its own description of this handheld (it started as ROCKNIX's tree).
  */
 
 /dts-v1/;

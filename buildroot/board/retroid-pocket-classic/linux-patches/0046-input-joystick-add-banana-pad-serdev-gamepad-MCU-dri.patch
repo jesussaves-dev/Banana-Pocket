@@ -1,0 +1,621 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: tom <tom@localhost>
+Date: Tue, 17 Nov 2026 11:20:55 -0500
+Subject: [PATCH] input: joystick: add banana-pad serdev gamepad MCU driver
+
+Clean-room driver for the UART gamepad MCU, written from
+docs/BANANA-PAD-PROTOCOL.md. Matches "banana,pad" so rsinput stays
+selectable. Proper stream framing, per-device button state, watchdog
+recovery as documented.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ drivers/input/joystick/Kconfig      |  11 +
+ drivers/input/joystick/Makefile     |   1 +
+ drivers/input/joystick/banana-pad.c | 563 ++++++++++++++++++++++++++++
+ 3 files changed, 575 insertions(+)
+ create mode 100644 drivers/input/joystick/banana-pad.c
+
+diff --git a/drivers/input/joystick/Kconfig b/drivers/input/joystick/Kconfig
+index 0da3c0f44ecfcac2d4fd6bcc3d5b02143cb7abe4..0e34bd73434a2a76ade707202fb94737a8f3b954 100644
+--- a/drivers/input/joystick/Kconfig
++++ b/drivers/input/joystick/Kconfig
+@@ -387,6 +387,17 @@ config JOYSTICK_RSINPUT
+ 	tristate "UART Based gamepad driver that found in AYN and Retroid Pocket products"
+ 	depends on SERIAL_DEV_BUS
+ 
++config JOYSTICK_BANANA_PAD
++	tristate "Banana pad UART gamepad MCU (clean-room driver)"
++	depends on SERIAL_DEV_BUS
++	help
++	  Driver for the serial gamepad MCU found in AYN and Retroid Pocket
++	  handhelds, matched by the "banana,pad" devicetree compatible. It
++	  can coexist with JOYSTICK_RSINPUT; the devicetree picks one.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called banana-pad.
++
+ config JOYSTICK_FSIA6B
+ 	tristate "FlySky FS-iA6B RC Receiver"
+ 	select SERIO
+diff --git a/drivers/input/joystick/Makefile b/drivers/input/joystick/Makefile
+index 3de503e29489767f5b20d1282e6ea9909e49fe1f..41b26927c65ea7335f918bf0e4d1af1ef24c7c98 100644
+--- a/drivers/input/joystick/Makefile
++++ b/drivers/input/joystick/Makefile
+@@ -29,6 +29,7 @@ obj-$(CONFIG_JOYSTICK_PSXPAD_SPI)	+= psxpad-spi.o
+ obj-$(CONFIG_JOYSTICK_PXRC)		+= pxrc.o
+ obj-$(CONFIG_JOYSTICK_QWIIC)		+= qwiic-joystick.o
+ obj-$(CONFIG_JOYSTICK_RSINPUT)		+= rsinput.o
++obj-$(CONFIG_JOYSTICK_BANANA_PAD)	+= banana-pad.o
+ obj-$(CONFIG_JOYSTICK_SEESAW)		+= adafruit-seesaw.o
+ obj-$(CONFIG_JOYSTICK_SENSEHAT)	+= sensehat-joystick.o
+ obj-$(CONFIG_JOYSTICK_SIDEWINDER)	+= sidewinder.o
+diff --git a/drivers/input/joystick/banana-pad.c b/drivers/input/joystick/banana-pad.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..8ffdfa7739aa708be880d6878df06823b2d6cfbe
+--- /dev/null
++++ b/drivers/input/joystick/banana-pad.c
+@@ -0,0 +1,563 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * banana-pad: gamepad MCU driver (serdev).
++ *
++ * Written from docs/BANANA-PAD-PROTOCOL.md (draft 1) in the banana-rpc tree.
++ * Items the document marks UNVERIFIED are kept as documented.
++ */
++#include <linux/bits.h>
++#include <linux/debugfs.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/input.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mod_devicetable.h>
++#include <linux/mutex.h>
++#include <linux/property.h>
++#include <linux/regulator/consumer.h>
++#include <linux/seq_file.h>
++#include <linux/spinlock.h>
++#include <linux/serdev.h>
++#include <linux/string.h>
++#include <linux/unaligned.h>
++#include <linux/workqueue.h>
++
++#define BP_BAUD			115200
++#define BP_HDR_LEN		8
++#define BP_FRAME_OVERHEAD	9
++#define BP_MAX_PAYLOAD		64
++#define BP_BUF_LEN		(BP_FRAME_OVERHEAD + BP_MAX_PAYLOAD)
++
++#define BP_CMD_COMMOD		0x01
++#define BP_CMD_STATUS		0x02
++#define BP_SUB_VERSION		0x02
++#define BP_SUB_PARAMS		0x05
++
++#define BP_STATUS_LEN		14
++
++#define BP_STICK_DEFAULT	0x580
++#define BP_TRIG_DEFAULT		0x610
++#define BP_TRIG_FLAT		30
++
++#define BP_WD_FIRST_MS		1000
++#define BP_WD_PERIOD_MS		5000
++#define BP_WD_BOOT_MS		3000
++#define BP_WD_DEAD_MS		30000
++#define BP_WD_DEAD_AFTER	5
++#define BP_WD_POWER_FROM	3
++
++static const u8 bp_magic[4] = { 0xA5, 0xD3, 0x5A, 0x3D };
++static const u8 bp_params[10] = { 0x05, 0x01, 0x00, 0x00, 0x00,
++				  0x28, 0x00, 0x00, 0x00, 0x07 };
++
++static const u16 bp_buttons[16] = {
++	BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
++	BTN_NORTH, BTN_WEST, BTN_EAST, BTN_SOUTH,
++	BTN_TL, BTN_TR, BTN_SELECT, BTN_START,
++	BTN_THUMBL, BTN_THUMBR, BTN_MODE, BTN_BACK,
++};
++
++struct bp_axis {
++	int range;		/* stick: +/-range; trigger: max */
++	int deadzone;
++	int antideadzone;
++	bool invert;
++};
++
++struct banana_pad {
++	struct serdev_device *serdev;
++	struct input_dev *input;
++	struct regulator *vdd;
++	struct gpio_desc *reset, *enable, *boot;
++	struct delayed_work wd;
++
++	/* receive path (serdev callback context only, except counters) */
++	u8 buf[BP_BUF_LEN];
++	size_t fill;
++
++	u8 seq;
++	struct mutex lock;	/* serialises UART writes, seq and settings */
++	u16 prev_buttons;
++	bool digital_triggers;
++	bool prev_tl2, prev_tr2;
++	struct bp_axis stick[4];	/* X, Y, RX, RY */
++	struct bp_axis trig[2];		/* L, R */
++
++	atomic_t frames;
++	struct dentry *dbg;
++	spinlock_t dbg_lock;	/* guards the last-frame copy below */
++	u8 last_cmd;
++	u16 last_len;
++	u8 last[BP_MAX_PAYLOAD];
++	u8 last_status[BP_MAX_PAYLOAD];
++	u16 last_status_len;
++	unsigned int bad_bytes;
++	unsigned int wd_seen;
++	unsigned int wd_fail;
++	bool recovering;
++	bool vdd_on;
++};
++
++/* ---- transmit ---- */
++
++static int bp_send(struct banana_pad *bp, u8 cmd, const u8 *payload, u16 len)
++{
++	u8 f[BP_FRAME_OVERHEAD + 16];
++	u8 sum = 0;
++	int i, ret;
++
++	if (len > 16)
++		return -EINVAL;
++
++	mutex_lock(&bp->lock);
++	memcpy(f, bp_magic, 4);
++	f[4] = bp->seq++;
++	f[5] = cmd;
++	put_unaligned_le16(len, &f[6]);
++	memcpy(&f[BP_HDR_LEN], payload, len);
++	for (i = 4; i < BP_HDR_LEN + len; i++)
++		sum ^= f[i];
++	f[BP_HDR_LEN + len] = sum;
++	ret = serdev_device_write_buf(bp->serdev, f, BP_FRAME_OVERHEAD + len);
++	mutex_unlock(&bp->lock);
++
++	return ret < 0 ? ret : (ret == BP_FRAME_OVERHEAD + len ? 0 : -EIO);
++}
++
++static int bp_probe_link(struct banana_pad *bp)
++{
++	static const u8 ver = BP_SUB_VERSION;
++	int ret = bp_send(bp, BP_CMD_COMMOD, &ver, 1);
++
++	return ret;
++}
++
++/* ---- receive ---- */
++
++static int bp_apply_stick(const struct bp_axis *a, int wire)
++{
++	int v = -wire;
++
++	if (abs(v) < a->deadzone)
++		v = 0;
++	else
++		v = (v < 0 ? -1 : 1) * (abs(v) - a->antideadzone);
++	return a->invert ? -v : v;
++}
++
++static int bp_apply_trigger(const struct bp_axis *a, int wire)
++{
++	int v = a->range - wire;
++
++	if (v < a->deadzone)
++		return 0;
++	v -= a->antideadzone;
++	return v > 0 ? v : 0;
++}
++
++static void bp_report(struct banana_pad *bp, const u8 *p)
++{
++	struct input_dev *in = bp->input;
++	u16 btn = get_unaligned_le16(p);
++	u16 diff = btn ^ bp->prev_buttons;
++	u16 tl = get_unaligned_le16(p + 2), tr = get_unaligned_le16(p + 4);
++	int i;
++
++	for (i = 0; i < 16; i++)
++		if (diff & BIT(i))
++			input_report_key(in, bp_buttons[i], !!(btn & BIT(i)));
++	bp->prev_buttons = btn;
++
++	if (bp->digital_triggers) {
++		/* UNVERIFIED: old behaviour, raw != 0 (see protocol doc 4.2) */
++		bool l = tl != 0, r = tr != 0;
++
++		if (l != bp->prev_tl2)
++			input_report_key(in, BTN_TL2, l);
++		if (r != bp->prev_tr2)
++			input_report_key(in, BTN_TR2, r);
++		bp->prev_tl2 = l;
++		bp->prev_tr2 = r;
++	} else {
++		input_report_abs(in, ABS_Z, bp_apply_trigger(&bp->trig[0], tl));
++		input_report_abs(in, ABS_RZ, bp_apply_trigger(&bp->trig[1], tr));
++	}
++
++	input_report_abs(in, ABS_X, bp_apply_stick(&bp->stick[0], (s16)get_unaligned_le16(p + 6)));
++	input_report_abs(in, ABS_Y, bp_apply_stick(&bp->stick[1], (s16)get_unaligned_le16(p + 8)));
++	input_report_abs(in, ABS_RX, bp_apply_stick(&bp->stick[2], (s16)get_unaligned_le16(p + 10)));
++	input_report_abs(in, ABS_RY, bp_apply_stick(&bp->stick[3], (s16)get_unaligned_le16(p + 12)));
++	input_sync(in);
++}
++
++static void bp_frame(struct banana_pad *bp, u8 cmd, const u8 *p, u16 len)
++{
++	unsigned long flags;
++
++	atomic_inc(&bp->frames);	/* any valid frame is liveness */
++	spin_lock_irqsave(&bp->dbg_lock, flags);
++	bp->last_cmd = cmd;
++	bp->last_len = len;
++	memcpy(bp->last, p, len);
++	if (cmd == BP_CMD_STATUS) {
++		bp->last_status_len = len;
++		memcpy(bp->last_status, p, len);
++	}
++	spin_unlock_irqrestore(&bp->dbg_lock, flags);
++	if (cmd == BP_CMD_STATUS && len >= BP_STATUS_LEN)
++		bp_report(bp, p);
++}
++
++/* Returns the byte count at the head of buf forming a valid frame, 0 if none yet,
++ * or -1 to drop one byte.
++ */
++static int bp_try_frame(struct banana_pad *bp)
++{
++	u16 n;
++	u8 sum = 0;
++	int i;
++
++	if (bp->fill < BP_HDR_LEN)
++		return 0;
++	if (memcmp(bp->buf, bp_magic, 4))
++		return -1;
++	n = get_unaligned_le16(&bp->buf[6]);
++	if (n > BP_MAX_PAYLOAD)
++		return -1;
++	if (bp->fill < BP_FRAME_OVERHEAD + n)
++		return 0;
++	for (i = 4; i < BP_HDR_LEN + n; i++)
++		sum ^= bp->buf[i];
++	if (sum != bp->buf[BP_HDR_LEN + n])
++		return -1;
++	bp_frame(bp, bp->buf[5], &bp->buf[BP_HDR_LEN], n);
++	return BP_FRAME_OVERHEAD + n;
++}
++
++static size_t bp_receive(struct serdev_device *sdev, const u8 *data, size_t count)
++{
++	struct banana_pad *bp = serdev_device_get_drvdata(sdev);
++	size_t used = 0;
++
++	while (used < count) {
++		size_t take = min(count - used, sizeof(bp->buf) - bp->fill);
++		int r;
++
++		memcpy(bp->buf + bp->fill, data + used, take);
++		bp->fill += take;
++		used += take;
++
++		for (;;) {
++			r = bp_try_frame(bp);
++			if (r == 0)
++				break;
++			if (r < 0) {
++				r = 1;
++				bp->bad_bytes++;
++			}
++			memmove(bp->buf, bp->buf + r, bp->fill - r);
++			bp->fill -= r;
++		}
++	}
++	return count;
++}
++
++static const struct serdev_device_ops bp_ops = {
++	.receive_buf = bp_receive,
++	.write_wakeup = serdev_device_write_wakeup,
++};
++
++/* ---- power / link ---- */
++
++static int bp_open_uart(struct banana_pad *bp)
++{
++	int ret;
++
++	bp->fill = 0;	/* port is closed here: no receive callback can race */
++	ret = serdev_device_open(bp->serdev);
++	if (ret)
++		return ret;
++	serdev_device_set_baudrate(bp->serdev, BP_BAUD);
++	serdev_device_set_flow_control(bp->serdev, false);
++	ret = serdev_device_set_parity(bp->serdev, SERDEV_PARITY_NONE);
++	if (ret)
++		serdev_device_close(bp->serdev);
++	return ret;
++}
++
++/* protocol doc section 5, steps 3-5 */
++static void bp_reset_and_start(struct banana_pad *bp)
++{
++	if (bp->boot)
++		gpiod_set_value_cansleep(bp->boot, 0);
++	if (bp->reset)
++		gpiod_set_value_cansleep(bp->reset, 0);
++	msleep(100);
++	if (bp->enable)
++		gpiod_set_value_cansleep(bp->enable, 1);
++	if (bp->reset)
++		gpiod_set_value_cansleep(bp->reset, 1);
++	msleep(100);
++	bp_probe_link(bp);
++	msleep(100);
++	bp_send(bp, BP_CMD_COMMOD, bp_params, sizeof(bp_params));
++}
++
++static void bp_watchdog(struct work_struct *work)
++{
++	struct banana_pad *bp = container_of(work, struct banana_pad, wd.work);
++	unsigned int now = atomic_read(&bp->frames);
++	unsigned int next = BP_WD_PERIOD_MS;
++
++	if (now != bp->wd_seen) {
++		if (bp->recovering)
++			dev_info(&bp->serdev->dev, "link recovered\n");
++		bp->recovering = false;
++		bp->wd_fail = 0;
++		bp->wd_seen = now;
++		bp_probe_link(bp);
++		goto out;
++	}
++
++	bp->wd_fail++;
++	bp->recovering = true;
++	if (bp->wd_fail == 1)
++		dev_warn(&bp->serdev->dev, "MCU silent, recovering\n");
++
++	if (bp->wd_fail > BP_WD_DEAD_AFTER) {
++		next = BP_WD_DEAD_MS;
++		bp_probe_link(bp);
++		goto out;
++	}
++
++	serdev_device_close(bp->serdev);
++	if (bp->wd_fail >= BP_WD_POWER_FROM) {
++		if (bp->enable)
++			gpiod_set_value_cansleep(bp->enable, 0);
++		if (bp->vdd_on)
++			regulator_disable(bp->vdd);
++		bp->vdd_on = false;
++		msleep(100);
++		if (regulator_enable(bp->vdd))
++			dev_err(&bp->serdev->dev, "vdd re-enable failed\n");
++		else
++			bp->vdd_on = true;
++	}
++	if (bp_open_uart(bp)) {
++		dev_err(&bp->serdev->dev, "UART reopen failed\n");
++		goto out;
++	}
++	if (bp->wd_fail >= BP_WD_POWER_FROM) {
++		bp_reset_and_start(bp);
++		next = BP_WD_BOOT_MS;
++	} else {
++		bp_probe_link(bp);
++	}
++out:
++	bp->wd_seen = atomic_read(&bp->frames);
++	schedule_delayed_work(&bp->wd, msecs_to_jiffies(next));
++}
++
++/* ---- sysfs: per-device tuning ---- */
++
++static ssize_t bp_show_range(struct device *dev, struct device_attribute *a, char *buf)
++{
++	struct banana_pad *bp = dev_get_drvdata(dev->parent);
++
++	return sysfs_emit(buf, "%d\n", bp->stick[0].range);
++}
++
++static ssize_t bp_store_range(struct device *dev, struct device_attribute *a,
++			      const char *buf, size_t len)
++{
++	struct banana_pad *bp = dev_get_drvdata(dev->parent);
++	int v, i, ret = kstrtoint(buf, 0, &v);
++
++	if (ret)
++		return ret;
++	if (v < 1 || v > 32767)
++		return -EINVAL;
++	for (i = 0; i < 4; i++) {
++		bp->stick[i].range = v;
++		input_set_abs_params(bp->input, ABS_X + (i < 2 ? i : 1 + i), /* X Y RX RY */
++				     -(v - bp->stick[i].antideadzone),
++				     v - bp->stick[i].antideadzone, 0, 0);
++	}
++	return len;
++}
++static DEVICE_ATTR(stick_range, 0644, bp_show_range, bp_store_range);
++
++static struct attribute *bp_attrs[] = { &dev_attr_stick_range.attr, NULL };
++ATTRIBUTE_GROUPS(bp);
++
++/* ---- debugfs: read-only raw view ---- */
++
++static int bp_dbg_show(struct seq_file *m, void *unused)
++{
++	struct banana_pad *bp = m->private;
++	unsigned long flags;
++	u8 last[BP_MAX_PAYLOAD], st[BP_MAX_PAYLOAD];
++	u16 ll, sl;
++	u8 lc;
++
++	spin_lock_irqsave(&bp->dbg_lock, flags);
++	lc = bp->last_cmd;
++	ll = bp->last_len;
++	sl = bp->last_status_len;
++	memcpy(last, bp->last, sizeof(last));
++	memcpy(st, bp->last_status, sizeof(st));
++	spin_unlock_irqrestore(&bp->dbg_lock, flags);
++
++	seq_printf(m, "frames %d\nbad_bytes %u\nwd_fail %u\nlast cmd 0x%02x len %u: %*phN\n",
++		   atomic_read(&bp->frames), bp->bad_bytes, bp->wd_fail,
++		   lc, ll, ll, last);
++	seq_printf(m, "status len %u: %*phN\n", sl, sl, st);
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(bp_dbg);
++
++/* ---- probe ---- */
++
++static void bp_defaults(struct banana_pad *bp, struct device *dev)
++{
++	u32 r = BP_STICK_DEFAULT, dz;
++	int i;
++
++	device_property_read_u32(dev, "axis-range", &r);
++	for (i = 0; i < 4; i++)
++		bp->stick[i].range = r;
++	bp->stick[0].invert = device_property_read_bool(dev, "invert-x");
++	bp->stick[1].invert = device_property_read_bool(dev, "invert-y");
++	bp->stick[2].invert = device_property_read_bool(dev, "invert-rx");
++	bp->stick[3].invert = device_property_read_bool(dev, "invert-ry");
++	bp->trig[0].range = bp->trig[1].range = BP_TRIG_DEFAULT;
++	if (!device_property_read_u32(dev, "trigger-left-deadzone", &dz))
++		bp->trig[0].deadzone = dz;
++	if (!device_property_read_u32(dev, "trigger-right-deadzone", &dz))
++		bp->trig[1].deadzone = dz;
++	bp->digital_triggers = device_property_read_bool(dev, "digital-triggers");
++}
++
++static int bp_setup_input(struct banana_pad *bp, struct device *dev)
++{
++	struct input_dev *in;
++	const char *name = "Banana Pad";
++	u32 v;
++	int i;
++
++	in = devm_input_allocate_device(dev);
++	if (!in)
++		return -ENOMEM;
++	device_property_read_string(dev, "gamepad-name", &name);
++	in->name = name;
++	in->id.bustype = BUS_HOST;
++	if (!device_property_read_u32(dev, "gamepad-bus", &v))
++		in->id.bustype = v;
++	if (!device_property_read_u32(dev, "gamepad-vid", &v))
++		in->id.vendor = v;
++	if (!device_property_read_u32(dev, "gamepad-pid", &v))
++		in->id.product = v;
++	if (!device_property_read_u32(dev, "gamepad-rev", &v))
++		in->id.version = v;
++
++	for (i = 0; i < 16; i++)
++		input_set_capability(in, EV_KEY, bp_buttons[i]);
++	for (i = 0; i < 4; i++) {
++		static const u16 codes[4] = { ABS_X, ABS_Y, ABS_RX, ABS_RY };
++		int r = bp->stick[i].range - bp->stick[i].antideadzone;
++
++		input_set_abs_params(in, codes[i], -r, r, 0, 0);
++	}
++	if (bp->digital_triggers) {
++		input_set_capability(in, EV_KEY, BTN_TL2);
++		input_set_capability(in, EV_KEY, BTN_TR2);
++	} else {
++		input_set_abs_params(in, ABS_Z, 0, bp->trig[0].range, 0, BP_TRIG_FLAT);
++		input_set_abs_params(in, ABS_RZ, 0, bp->trig[1].range, 0, BP_TRIG_FLAT);
++	}
++	in->dev.parent = dev;
++	in->dev.groups = bp_groups;
++	bp->input = in;
++	return input_register_device(in);
++}
++
++static int bp_probe(struct serdev_device *sdev)
++{
++	struct device *dev = &sdev->dev;
++	struct banana_pad *bp;
++	int ret;
++
++	bp = devm_kzalloc(dev, sizeof(*bp), GFP_KERNEL);
++	if (!bp)
++		return -ENOMEM;
++	bp->serdev = sdev;
++	mutex_init(&bp->lock);
++	INIT_DELAYED_WORK(&bp->wd, bp_watchdog);
++	spin_lock_init(&bp->dbg_lock);
++	serdev_device_set_drvdata(sdev, bp);
++	bp_defaults(bp, dev);
++
++	bp->vdd = devm_regulator_get(dev, "vdd");
++	if (IS_ERR(bp->vdd))
++		return dev_err_probe(dev, PTR_ERR(bp->vdd), "vdd\n");
++	/* Request lines at logical 1 first, as documented (section 5). */
++	bp->boot = devm_gpiod_get_optional(dev, "boot", GPIOD_OUT_HIGH);
++	bp->enable = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_HIGH);
++	bp->reset = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(bp->boot) || IS_ERR(bp->enable) || IS_ERR(bp->reset))
++		return dev_err_probe(dev, -EINVAL, "gpios\n");
++
++	ret = bp_setup_input(bp, dev);
++	if (ret)
++		return ret;
++	ret = regulator_enable(bp->vdd);
++	if (ret)
++		return ret;
++	bp->vdd_on = true;
++	serdev_device_set_client_ops(sdev, &bp_ops);
++	ret = bp_open_uart(bp);
++	if (ret) {
++		regulator_disable(bp->vdd);
++		return ret;
++	}
++	bp->dbg = debugfs_create_file("banana-pad", 0400, NULL, bp, &bp_dbg_fops);
++	bp_reset_and_start(bp);
++	bp->wd_seen = atomic_read(&bp->frames);
++	schedule_delayed_work(&bp->wd, msecs_to_jiffies(BP_WD_FIRST_MS));
++	return 0;
++}
++
++static void bp_remove(struct serdev_device *sdev)
++{
++	struct banana_pad *bp = serdev_device_get_drvdata(sdev);
++
++	cancel_delayed_work_sync(&bp->wd);
++	debugfs_remove(bp->dbg);
++	serdev_device_close(sdev);
++	if (bp->enable)
++		gpiod_set_value_cansleep(bp->enable, 0);
++	if (bp->reset)
++		gpiod_set_value_cansleep(bp->reset, 0);
++	if (bp->vdd_on)
++		regulator_disable(bp->vdd);
++}
++
++static const struct of_device_id bp_of_match[] = {
++	{ .compatible = "banana,pad" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, bp_of_match);
++
++static struct serdev_device_driver bp_driver = {
++	.probe = bp_probe,
++	.remove = bp_remove,
++	.driver = {
++		.name = "banana-pad",
++		.of_match_table = bp_of_match,
++	},
++};
++module_serdev_device_driver(bp_driver);
++
++MODULE_DESCRIPTION("Banana pad MCU gamepad driver");
++MODULE_LICENSE("GPL");

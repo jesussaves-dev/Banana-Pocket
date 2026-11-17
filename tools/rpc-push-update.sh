@@ -8,6 +8,8 @@
 #   tools/rpc-push-update.sh                the newest banana-<board>-*.update.tar -> banana/updates on the card
 #   tools/rpc-push-update.sh <package.tar>  a chosen package (tar or the unpacked .update)
 #   tools/rpc-push-update.sh --apply ...    also run `update apply` (writes the inactive slot) and restart into it
+#   tools/rpc-push-update.sh --stage ...    also run `update stage`: the inactive slot is written, the default kept;
+#                                           no restart (boot it once by hand: Vol- + Power, Boot entries, that slot)
 #
 # Host: $BANANA_HOST, else root@169.254.170.2 (the USB gadget). $SSH_OPTS overrides the ssh options. The package is
 # streamed over ssh (ssh + cat, not scp) so this works with the handheld's dropbear, and read back with its sha256
@@ -23,14 +25,17 @@ UPDATE=/usr/libexec/banana/update
 SSH_OPTS=${SSH_OPTS:-"-o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 -o ServerAliveInterval=15"}
 
 APPLY=
+STAGE=
 P=
 for a in "$@"; do
     case "$a" in
     --apply) APPLY=1 ;;
+    --stage) STAGE=1 ;;
     -*) echo "unknown option $a" >&2; exit 2 ;;
     *) P=$a ;;
     esac
 done
+[ -z "$APPLY" ] || [ -z "$STAGE" ] || { echo "--apply and --stage are exclusive" >&2; exit 2; }
 [ -n "$P" ] || P=$(ls -t "$IMAGES"/banana-"$BOARD"-*.update.tar 2>/dev/null | head -n 1)
 [ -n "$P" ] && [ -f "$P" ] || { echo "no update package found (build one with: make $BOARD), or name one" >&2; exit 1; }
 NAME=$(basename "$P")
@@ -53,7 +58,12 @@ r=$(run "sha256sum $DEST/$NAME" | cut -d' ' -f1)
 [ "$l" = "$r" ] || { echo "the package on the card is not the one sent (sha256 differs)" >&2; exit 1; }
 echo "   sha256 $l"
 
-if [ -n "$APPLY" ]; then
+if [ -n "$STAGE" ]; then
+    echo "== staging (writes the inactive slot, keeps the default)"
+    run "$UPDATE stage $DEST/$NAME"
+    echo "== staged. Test it once: restart holding Vol-, OpenABL > Boot entries, the slot named above."
+    echo "   A hang: hold Power to switch off; the next boot runs the default. To keep it: $UPDATE switch <that slot>"
+elif [ -n "$APPLY" ]; then
     echo "== applying (writes the inactive slot and restarts into it)"
     run "$UPDATE apply $DEST/$NAME"
     # A reboot sent right after the apply has been seen to do nothing (rc 0, the same uptime; a second one worked).
