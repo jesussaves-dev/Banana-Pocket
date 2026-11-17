@@ -12,8 +12,8 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
  drivers/input/joystick/Kconfig      |  11 +
  drivers/input/joystick/Makefile     |   1 +
- drivers/input/joystick/banana-pad.c | 499 ++++++++++++++++++++++++++++
- 3 files changed, 511 insertions(+)
+ drivers/input/joystick/banana-pad.c | 563 ++++++++++++++++++++++++++++
+ 3 files changed, 575 insertions(+)
  create mode 100644 drivers/input/joystick/banana-pad.c
 
 diff --git a/drivers/input/joystick/Kconfig b/drivers/input/joystick/Kconfig
@@ -52,10 +52,10 @@ index 3de503e29489767f5b20d1282e6ea9909e49fe1f..41b26927c65ea7335f918bf0e4d1af1e
  obj-$(CONFIG_JOYSTICK_SIDEWINDER)	+= sidewinder.o
 diff --git a/drivers/input/joystick/banana-pad.c b/drivers/input/joystick/banana-pad.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..e1c234323f5be7bc72f8ca0bb78ce80ffe9faa97
+index 0000000000000000000000000000000000000000..8ffdfa7739aa708be880d6878df06823b2d6cfbe
 --- /dev/null
 +++ b/drivers/input/joystick/banana-pad.c
-@@ -0,0 +1,499 @@
+@@ -0,0 +1,563 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * banana-pad: gamepad MCU driver (serdev).
@@ -64,6 +64,7 @@ index 0000000000000000000000000000000000000000..e1c234323f5be7bc72f8ca0bb78ce80f
 + * Items the document marks UNVERIFIED are kept as documented.
 + */
 +#include <linux/bits.h>
++#include <linux/debugfs.h>
 +#include <linux/delay.h>
 +#include <linux/gpio/consumer.h>
 +#include <linux/input.h>
@@ -73,6 +74,8 @@ index 0000000000000000000000000000000000000000..e1c234323f5be7bc72f8ca0bb78ce80f
 +#include <linux/mutex.h>
 +#include <linux/property.h>
 +#include <linux/regulator/consumer.h>
++#include <linux/seq_file.h>
++#include <linux/spinlock.h>
 +#include <linux/serdev.h>
 +#include <linux/string.h>
 +#include <linux/unaligned.h>
@@ -140,9 +143,18 @@ index 0000000000000000000000000000000000000000..e1c234323f5be7bc72f8ca0bb78ce80f
 +	struct bp_axis trig[2];		/* L, R */
 +
 +	atomic_t frames;
++	struct dentry *dbg;
++	spinlock_t dbg_lock;	/* guards the last-frame copy below */
++	u8 last_cmd;
++	u16 last_len;
++	u8 last[BP_MAX_PAYLOAD];
++	u8 last_status[BP_MAX_PAYLOAD];
++	u16 last_status_len;
++	unsigned int bad_bytes;
 +	unsigned int wd_seen;
 +	unsigned int wd_fail;
 +	bool recovering;
++	bool vdd_on;
 +};
 +
 +/* ---- transmit ---- */
@@ -239,7 +251,18 @@ index 0000000000000000000000000000000000000000..e1c234323f5be7bc72f8ca0bb78ce80f
 +
 +static void bp_frame(struct banana_pad *bp, u8 cmd, const u8 *p, u16 len)
 +{
++	unsigned long flags;
++
 +	atomic_inc(&bp->frames);	/* any valid frame is liveness */
++	spin_lock_irqsave(&bp->dbg_lock, flags);
++	bp->last_cmd = cmd;
++	bp->last_len = len;
++	memcpy(bp->last, p, len);
++	if (cmd == BP_CMD_STATUS) {
++		bp->last_status_len = len;
++		memcpy(bp->last_status, p, len);
++	}
++	spin_unlock_irqrestore(&bp->dbg_lock, flags);
 +	if (cmd == BP_CMD_STATUS && len >= BP_STATUS_LEN)
 +		bp_report(bp, p);
 +}
@@ -287,8 +310,10 @@ index 0000000000000000000000000000000000000000..e1c234323f5be7bc72f8ca0bb78ce80f
 +			r = bp_try_frame(bp);
 +			if (r == 0)
 +				break;
-+			if (r < 0)
++			if (r < 0) {
 +				r = 1;
++				bp->bad_bytes++;
++			}
 +			memmove(bp->buf, bp->buf + r, bp->fill - r);
 +			bp->fill -= r;
 +		}
@@ -305,13 +330,18 @@ index 0000000000000000000000000000000000000000..e1c234323f5be7bc72f8ca0bb78ce80f
 +
 +static int bp_open_uart(struct banana_pad *bp)
 +{
-+	int ret = serdev_device_open(bp->serdev);
++	int ret;
 +
++	bp->fill = 0;	/* port is closed here: no receive callback can race */
++	ret = serdev_device_open(bp->serdev);
 +	if (ret)
 +		return ret;
 +	serdev_device_set_baudrate(bp->serdev, BP_BAUD);
 +	serdev_device_set_flow_control(bp->serdev, false);
-+	return serdev_device_set_parity(bp->serdev, SERDEV_PARITY_NONE);
++	ret = serdev_device_set_parity(bp->serdev, SERDEV_PARITY_NONE);
++	if (ret)
++		serdev_device_close(bp->serdev);
++	return ret;
 +}
 +
 +/* protocol doc section 5, steps 3-5 */
@@ -363,16 +393,19 @@ index 0000000000000000000000000000000000000000..e1c234323f5be7bc72f8ca0bb78ce80f
 +	if (bp->wd_fail >= BP_WD_POWER_FROM) {
 +		if (bp->enable)
 +			gpiod_set_value_cansleep(bp->enable, 0);
-+		regulator_disable(bp->vdd);
++		if (bp->vdd_on)
++			regulator_disable(bp->vdd);
++		bp->vdd_on = false;
 +		msleep(100);
 +		if (regulator_enable(bp->vdd))
 +			dev_err(&bp->serdev->dev, "vdd re-enable failed\n");
++		else
++			bp->vdd_on = true;
 +	}
 +	if (bp_open_uart(bp)) {
 +		dev_err(&bp->serdev->dev, "UART reopen failed\n");
 +		goto out;
 +	}
-+	bp->fill = 0;
 +	if (bp->wd_fail >= BP_WD_POWER_FROM) {
 +		bp_reset_and_start(bp);
 +		next = BP_WD_BOOT_MS;
@@ -415,6 +448,32 @@ index 0000000000000000000000000000000000000000..e1c234323f5be7bc72f8ca0bb78ce80f
 +
 +static struct attribute *bp_attrs[] = { &dev_attr_stick_range.attr, NULL };
 +ATTRIBUTE_GROUPS(bp);
++
++/* ---- debugfs: read-only raw view ---- */
++
++static int bp_dbg_show(struct seq_file *m, void *unused)
++{
++	struct banana_pad *bp = m->private;
++	unsigned long flags;
++	u8 last[BP_MAX_PAYLOAD], st[BP_MAX_PAYLOAD];
++	u16 ll, sl;
++	u8 lc;
++
++	spin_lock_irqsave(&bp->dbg_lock, flags);
++	lc = bp->last_cmd;
++	ll = bp->last_len;
++	sl = bp->last_status_len;
++	memcpy(last, bp->last, sizeof(last));
++	memcpy(st, bp->last_status, sizeof(st));
++	spin_unlock_irqrestore(&bp->dbg_lock, flags);
++
++	seq_printf(m, "frames %d\nbad_bytes %u\nwd_fail %u\nlast cmd 0x%02x len %u: %*phN\n",
++		   atomic_read(&bp->frames), bp->bad_bytes, bp->wd_fail,
++		   lc, ll, ll, last);
++	seq_printf(m, "status len %u: %*phN\n", sl, sl, st);
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(bp_dbg);
 +
 +/* ---- probe ---- */
 +
@@ -493,6 +552,7 @@ index 0000000000000000000000000000000000000000..e1c234323f5be7bc72f8ca0bb78ce80f
 +	bp->serdev = sdev;
 +	mutex_init(&bp->lock);
 +	INIT_DELAYED_WORK(&bp->wd, bp_watchdog);
++	spin_lock_init(&bp->dbg_lock);
 +	serdev_device_set_drvdata(sdev, bp);
 +	bp_defaults(bp, dev);
 +
@@ -512,12 +572,14 @@ index 0000000000000000000000000000000000000000..e1c234323f5be7bc72f8ca0bb78ce80f
 +	ret = regulator_enable(bp->vdd);
 +	if (ret)
 +		return ret;
++	bp->vdd_on = true;
 +	serdev_device_set_client_ops(sdev, &bp_ops);
 +	ret = bp_open_uart(bp);
 +	if (ret) {
 +		regulator_disable(bp->vdd);
 +		return ret;
 +	}
++	bp->dbg = debugfs_create_file("banana-pad", 0400, NULL, bp, &bp_dbg_fops);
 +	bp_reset_and_start(bp);
 +	bp->wd_seen = atomic_read(&bp->frames);
 +	schedule_delayed_work(&bp->wd, msecs_to_jiffies(BP_WD_FIRST_MS));
@@ -529,12 +591,14 @@ index 0000000000000000000000000000000000000000..e1c234323f5be7bc72f8ca0bb78ce80f
 +	struct banana_pad *bp = serdev_device_get_drvdata(sdev);
 +
 +	cancel_delayed_work_sync(&bp->wd);
++	debugfs_remove(bp->dbg);
 +	serdev_device_close(sdev);
 +	if (bp->enable)
 +		gpiod_set_value_cansleep(bp->enable, 0);
 +	if (bp->reset)
 +		gpiod_set_value_cansleep(bp->reset, 0);
-+	regulator_disable(bp->vdd);
++	if (bp->vdd_on)
++		regulator_disable(bp->vdd);
 +}
 +
 +static const struct of_device_id bp_of_match[] = {

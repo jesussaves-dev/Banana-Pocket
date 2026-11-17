@@ -175,16 +175,26 @@ stays selectable" period the new driver must use a separate compatible (proposed
 `digital-triggers`, `invert-x/-y/-rx/-ry`, `axis-range`, `trigger-left-deadzone`,
 `trigger-right-deadzone`, `vdd-supply`, `reset-gpios`, `enable-gpios`, `boot-gpios`.
 
-## 9. Open questions (need hardware)
+## 9. Hardware findings and open questions
 
-1. Raw capture of idle, full-stick and full-trigger frames: resting trigger value, stick resting
-   centre, whether N is always 14.
-2. Is there any extra payload (battery, rumble state, mode bit) the old driver ignores?
-3. What do `28` and `07` in set-parameters do? Does changing them change the report rate?
-4. Does the MCU accept a vibration or mode command? (Needed for the plan's rumble and d-pad/analog
+Verified on a Retroid Pocket Classic (kernel 7.2.0-Bananix0.4, `banana,pad` bound to serdev0-0, 3756
+frames, 0 bad bytes, dmesg clean). Input device Bus/Vendor/Product, KEY and ABS=1b match the old
+`rsinput` baseline; only Phys differs (empty).
+
+**Verified**
+
+- Button bits 0-11 work (d-pad, face, L1/R1, Select = 0x400, Start = 0x800). Bits 12-15 were never
+  seen, so THUMBL/THUMBR/MODE/BACK are probably not wired on this device.
+- L2/R2 are digital: rest 0, pressed 1. This settles the digital-mode question in 4.2 (`wire != 0`).
+- The stick words are constant 0x05dc (1500): the device has no sticks. The driver reports -1500 as
+  the old driver did (centre defaults to 0); no change needed.
+
+**Still open**
+
+1. What do `28` and `07` in set-parameters do? Does changing them change the report rate?
+2. Does the MCU accept a vibration or mode command? (Needed for the plan's rumble and d-pad/analog
    knob. Without MCU documentation this needs probing, so go carefully: unknown commands to a
    microcontroller can wedge it. Never touch the `boot` line.)
-5. Exact reply to a version request, to confirm the string format.
+3. Any extra payload (battery, rumble state, mode bit) the old driver ignores: none confirmed.
 
-Capture method: a small tool on the device that opens the UART (with the old driver unbound) and
-logs hex frames, or a `debugfs` raw-frame dump in the first `banana-pad` build.
+Capture method: the read-only debugfs file `/sys/kernel/debug/banana-pad` in the driver.
