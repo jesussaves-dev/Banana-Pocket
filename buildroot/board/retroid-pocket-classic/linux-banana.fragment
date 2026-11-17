@@ -6,7 +6,7 @@
 # The kernel line's own version, from KERNEL_VERSION beside this file: uname -r reads 7.2.0-Bananix0.5, so a report or a
 # dmesg says which kernel line produced it. `make check-kver` keeps this line and that file in step. LOCALVERSION_AUTO
 # is off: the build is a release tarball with no git hash to append (it only appends a "+").
-CONFIG_LOCALVERSION="-Bananix0.6"
+CONFIG_LOCALVERSION="-Bananix0.7"
 # CONFIG_LOCALVERSION_AUTO is not set
 
 CONFIG_DEVTMPFS=y
