@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tom <jesussaves-ai@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 15:21:41 -0400
+Subject: [PATCH] clk: qcom: dispcc-sm4450: use the no-init-park ops for the
+ MDP clock source
+
+---
+ drivers/clk/qcom/dispcc-sm4450.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/clk/qcom/dispcc-sm4450.c b/drivers/clk/qcom/dispcc-sm4450.c
+index 4a4811db55dd518301c8d3b1cd9091001f4b55f3..f71ff32863f964646a8f9458d37998518b8ff088 100644
+--- a/drivers/clk/qcom/dispcc-sm4450.c
++++ b/drivers/clk/qcom/dispcc-sm4450.c
+@@ -234,7 +234,7 @@ static struct clk_rcg2 disp_cc_mdss_mdp_clk_src = {
+ 		.parent_data = disp_cc_parent_data_1,
+ 		.num_parents = ARRAY_SIZE(disp_cc_parent_data_1),
+ 		.flags = CLK_SET_RATE_PARENT,
+-		.ops = &clk_rcg2_shared_ops,
++		.ops = &clk_rcg2_shared_no_init_park_ops,
+ 	},
+ };
+ 

@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tom <jesussaves-ai@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 15:21:41 -0400
+Subject: [PATCH] usb: typec: ucsi_glink: enable UCSI_DELAY_DEVICE_PDOS quirk
+ for SM4450
+
+The SM4450 ADSP firmware is a WAIPIO build same as SM8450.
+---
+ Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml | 1 +
+ drivers/usb/typec/ucsi/ucsi_glink.c                             | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+index 2db4288a8a54a3591daab22dbd7bb32e4bf0cfdd..91127b1dfff4d2443e276f612b56bcb35d27e1a7 100644
+--- a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
++++ b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+@@ -28,6 +28,7 @@ properties:
+               - qcom,qcm6490-pmic-glink
+               - qcom,sc8180x-pmic-glink
+               - qcom,sc8280xp-pmic-glink
++              - qcom,sm4450-pmic-glink
+               - qcom,sm8350-pmic-glink
+               - qcom,sm8450-pmic-glink
+               - qcom,sm8550-pmic-glink
+diff --git a/drivers/usb/typec/ucsi/ucsi_glink.c b/drivers/usb/typec/ucsi/ucsi_glink.c
+index 12e07b9fe622805a80a5b07b1e8a9cd9a60b4ec0..6faffee23bb19b0ed3406e91d272a3c2a2e9092a 100644
+--- a/drivers/usb/typec/ucsi/ucsi_glink.c
++++ b/drivers/usb/typec/ucsi/ucsi_glink.c
+@@ -379,6 +379,7 @@ static const struct of_device_id pmic_glink_ucsi_of_quirks[] = {
+ 	{ .compatible = "qcom,qcm6490-pmic-glink", .data = &quirk_sc8280xp, },
+ 	{ .compatible = "qcom,sc8180x-pmic-glink", .data = &quirk_sc8180x, },
+ 	{ .compatible = "qcom,sc8280xp-pmic-glink", .data = &quirk_sc8280xp, },
++	{ .compatible = "qcom,sm4450-pmic-glink", .data = &quirk_sm8450, },
+ 	{ .compatible = "qcom,sm8350-pmic-glink", .data = &quirk_sc8180x, },
+ 	{ .compatible = "qcom,sm8450-pmic-glink", .data = &quirk_sm8450, },
+ 	{ .compatible = "qcom,sm8550-pmic-glink", .data = &quirk_sm8450, },

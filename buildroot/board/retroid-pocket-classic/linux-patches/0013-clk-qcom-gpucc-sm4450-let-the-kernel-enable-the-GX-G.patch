@@ -1,0 +1,21 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 27 Oct 2026 15:21:41 -0400
+Subject: [PATCH] clk: qcom: gpucc-sm4450: let the kernel enable the GX GDSC
+
+---
+ drivers/clk/qcom/gpucc-sm4450.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/drivers/clk/qcom/gpucc-sm4450.c b/drivers/clk/qcom/gpucc-sm4450.c
+index 5ca834abc4f9c9f8603a71d3e4d9e65eb2ac9706..6a756937dd387b6534382db765e9fb13a4f7bdb0 100644
+--- a/drivers/clk/qcom/gpucc-sm4450.c
++++ b/drivers/clk/qcom/gpucc-sm4450.c
+@@ -700,7 +700,6 @@ static struct gdsc gpu_cc_gx_gdsc = {
+ 	.reset_count = 3,
+ 	.pd = {
+ 		.name = "gpu_gx_gdsc",
+-		.power_on = gdsc_gx_do_nothing_enable,
+ 	},
+ 	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = CLAMP_IO | AON_RESET | SW_RESET | POLL_CFG_GDSCR,
