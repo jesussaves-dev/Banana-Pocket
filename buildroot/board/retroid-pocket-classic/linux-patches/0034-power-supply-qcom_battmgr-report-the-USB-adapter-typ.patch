@@ -9,10 +9,10 @@ K5 audit: send upstream (K6): v7.3 defines USB_ADAP_TYPE but still maps USB_TYPE
  1 file changed, 6 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
-index 737d89c93f5a470951b8c8d9841c013822751900..bff2aeffcd02f0e0c338149c7d5fa4db983e3158 100644
+index c37664edca32179fa1ec6d195e8e65a8b1bbc904..dd91b85b5dd6d1f885352a969acefdd21300e777 100644
 --- a/drivers/power/supply/qcom_battmgr.c
 +++ b/drivers/power/supply/qcom_battmgr.c
-@@ -974,7 +974,7 @@ static const u8 sm8350_usb_prop_map[] = {
+@@ -975,7 +975,7 @@ static const u8 sm8350_usb_prop_map[] = {
  	[POWER_SUPPLY_PROP_CURRENT_NOW] = USB_CURR_NOW,
  	[POWER_SUPPLY_PROP_CURRENT_MAX] = USB_CURR_MAX,
  	[POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT] = USB_INPUT_CURR_LIMIT,
@@ -21,7 +21,7 @@ index 737d89c93f5a470951b8c8d9841c013822751900..bff2aeffcd02f0e0c338149c7d5fa4db
  };
  
  static int qcom_battmgr_usb_sm8350_update(struct qcom_battmgr *battmgr,
-@@ -1543,8 +1543,11 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+@@ -1544,8 +1544,11 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
  		case USB_INPUT_CURR_LIMIT:
  			battmgr->usb.current_limit = le32_to_cpu(resp->intval.value);
  			break;

@@ -30,7 +30,7 @@ Signed-off-by: Banana <banana@localhost>
  1 file changed, 18 insertions(+), 1 deletion(-)
 
 diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
-index 641d6d24322990944fe76446ffe9f43e807e3aab..62d3e9eb4662de4abb3fab42281fb4977e16b761 100644
+index f167b9dae3fa140989f7f3a39d62c028d37ec66a..e322e5b3ef1bbbf5078540e587bfe5b37bd10c6e 100644
 --- a/sound/soc/qcom/qdsp6/q6apm.c
 +++ b/sound/soc/qcom/qdsp6/q6apm.c
 @@ -125,11 +125,28 @@ static void q6apm_put_audioreach_graph(struct kref *ref)

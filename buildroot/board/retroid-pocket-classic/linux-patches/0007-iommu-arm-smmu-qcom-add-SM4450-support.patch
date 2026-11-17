@@ -9,7 +9,7 @@ K5 audit: send upstream (K6) with the display series (0008): needs the qcom,sm44
  1 file changed, 3 insertions(+)
 
 diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
-index e2c914fccd6fcac770b414de7b9ae3e8532f8711..ea5e7f4e7f55881ac756b154a8f6b96393d275f3 100644
+index 795e8ec7e8faf32ecfe1ff1ed06b98b05649361e..c598d3a84e85e3e55c5c6902ae60c0522ec821be 100644
 --- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
 +++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
 @@ -55,6 +55,8 @@ static const struct of_device_id qcom_smmu_actlr_client_of_match[] = {

@@ -25,10 +25,10 @@ Register layout verified against Awinic's downstream
  2 files changed, 288 insertions(+), 55 deletions(-)
 
 diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
-index 3f15f4ac51f7a17e27d86a61b53a4597a2fca59e..f29bfe24ab835463efc7c119369c844bec65d469 100644
+index d2a138211c596fdd6066252306d8ef79a08a52e6..fb73f384e6d070665a77191b027f01a0c7a39cb7 100644
 --- a/sound/soc/codecs/aw88166.c
 +++ b/sound/soc/codecs/aw88166.c
-@@ -14,6 +14,7 @@
+@@ -15,6 +15,7 @@
  #include <linux/minmax.h>
  #include <linux/regmap.h>
  #include <sound/soc.h>
@@ -36,7 +36,7 @@ index 3f15f4ac51f7a17e27d86a61b53a4597a2fca59e..f29bfe24ab835463efc7c119369c844b
  #include "aw88166.h"
  #include "aw88395/aw88395_device.h"
  
-@@ -30,6 +31,14 @@ struct aw88166 {
+@@ -31,6 +32,14 @@ struct aw88166 {
  	unsigned int vcalb_init_val;
  	unsigned int re_init_val;
  	unsigned int dither_st;
@@ -51,7 +51,7 @@ index 3f15f4ac51f7a17e27d86a61b53a4597a2fca59e..f29bfe24ab835463efc7c119369c844b
  	bool phase_sync;
  };
  
-@@ -98,7 +107,7 @@ static int aw_dev_get_iis_status(struct aw_device *aw_dev)
+@@ -99,7 +108,7 @@ static int aw_dev_get_iis_status(struct aw_device *aw_dev)
  	return 0;
  }
  
@@ -60,7 +60,7 @@ index 3f15f4ac51f7a17e27d86a61b53a4597a2fca59e..f29bfe24ab835463efc7c119369c844b
  {
  	int ret, i;
  
-@@ -115,71 +124,48 @@ static int aw_dev_check_mode1_pll(struct aw_device *aw_dev)
+@@ -116,71 +125,48 @@ static int aw_dev_check_mode1_pll(struct aw_device *aw_dev)
  	return -EPERM;
  }
  
@@ -162,7 +162,7 @@ index 3f15f4ac51f7a17e27d86a61b53a4597a2fca59e..f29bfe24ab835463efc7c119369c844b
  }
  
  static int aw_dev_check_sysst(struct aw_device *aw_dev)
-@@ -732,7 +718,7 @@ static int aw88166_dev_start(struct aw88166 *aw88166)
+@@ -733,7 +719,7 @@ static int aw88166_dev_start(struct aw88166 *aw88166)
  	aw_dev_pwd(aw_dev, false);
  	usleep_range(AW88166_2000_US, AW88166_2000_US + 10);
  
@@ -317,7 +317,7 @@ index 3f15f4ac51f7a17e27d86a61b53a4597a2fca59e..f29bfe24ab835463efc7c119369c844b
  	},
  };
  
-@@ -1775,6 +1893,14 @@ static int aw88166_i2c_probe(struct i2c_client *i2c)
+@@ -1769,6 +1887,14 @@ static int aw88166_i2c_probe(struct i2c_client *i2c)
  	if (!aw88166)
  		return -ENOMEM;
  

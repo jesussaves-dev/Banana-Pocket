@@ -15,7 +15,7 @@ A55/A7x clusters.
  1 file changed, 16 insertions(+)
 
 diff --git a/arch/arm64/boot/dts/qcom/sm4450.dtsi b/arch/arm64/boot/dts/qcom/sm4450.dtsi
-index 696e2e0841ad9ab09a44ae4b7a23e8f50ddc170b..5d6783fc93d6219c8727a657087d8c3275a6b6cc 100644
+index b7dc40f3778c4fbbd2fdd72adfb86e678c422095..e2f4b92dd7bbbb7bd65c4ee38f46413fae94b1f2 100644
 --- a/arch/arm64/boot/dts/qcom/sm4450.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm4450.dtsi
 @@ -52,6 +52,8 @@ cpu0: cpu@0 {

@@ -9,10 +9,10 @@ K5 audit: send upstream (K6): one-line SM4450 LCX power domain, mainline v7.3 st
  1 file changed, 1 insertion(+)
 
 diff --git a/drivers/pmdomain/qcom/rpmhpd.c b/drivers/pmdomain/qcom/rpmhpd.c
-index ffc46de8d07a1900b981ac14d90ba09963b70d81..e0bfaaa6be2337a7b1e0639e76cb338d81faed20 100644
+index 90743275942db270f266640972436191279d032e..54a92bf18b31b926a738ba785a7815ec7d34a916 100644
 --- a/drivers/pmdomain/qcom/rpmhpd.c
 +++ b/drivers/pmdomain/qcom/rpmhpd.c
-@@ -452,6 +452,7 @@ static struct rpmhpd *sm4450_rpmhpds[] = {
+@@ -444,6 +444,7 @@ static struct rpmhpd *sm4450_rpmhpds[] = {
  	[RPMHPD_CX] = &cx,
  	[RPMHPD_CX_AO] = &cx_ao,
  	[RPMHPD_EBI] = &ebi,

@@ -10,10 +10,10 @@ K5 audit: send upstream (K6): v7.3 battmgr cannot set the USB input current limi
  1 file changed, 32 insertions(+)
 
 diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
-index 490137a23d00e97a9e6ced21d1e66fe637db6c9d..737d89c93f5a470951b8c8d9841c013822751900 100644
+index 7716eb9e1aff58c32911a03f855d6b1e164973ed..c37664edca32179fa1ec6d195e8e65a8b1bbc904 100644
 --- a/drivers/power/supply/qcom_battmgr.c
 +++ b/drivers/power/supply/qcom_battmgr.c
-@@ -1042,6 +1042,35 @@ static int qcom_battmgr_usb_get_property(struct power_supply *psy,
+@@ -1043,6 +1043,35 @@ static int qcom_battmgr_usb_get_property(struct power_supply *psy,
  	return 0;
  }
  
@@ -49,7 +49,7 @@ index 490137a23d00e97a9e6ced21d1e66fe637db6c9d..737d89c93f5a470951b8c8d9841c0138
  static const enum power_supply_property sc8280xp_usb_props[] = {
  	POWER_SUPPLY_PROP_ONLINE,
  };
-@@ -1080,6 +1109,8 @@ static const struct power_supply_desc sm8350_usb_psy_desc = {
+@@ -1081,6 +1110,8 @@ static const struct power_supply_desc sm8350_usb_psy_desc = {
  	.properties = sm8350_usb_props,
  	.num_properties = ARRAY_SIZE(sm8350_usb_props),
  	.get_property = qcom_battmgr_usb_get_property,
@@ -58,7 +58,7 @@ index 490137a23d00e97a9e6ced21d1e66fe637db6c9d..737d89c93f5a470951b8c8d9841c0138
  	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN) |
  		     BIT(POWER_SUPPLY_USB_TYPE_SDP)     |
  		     BIT(POWER_SUPPLY_USB_TYPE_DCP)     |
-@@ -1557,6 +1588,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+@@ -1558,6 +1589,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
  		break;
  	case BATTMGR_REQUEST_NOTIFICATION:
  	case BATTMGR_CHG_CTRL_LIMIT_EN:
