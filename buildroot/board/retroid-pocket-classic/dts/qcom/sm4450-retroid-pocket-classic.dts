@@ -14,6 +14,11 @@
 	compatible = "retroid,pocket-classic", "qcom,sm4450";
 	qcom,board-id = <0x22 0>;
 
+	banana-pocket {
+		compatible = "banana,pocket";
+		banana,board = "classic";
+	};
+
 	/* vendor: gpios_control/mcu-3v3-enable-gpio */
 	mcu_vdd: regulator-mcu-vdd {
 		compatible = "regulator-fixed";

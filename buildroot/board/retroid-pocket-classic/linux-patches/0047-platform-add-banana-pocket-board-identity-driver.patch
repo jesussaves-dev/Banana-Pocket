@@ -1,0 +1,195 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: tom <tom@localhost>
+Date: Tue, 17 Nov 2026 13:26:13 -0500
+Subject: [PATCH] platform: add banana-pocket board identity driver
+
+Exposes model, board, board_id and kernel_version under
+/sys/devices/platform/banana-pocket/, bound to a banana,pocket DT node.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ drivers/platform/Kconfig                |   2 +
+ drivers/platform/Makefile               |   1 +
+ drivers/platform/banana/Kconfig         |  22 +++++
+ drivers/platform/banana/Makefile        |   2 +
+ drivers/platform/banana/banana-pocket.c | 114 ++++++++++++++++++++++++
+ 5 files changed, 141 insertions(+)
+ create mode 100644 drivers/platform/banana/Kconfig
+ create mode 100644 drivers/platform/banana/Makefile
+ create mode 100644 drivers/platform/banana/banana-pocket.c
+
+diff --git a/drivers/platform/Kconfig b/drivers/platform/Kconfig
+index 312788f249c950c1284b1d6beb3f1ac7a4c4bd54..396d4a12b27d2338fa82ab58b376509a99df7322 100644
+--- a/drivers/platform/Kconfig
++++ b/drivers/platform/Kconfig
+@@ -22,3 +22,5 @@ source "drivers/platform/arm64/Kconfig"
+ source "drivers/platform/raspberrypi/Kconfig"
+ 
+ source "drivers/platform/wmi/Kconfig"
++
++source "drivers/platform/banana/Kconfig"
+diff --git a/drivers/platform/Makefile b/drivers/platform/Makefile
+index fa322e7f8716561493aefcdbc344c9ab4a949e22..3f9a922e0e5060e5c70d8e2c5c81b8b18b2128c2 100644
+--- a/drivers/platform/Makefile
++++ b/drivers/platform/Makefile
+@@ -15,3 +15,4 @@ obj-$(CONFIG_SURFACE_PLATFORMS)	+= surface/
+ obj-$(CONFIG_ARM64_PLATFORM_DEVICES)	+= arm64/
+ obj-$(CONFIG_BCM2835_VCHIQ)	+= raspberrypi/
+ obj-$(CONFIG_ACPI_WMI)		+= wmi/
++obj-$(CONFIG_BANANA_PLATFORM)	+= banana/
+diff --git a/drivers/platform/banana/Kconfig b/drivers/platform/banana/Kconfig
+new file mode 100644
+index 0000000000000000000000000000000000000000..9706b5bf98c7c8ccc30c74c33d6e6a2ccee5f729
+--- /dev/null
++++ b/drivers/platform/banana/Kconfig
+@@ -0,0 +1,22 @@
++# SPDX-License-Identifier: GPL-2.0-only
++menuconfig BANANA_PLATFORM
++	bool "Banana Pocket platform drivers"
++	depends on ARM64 || COMPILE_TEST
++	help
++	  Board-level drivers for the Banana Pocket handheld.
++
++if BANANA_PLATFORM
++
++config BANANA_POCKET
++	tristate "Banana Pocket board driver"
++	depends on OF
++	help
++	  Exposes the board identity (model, board name, board id and kernel
++	  version) under /sys/devices/platform/banana-pocket/, so userspace
++	  does not have to parse /proc/device-tree. Binds to a
++	  "banana,pocket" node in the device tree.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called banana-pocket.
++
++endif # BANANA_PLATFORM
+diff --git a/drivers/platform/banana/Makefile b/drivers/platform/banana/Makefile
+new file mode 100644
+index 0000000000000000000000000000000000000000..b62f27ccb3c986b7368e61af24585c0bf221bd1e
+--- /dev/null
++++ b/drivers/platform/banana/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0-only
++obj-$(CONFIG_BANANA_POCKET)	+= banana-pocket.o
+diff --git a/drivers/platform/banana/banana-pocket.c b/drivers/platform/banana/banana-pocket.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..08ec0c60a246e86b6760823942dfeae804a04076
+--- /dev/null
++++ b/drivers/platform/banana/banana-pocket.c
+@@ -0,0 +1,114 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * banana-pocket: board identity for the Banana Pocket handheld.
++ *
++ * One platform device per board, bound to the "banana,pocket" DT node.
++ * Read-only attributes under /sys/devices/platform/banana-pocket/:
++ *   model            DT root "model" string
++ *   board            "banana,board" property of the node (e.g. "classic")
++ *   board_id         first cell of the root "qcom,board-id" property, hex
++ *   kernel_version   running kernel release (includes the Banana LOCALVERSION)
++ */
++#include <linux/device.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/sysfs.h>
++#include <linux/utsname.h>
++
++struct banana_pocket {
++	const char *model;
++	const char *board;
++	u32 board_id;
++};
++
++static ssize_t model_show(struct device *dev, struct device_attribute *attr,
++			  char *buf)
++{
++	struct banana_pocket *bp = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%s\n", bp->model);
++}
++static DEVICE_ATTR_RO(model);
++
++static ssize_t board_show(struct device *dev, struct device_attribute *attr,
++			  char *buf)
++{
++	struct banana_pocket *bp = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%s\n", bp->board);
++}
++static DEVICE_ATTR_RO(board);
++
++static ssize_t board_id_show(struct device *dev, struct device_attribute *attr,
++			     char *buf)
++{
++	struct banana_pocket *bp = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "0x%x\n", bp->board_id);
++}
++static DEVICE_ATTR_RO(board_id);
++
++static ssize_t kernel_version_show(struct device *dev,
++				   struct device_attribute *attr, char *buf)
++{
++	return sysfs_emit(buf, "%s\n", init_utsname()->release);
++}
++static DEVICE_ATTR_RO(kernel_version);
++
++static struct attribute *banana_pocket_attrs[] = {
++	&dev_attr_model.attr,
++	&dev_attr_board.attr,
++	&dev_attr_board_id.attr,
++	&dev_attr_kernel_version.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(banana_pocket);
++
++static int banana_pocket_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct banana_pocket *bp;
++	int ret;
++
++	bp = devm_kzalloc(dev, sizeof(*bp), GFP_KERNEL);
++	if (!bp)
++		return -ENOMEM;
++
++	ret = of_property_read_string(of_root, "model", &bp->model);
++	if (ret)
++		return dev_err_probe(dev, ret, "no root model\n");
++
++	ret = of_property_read_string(dev->of_node, "banana,board", &bp->board);
++	if (ret)
++		return dev_err_probe(dev, ret, "no banana,board\n");
++
++	ret = of_property_read_u32(of_root, "qcom,board-id", &bp->board_id);
++	if (ret)
++		return dev_err_probe(dev, ret, "no qcom,board-id\n");
++
++	dev_set_drvdata(dev, bp);
++	dev_info(dev, "%s (%s), board id 0x%x\n", bp->model, bp->board,
++		 bp->board_id);
++	return 0;
++}
++
++static const struct of_device_id banana_pocket_of_match[] = {
++	{ .compatible = "banana,pocket" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, banana_pocket_of_match);
++
++static struct platform_driver banana_pocket_driver = {
++	.probe = banana_pocket_probe,
++	.driver = {
++		.name = "banana-pocket",
++		.of_match_table = banana_pocket_of_match,
++		.dev_groups = banana_pocket_groups,
++	},
++};
++module_platform_driver(banana_pocket_driver);
++
++MODULE_DESCRIPTION("Banana Pocket board identity");
++MODULE_AUTHOR("Banana");
++MODULE_LICENSE("GPL");
