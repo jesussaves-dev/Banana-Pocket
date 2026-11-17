@@ -4,30 +4,29 @@ Date: Tue, 22 Sep 2026 23:30:00 +0100
 Subject: [PATCH] arm64: dts: qcom: sm4450: add CPU capacity and power
  coefficients
 
-K5 audit: send upstream (K6): not in mainline v7.3; capacity and power values are copied from sm6350, unmeasured.
-
 Without capacity-dmips-mhz the scheduler sees the six Cortex-A55 and two
 Cortex-A78 cores as equal and may leave a heavy thread on an A55. Add
 the capacity and dynamic-power-coefficient values sm6350 uses for its
 A55/A7x clusters.
 ---
- arch/arm64/boot/dts/qcom/sm4450.dtsi | 16 ++++++++++++++++
- 1 file changed, 16 insertions(+)
+ arch/arm64/boot/dts/qcom/sm4450.dtsi | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
 
 diff --git a/arch/arm64/boot/dts/qcom/sm4450.dtsi b/arch/arm64/boot/dts/qcom/sm4450.dtsi
-index b7dc40f3778c4fbbd2fdd72adfb86e678c422095..e2f4b92dd7bbbb7bd65c4ee38f46413fae94b1f2 100644
+index b7dc40f3778c4fbbd2fdd72adfb86e678c422095..df017700e20eb3d7d7c7622b18a191ed143ede21 100644
 --- a/arch/arm64/boot/dts/qcom/sm4450.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm4450.dtsi
-@@ -52,6 +52,8 @@ cpu0: cpu@0 {
+@@ -52,6 +52,9 @@ cpu0: cpu@0 {
  			device_type = "cpu";
  			compatible = "arm,cortex-a55";
  			reg = <0x0 0x0>;
++			/* TODO: sm6350 A55 value, not measured on SM4450 */
 +			capacity-dmips-mhz = <1024>;
 +			dynamic-power-coefficient = <100>;
  			clocks = <&cpufreq_hw 0>;
  			enable-method = "psci";
  			next-level-cache = <&l2_0>;
-@@ -78,6 +80,8 @@ cpu1: cpu@100 {
+@@ -78,6 +81,8 @@ cpu1: cpu@100 {
  			device_type = "cpu";
  			compatible = "arm,cortex-a55";
  			reg = <0x0 0x100>;
@@ -36,7 +35,7 @@ index b7dc40f3778c4fbbd2fdd72adfb86e678c422095..e2f4b92dd7bbbb7bd65c4ee38f46413f
  			clocks = <&cpufreq_hw 0>;
  			enable-method = "psci";
  			next-level-cache = <&l2_100>;
-@@ -98,6 +102,8 @@ cpu2: cpu@200 {
+@@ -98,6 +103,8 @@ cpu2: cpu@200 {
  			device_type = "cpu";
  			compatible = "arm,cortex-a55";
  			reg = <0x0 0x200>;
@@ -45,7 +44,7 @@ index b7dc40f3778c4fbbd2fdd72adfb86e678c422095..e2f4b92dd7bbbb7bd65c4ee38f46413f
  			clocks = <&cpufreq_hw 0>;
  			enable-method = "psci";
  			next-level-cache = <&l2_200>;
-@@ -118,6 +124,8 @@ cpu3: cpu@300 {
+@@ -118,6 +125,8 @@ cpu3: cpu@300 {
  			device_type = "cpu";
  			compatible = "arm,cortex-a55";
  			reg = <0x0 0x300>;
@@ -54,7 +53,7 @@ index b7dc40f3778c4fbbd2fdd72adfb86e678c422095..e2f4b92dd7bbbb7bd65c4ee38f46413f
  			clocks = <&cpufreq_hw 0>;
  			enable-method = "psci";
  			next-level-cache = <&l2_300>;
-@@ -138,6 +146,8 @@ cpu4: cpu@400 {
+@@ -138,6 +147,8 @@ cpu4: cpu@400 {
  			device_type = "cpu";
  			compatible = "arm,cortex-a55";
  			reg = <0x0 0x400>;
@@ -63,7 +62,7 @@ index b7dc40f3778c4fbbd2fdd72adfb86e678c422095..e2f4b92dd7bbbb7bd65c4ee38f46413f
  			clocks = <&cpufreq_hw 0>;
  			enable-method = "psci";
  			next-level-cache = <&l2_400>;
-@@ -158,6 +168,8 @@ cpu5: cpu@500 {
+@@ -158,6 +169,8 @@ cpu5: cpu@500 {
  			device_type = "cpu";
  			compatible = "arm,cortex-a55";
  			reg = <0x0 0x500>;
@@ -72,16 +71,17 @@ index b7dc40f3778c4fbbd2fdd72adfb86e678c422095..e2f4b92dd7bbbb7bd65c4ee38f46413f
  			clocks = <&cpufreq_hw 0>;
  			enable-method = "psci";
  			next-level-cache = <&l2_500>;
-@@ -178,6 +190,8 @@ cpu6: cpu@600 {
+@@ -178,6 +191,9 @@ cpu6: cpu@600 {
  			device_type = "cpu";
  			compatible = "arm,cortex-a78";
  			reg = <0x0 0x600>;
++			/* TODO: sm6350 A78 value, not measured on SM4450 */
 +			capacity-dmips-mhz = <1894>;
 +			dynamic-power-coefficient = <703>;
  			clocks = <&cpufreq_hw 1>;
  			enable-method = "psci";
  			next-level-cache = <&l2_600>;
-@@ -198,6 +212,8 @@ cpu7: cpu@700 {
+@@ -198,6 +214,8 @@ cpu7: cpu@700 {
  			device_type = "cpu";
  			compatible = "arm,cortex-a78";
  			reg = <0x0 0x700>;

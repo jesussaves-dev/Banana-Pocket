@@ -3,8 +3,6 @@ From: Philippe Simons <simons.philippe@gmail.com>
 Date: Sat, 21 Feb 2026 19:06:28 +0100
 Subject: [PATCH] input: Add driver for RSInput Gamepad
 
-K5 audit: send upstream (K6) after splitting off the Banana MCU watchdog; not in mainline v7.3; needs a binding.
-
 SM4450 additions:
 - Added watchdog for MCU
 ---

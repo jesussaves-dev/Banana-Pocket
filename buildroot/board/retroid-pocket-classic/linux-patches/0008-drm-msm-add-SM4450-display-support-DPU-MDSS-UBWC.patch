@@ -6,8 +6,6 @@ Subject: [PATCH] drm/msm: add SM4450 display support (DPU + MDSS + UBWC)
 Inline rotation depends on the dpu_plane and dpu_rm fixes in the common
 patch 0013-drm-msm-dpu-fix-inline-rotation.
 
-K5 audit: send upstream (K6) after a Banana verification pass. Not in mainline v7.3,
-and mainline has no qcom,sm4450-dpu/-mdss binding either, so the series needs a
 bindings patch first. Before sending: re-check the catalog (perf/QoS/LUT values, SSPP/INTF
 IRQ indexes) against the vendor DT and the panel on the device, and fix the
 SPDX/copyright header (says The Linux Foundation, but the catalog was derived by

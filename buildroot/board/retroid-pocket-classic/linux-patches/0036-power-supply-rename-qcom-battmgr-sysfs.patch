@@ -3,7 +3,6 @@ From: John Williams <porschemad911@gmail.com>
 Date: Wed, 16 Sep 2026 23:53:34 +1000
 Subject: [PATCH] power:supply: rename qcom battmgr sysfs
 
-K5 audit: keep downstream: sysfs ABI rename, not acceptable upstream.
 ---
  drivers/power/supply/qcom_battmgr.c | 8 ++++----
  1 file changed, 4 insertions(+), 4 deletions(-)
