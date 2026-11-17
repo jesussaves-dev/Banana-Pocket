@@ -18,7 +18,7 @@ There is no udev. A module is loaded only by one of these, in this order:
 | rcS, 1.10 s | `rcS:90` | `snd-soc-lpass-macro-common snd-soc-lpass-{rx,tx,va}-macro soundwire-qcom` | SoundWire takes its iface clock from the RX macro |
 | rcS, 1.13 s | `rcS:92` | `snd-soc-wcd-common snd-soc-wcd-mbhc snd-soc-wcd-classh snd-soc-wcd937x snd-soc-aw88261` | see §4.2: aw88261 binds nothing |
 | rcS, 1.17 s | `rcS:94-95` | `snd-soc-qcom-common`, `snd-soc-sc8280xp` | machine driver; card appears at 5.44 s |
-| rcS, 5.47 s | `rcS:105` | `pwm-fan qcom_battmgr` | see §4.1: pwm-fan binds nothing |
+| rcS, 5.47 s | `rcS:105` | `pwm-fan qcom_battmgr` | see §4.1: pwm-fan binds since K4.3 |
 | background | `rcS:126` | `ath10k_snoc` | Wi-Fi, WCN3950 (`qcom,wcn3990-wifi`) |
 | bananad start | `system/bananad/bananad.c:1897` | `pm8xxx_vibrator` | FF input for the rumble pulse |
 | USB hotplug | `bananad.c:2025` (`load_driver`) | whatever a `usb:` MODALIAS names (xpad, USB serial…) | external pads/adapters; K1.2 keeps a USB-HID/pad module set |
@@ -45,7 +45,7 @@ Modules pulled in only as dependencies (visible in `lsmod`, no `modprobe` of the
 | Battery | `BATTERY_QCOM_BATTMGR` | `auxiliary/qcom_battmgr.pmic_glink_power_supply` |
 | Rumble | `INPUT_PM8XXX_VIBRATOR` | `pm8xxx-vib` |
 | File sharing | `SMB_SERVER` | — (no device) |
-| Fan | `SENSORS_PWM_FAN` | **none** — §4.1 |
+| Fan | `SENSORS_PWM_FAN` | `pwm-fan` (binds since K4.3, §4.1) |
 | Speaker amp (unused) | `SND_SOC_AW88261` | **none** — §4.2 |
 
 ## 3. Built in (=y) — every driver that probed
@@ -131,13 +131,12 @@ Modules pulled in only as dependencies (visible in `lsmod`, no `modprobe` of the
 
 ## 4. Findings for K1.2
 
-1. **The fan never binds in 0.8.0.** rcS loads `pwm_fan`, but no `pwm-fan` driver appears in the probed list. The DT
-   fan takes `pwms = <&pm6450_pwm …>` (`sm4450-retroid-pocket-classic-revq.dts:32`), whose node is
-   `compatible = "qcom,pm6450-pwm"` (`…-common.dtsi:2242`); `LEDS_QCOM_LPG` is not set, and none of the 45 patches in
-   `linux-patches/` mention `pm6450-pwm`. So the PWM provider has no driver and pwm-fan defers forever. Needs owner
-   confirmation on the device (`ls /sys/class/pwm`, `cat /sys/kernel/debug/devices_deferred` — no debugfs on 0.8.0,
-   so: `dmesg | grep -i fan`), then a separate task (kernel config + maybe a compatible patch — needs the owner's OK
-   under the patch rule).
+1. **The fan did not bind in 0.8.0 (fixed in K4.3, kernel 0.7).** The DT fan takes `pwms = <&pm6450_pwm …>`
+   (`sm4450-retroid-pocket-classic-revq.dts:32`), whose node is `compatible = "qcom,pm6450-pwm"`; no driver matched it, so
+   pwm-fan deferred forever. Patches 0048/0049 add `pm6450-pwm` to `leds-qcom-lpg` (`LEDS_QCOM_LPG=y`). The PM6450 LPG
+   has no 76.8 MHz clock source (stock `pwm-qti-lpg` stops at 19.2 MHz; selecting 76.8 MHz left the channel dead), so
+   `hi_res_clk_count = 4` clamps the clock table. On device: `pwmchip0`, `hwmon` `pwmfan`, `e841` clk_sel 3 (as on
+   Android), tach 11231 rpm at `pwm1=180`.
 2. **`snd_soc_aw88261` binds nothing.** The amps are `awinic,aw88166` (`…-common.dtsi:1745,1755`), bound by the
    built-in `SND_SOC_AW88166`. Drop `SND_SOC_AW88261` and its `modprobe` in rcS:92 (rcS change = a separate task, it is
    not a K1 file).
