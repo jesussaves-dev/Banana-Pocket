@@ -7,6 +7,8 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
+K5 audit: consolidate with the other aw88166 patches, then send upstream (K6): not in mainline v7.3.
+
 The aw88166 driver only worked with the stream configuration baked
 into the loaded acf profile due to the lack of a proper PLL
 initialization sequence. Fix by selecting all the necessary PLL

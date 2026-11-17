@@ -4,6 +4,8 @@ Date: Wed, 22 Jul 2026 15:45:14 +0200
 Subject: [PATCH] phy: qcom: qmp-combo: Prevent unnecessary PM runtime suspend
  at boot
 
+K5 audit: drop at the v7.3 rebase: already in mainline v7.3 (err_pm_put path present).
+
 Runtime PM has to be enabled before creating the PHYs, since phy_create()
 only enables runtime PM on the PHY devices if it is already enabled on
 this parent device. This opens a small window where the device can be

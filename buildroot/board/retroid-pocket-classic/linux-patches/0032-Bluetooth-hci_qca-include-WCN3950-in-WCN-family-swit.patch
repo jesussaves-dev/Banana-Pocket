@@ -3,6 +3,7 @@ From: Tom <jesussaves-ai@users.noreply.github.com>
 Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] Bluetooth: hci_qca: include WCN3950 in WCN family switches
 
+K5 audit: send upstream (K6): v7.3 lacks WCN3950 in the power_off/remove switches.
 ---
  drivers/bluetooth/hci_qca.c | 3 +++
  1 file changed, 3 insertions(+)

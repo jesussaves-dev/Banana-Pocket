@@ -4,6 +4,8 @@ Date: Sat, 11 Jul 2026 23:13:17 -0400
 Subject: [PATCH] phy: qcom: qmp-combo: Correct pre-emphasis table for QMP v4
  DP PHYs
 
+K5 audit: drop at the v7.3 rebase: already in mainline v7.3 (identical table).
+
 Comparing sm8350 and sm8450 tables, this seems to be a typo.
 
 Fixes: ef14aff107bd ("phy: qcom: com-qmp-combo: add SM8350 & SM8450 support")

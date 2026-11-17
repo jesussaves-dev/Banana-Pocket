@@ -3,6 +3,8 @@ From: tom <tom@localhost>
 Date: Tue, 17 Nov 2026 13:53:48 -0500
 Subject: [PATCH] leds: qcom-lpg: add PM6450 PWM
 
+K5 audit: send upstream (K6): not in mainline v7.3; binding in this patch; fold the PM6450 clock-clamp patch into it first.
+
 One PWM-only channel at 0xe800 (no LUT, no triled), taken from the stock
 Android DT (qcom,pwms@e800 under qcom,pm6450@1). Lets the RPC fan's
 pwm-fan bind.

@@ -4,6 +4,7 @@ Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] clk: qcom: dispcc-sm4450: use the no-init-park ops for the
  MDP clock source
 
+K5 audit: send upstream (K6): not in mainline v7.3; needs a hardware justification in the message.
 ---
  drivers/clk/qcom/dispcc-sm4450.c | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

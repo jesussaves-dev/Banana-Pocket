@@ -4,6 +4,8 @@ Date: Thu, 29 Oct 2026 02:00:00 +0000
 Subject: [PATCH] ASoC: codecs: aw88166: lock on the I2S clocks, not the ACF
  re-upload
 
+K5 audit: consolidate with the other aw88166 patches, then send upstream (K6): not in mainline v7.3.
+
 aw88166_start_pa() runs from DAPM's PRE_PMU, which on the SM4450 is before
 the backend DAI starts the I2S bit/word clocks. aw88166_dev_start()'s SYSST
 check wants CLKS_STABLE | PLLS_LOCKED, so that first attempt always fails

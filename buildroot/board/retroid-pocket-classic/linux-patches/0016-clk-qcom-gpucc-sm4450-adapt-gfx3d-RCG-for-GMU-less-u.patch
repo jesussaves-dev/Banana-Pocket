@@ -3,6 +3,7 @@ From: sunshineinabox <aqemail@gmail.com>
 Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] clk: qcom: gpucc-sm4450: adapt gfx3d RCG for GMU-less use
 
+K5 audit: keep downstream: GMU-less gfx3d RCG handling.
 ---
  drivers/clk/qcom/gpucc-sm4450.c | 4 ++--
  1 file changed, 2 insertions(+), 2 deletions(-)

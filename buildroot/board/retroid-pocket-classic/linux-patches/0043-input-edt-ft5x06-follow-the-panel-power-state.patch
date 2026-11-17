@@ -3,6 +3,7 @@ From: sunshineinabox <aqemail@gmail.com>
 Date: Tue, 20 Oct 2026 19:30:00 -0700
 Subject: [PATCH] input: edt-ft5x06: follow the panel power state
 
+K5 audit: keep downstream: edt-ft5x06 follows the panel power state; needs a commit message before any upstream attempt.
 ---
  drivers/input/touchscreen/edt-ft5x06.c | 87 +++++++++++++++++++++++++-
  1 file changed, 85 insertions(+), 2 deletions(-)
