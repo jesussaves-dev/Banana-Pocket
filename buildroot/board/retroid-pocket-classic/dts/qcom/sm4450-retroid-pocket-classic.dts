@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /*
- * Retroid Pocket Classic (SM4450 "parrot") - original board.
- *
+ * Retroid Pocket Classic (SM4450 "parrot"): the original board.
+ * Maintained by Banana as its own description of this handheld (it started as ROCKNIX's tree).
+ * Shared parts: sm4450-retroid-pocket-classic-common.dtsi and the subsystem files it includes.
  */
 
 /dts-v1/;
