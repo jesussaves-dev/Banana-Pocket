@@ -3,20 +3,18 @@ Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Sh
 the detail lives in `git log` and the docs named there. Updated 2026-11-18.
 
 ## Recommended next (in order)
-1. **Confirm the 26 mA standby overnight.** The ~39 mA nights were `wake_audio_fast = on` left in the card's
-   `bananad.conf`; off since 2026-11-16. One clean night is the baseline for every later sleep test.
-2. **The 12.7 s phantom burst.** A fast wake source that gives up after three re-sleeps and leaves the handheld awake.
+1. **The 12.7 s phantom burst.** A fast wake source that gives up after three re-sleeps and leaves the handheld awake.
    Dump `wakeup_sources` and `/proc/interrupts` deltas at the next burst before guessing.
-3. **Standby drain, next test:** one `deep` sleep with the audio drivers unloaded, to release the LPASS clock votes that
-   keep the ADSP (and `aosd`/`cxsd`/`ddr`) awake. The biggest user-facing win left.
-4. **Below-minimum brightness (S)**, then **a real CRT personality (S)** (see *Ideas*).
-5. **The flasher on real Windows:** one flash and a mid-flash cancel; 2.0.0's Windows paths are tested with mocks only.
-6. **Languages, phase 2:** Settings sub-pages and menu chrome.
-7. **Bluetooth:** designed, not built; blocked on a Classic (BR/EDR) controller to test with.
+2. **Power-button sleeps that "did not take"** (2026-11-18): woke 1-3 s later with "power key" and no kernel wakeup event,
+   with the unit on the USB gadget. Retest unplugged before blaming code. Possible follow-up: hibernate after a long sleep.
+3. **Below-minimum brightness (S)**, then **a real CRT personality (S)** (see *Ideas*).
+4. **The flasher on real Windows:** one flash and a mid-flash cancel; 2.0.0's Windows paths are tested with mocks only.
+5. **Languages, phase 2:** Settings sub-pages and menu chrome.
+6. **Bluetooth:** designed, not built; blocked on a Classic (BR/EDR) controller to test with.
 
 ## In progress
 
-- **Sleep: cut the 26-42 mA standby drain** (~140 mW at 37-42 mA; Android-class standby is 5-20 mW). Measured with the
+- **Sleep: cut the 26-42 mA standby drain** (overnight baseline 2026-11-17: ~18 mA, 99 to 95 % over 13 h on 0.8.0) (~140 mW at 37-42 mA; Android-class standby is 5-20 mW). Measured with the
   gauge's `charge_counter` (the awake line logs it).
   - *Slow phantom wakes = the battery gauge* (confirmed 2026-11-16): one wake per 1 % drop, 73-91 min apart, each re-slept
     dark (the 0.7.1 fix holds). They cost the wakes only, not the drain.

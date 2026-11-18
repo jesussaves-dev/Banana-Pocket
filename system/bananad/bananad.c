@@ -472,6 +472,81 @@ static void sleep_log(const char *fmt, ...)
 	fclose(f);
 }
 
+/* Which interrupts fired across one suspend, for the wakes nobody asked for (the 12.7 s burst, the 1-3 s "did not take"
+ * power-key wakes). wakeup_sources stays at 0 on this board, so the per-IRQ counts in /proc/interrupts either side of the
+ * write to /sys/power/state are the only trace of the waker. Rows are summed over the CPUs and keyed by IRQ number; the
+ * per-CPU noise (IPIs, the arch timer, Err/Mis) is dropped. One line per resume in logs/sleep-irq.log, with the branch
+ * the wake took, so a phantom's rows can be read against a key wake's and an RTC wake's. Fixed arrays: no allocation. */
+#define IRQ_MAX 384
+struct irq_row { int irq; unsigned long n; char name[40]; };
+static struct irq_row irq_before[IRQ_MAX], irq_after[IRQ_MAX];
+static int irq_nbefore, irq_nafter;
+static int charger_online(void);
+
+static int irq_snapshot(struct irq_row *rows)
+{
+	FILE *f = fopen("/proc/interrupts", "r");
+	if (!f) return 0;
+	char ln[768];
+	int n = 0;
+	while (n < IRQ_MAX && fgets(ln, sizeof ln, f)) {
+		char *p = ln;
+		while (*p == ' ') p++;
+		if (*p < '0' || *p > '9') continue;	/* the CPU header, IPI*, Err, Mis */
+		char *end;
+		long irq = strtol(p, &end, 10);
+		if (*end != ':') continue;
+		p = end + 1;
+		unsigned long sum = 0;
+		for (;;) {
+			while (*p == ' ') p++;
+			if (*p < '0' || *p > '9') break;
+			sum += strtoul(p, &end, 10);
+			p = end;
+		}
+		size_t len = strcspn(p, "\n");
+		while (len && p[len - 1] == ' ') len--;
+		if (len >= sizeof rows[n].name) { p += len - (sizeof rows[n].name - 1); len = sizeof rows[n].name - 1; }	/* the tail names the device */
+		memcpy(rows[n].name, p, len);
+		rows[n].name[len] = 0;
+		if (strstr(rows[n].name, "arch_timer")) continue;
+		rows[n].irq = (int)irq;
+		rows[n].n = sum;
+		n++;
+	}
+	fclose(f);
+	return n;
+}
+
+static void irq_report(const char *kind, double slept)
+{
+	char line[900];
+	size_t used = 0;
+	int shown = 0;
+	for (int i = 0; i < irq_nafter && used < sizeof line - 80; i++) {
+		unsigned long was = 0;
+		for (int j = 0; j < irq_nbefore; j++)
+			if (irq_before[j].irq == irq_after[i].irq && !strcmp(irq_before[j].name, irq_after[i].name)) { was = irq_before[j].n; break; }
+		if (irq_after[i].n == was) continue;
+		int w = snprintf(line + used, sizeof line - used, " %d %s +%lu;", irq_after[i].irq, irq_after[i].name,
+		    irq_after[i].n - was);
+		if (w < 0 || (size_t)w >= sizeof line - used) break;
+		used += (size_t)w;
+		shown++;
+	}
+	line[used] = 0;
+	const char *path = "/data/banana/logs/sleep-irq.log";
+	struct stat st;
+	if (!stat(path, &st) && st.st_size > 64 * 1024) rename(path, "/data/banana/logs/sleep-irq.log.1");
+	FILE *f = fopen(path, "a");
+	if (!f) return;
+	time_t now = time(NULL);
+	char when[32];
+	strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", localtime(&now));
+	fprintf(f, "%s %s after %.1f s, plugged %d:%s\n", when, kind, slept, charger_online(), shown ? line : " (no interrupt moved)");
+	fclose(f);
+}
+
 /* the RTC alarm that wakes the handheld for the battery check; 0 clears it. Returns the alarm's time (0: none) */
 static time_t rtc_alarm(int seconds)
 {
@@ -808,8 +883,10 @@ static void suspend_now(const char *why)
 			FILE *f = fopen("/sys/power/wakeup_count", "r");
 			if (f) { if (fscanf(f, "%lu", &wk0) != 1) wk0 = 0; fclose(f); }
 		}
+		irq_nbefore = irq_snapshot(irq_before);
 		int r = write_file("/sys/power/state", "mem");
 		int err = errno;
+		irq_nafter = irq_snapshot(irq_after);	/* before anything in userspace has had a turn */
 		/* a signal (SIGHUP from the menu, SIGCHLD) interrupted the write: nothing slept, so retry rather than
 		 * counting it as a failed suspend and falling back to s2idle */
 		if (r && err == EINTR) { rtc_alarm(0); sleep_us(50000); continue; }
@@ -843,7 +920,9 @@ static void suspend_now(const char *why)
 		}
 		asleep += (b1.tv_sec - b0.tv_sec) + (b1.tv_nsec - b0.tv_nsec) / 1e9;
 		/* why it woke: the battery check's alarm, or the power button */
+		double slept_now = (b1.tv_sec - b0.tv_sec) + (b1.tv_nsec - b0.tv_nsec) / 1e9;
 		if (rtc_fired) {
+			irq_report("rtc", slept_now);
 			rtc_wakes++;
 			int pct = battery_discharging_pct();
 			if (pct >= 0 && pct <= cfg.sleep_poweroff_pct) {
@@ -863,6 +942,7 @@ static void suspend_now(const char *why)
 		/* the cable going the other way is the charger's edge, not a phantom: nothing to stay awake for, and it is
 		 * not one of the three tries a real phantom gets */
 		if (plugged0 && !cable) {
+			irq_report("unplug", slept_now);
 			sleep_log("the charger was unplugged: back to sleep");
 			continue;
 		}
@@ -875,12 +955,14 @@ static void suspend_now(const char *why)
 			double slept = (b1.tv_sec - b0.tv_sec) + (b1.tv_nsec - b0.tv_nsec) / 1e9;
 			int pct = battery_pct_any();
 			if (slept >= 60) {
+				irq_report("slow-phantom", slept);
 				phantoms++;
 				sleep_log("wake with no key or cable after %.0f s asleep, battery %d%%: back to sleep (slow phantom %d)",
 				    slept, pct, phantoms);
 				continue;
 			}
 			if (spurious < 3) {
+				irq_report("short-phantom", slept);
 				spurious++;
 				sleep_log("wake with no key or cable after %.1f s asleep, battery %d%%: back to sleep (%d/3)",
 				    slept, pct, spurious);
@@ -888,6 +970,7 @@ static void suspend_now(const char *why)
 			}
 		}
 		woke = woke_key ? "power button" : woke_cable ? "charger" : "phantom, the fourth in a row";
+		irq_report(woke_key ? "key" : woke_cable ? "cable" : "give-up", slept_now);
 		break;
 	}
 	/* awake: the game and the menu first. A fallback (devices one at a time, or s2idle) was for this sleep: the
