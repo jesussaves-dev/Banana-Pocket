@@ -63,7 +63,7 @@ F opens Banana's quick menu over PokeDaisy like over any app (`banana-ui` freeze
 `menu_keys` (`"Save state=F2,Load state=F4"`) adds those rows: choosing one thaws the game and `banana-ui` taps the key in
 PokeDaisy through the compositor's keyboard forwarding (`PauseMenu::keyQueue`, sent by the main loop once the client has
 the keys back). Load state asks for a second A, as RetroArch's does. PokeDaisy keeps one state per game, so there is no
-slot picker. Fast-forward and rewind are hold keys in PokeDaisy, so they are not rows. PokeDaisy's own menu is
+slot picker. Fast-forward (R2) and rewind (L2) are hold keys in PokeDaisy, so they are not rows; `run-pokedaisy` sets them once with no modifier and rewind on (its own default needs SELECT held and has rewind off). PokeDaisy's own menu is
 START + SELECT. `menu_keys` is generic: any app manifest can use it (names: F1-F12, SPACE, ENTER, TAB, ESC, A-Z).
 
 ## Hardware notes

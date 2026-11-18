@@ -23,6 +23,15 @@ export POCKET_FULLSCREEN=1
 # vsync pacing waits on the compositor's frame callbacks, which come at ~19 Hz here (the game ran at 18 fps); the host's
 # timer pacing holds 60 fps
 export POCKET_NO_VSYNC=1
+# Fast-forward on R2 and rewind on L2 with no modifier (PokeDaisy's default holds SELECT too, and rewind is off). Applied
+# once, so a change made later on its HOTKEYS page sticks.
+if [ ! -e "$D/.banana-hotkeys" ]; then
+    H="$D/host.ini"
+    [ -f "$H" ] || : >"$H"
+    sed -i -e '/^rewind=/d' -e '/^hk_modifier=/d' -e '/^hk_ff=/d' -e '/^hk_rewind=/d' "$H"
+    printf 'rewind=1\nhk_modifier=off\nhk_ff=r2\nhk_rewind=l2\n' >>"$H"
+    : >"$D/.banana-hotkeys"
+fi
 # the game list: the same card folders the GB / GBC / GBA systems use
 export POCKET_ROM_DIRS=/data/roms/gba:/data/roms/gbc:/data/roms/gb
 
