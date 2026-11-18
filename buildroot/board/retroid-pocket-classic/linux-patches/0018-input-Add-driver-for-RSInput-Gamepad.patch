@@ -3,13 +3,11 @@ From: Philippe Simons <simons.philippe@gmail.com>
 Date: Sat, 21 Feb 2026 19:06:28 +0100
 Subject: [PATCH] input: Add driver for RSInput Gamepad
 
-SM4450 additions:
-- Added watchdog for MCU
 ---
  drivers/input/joystick/Kconfig   |   4 +
  drivers/input/joystick/Makefile  |   1 +
- drivers/input/joystick/rsinput.c | 692 +++++++++++++++++++++++++++++++
- 3 files changed, 697 insertions(+)
+ drivers/input/joystick/rsinput.c | 598 +++++++++++++++++++++++++++++++
+ 3 files changed, 603 insertions(+)
  create mode 100644 drivers/input/joystick/rsinput.c
 
 diff --git a/drivers/input/joystick/Kconfig b/drivers/input/joystick/Kconfig
@@ -41,10 +39,10 @@ index 9976f596a92085bda1bb28d7ca33e934f1be0ba3..3de503e29489767f5b20d1282e6ea990
  obj-$(CONFIG_JOYSTICK_SIDEWINDER)	+= sidewinder.o
 diff --git a/drivers/input/joystick/rsinput.c b/drivers/input/joystick/rsinput.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..bdfd7cd32b8ed5cd3082c71d5cfbf804a9168454
+index 0000000000000000000000000000000000000000..aa0ad2354f255f7ba786a63eff78289c8227c2fe
 --- /dev/null
 +++ b/drivers/input/joystick/rsinput.c
-@@ -0,0 +1,692 @@
+@@ -0,0 +1,598 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * RSInput Gamepad Driver
@@ -184,11 +182,6 @@ index 0000000000000000000000000000000000000000..bdfd7cd32b8ed5cd3082c71d5cfbf804
 +    bool invert_ry;
 +    uint8_t rx_buf[1024];
 +    uint8_t sequence_number;
-+    struct delayed_work rx_watchdog;
-+    unsigned int valid_frames;
-+    unsigned int wd_seen_frames;
-+    unsigned int wd_attempts;
-+    unsigned int wd_probes;
 +    bool version_logged;
 +};
 +
@@ -198,11 +191,6 @@ index 0000000000000000000000000000000000000000..bdfd7cd32b8ed5cd3082c71d5cfbf804
 +    BTN_TL,	     BTN_TR,	    BTN_SELECT,	   BTN_START,
 +    BTN_THUMBL,  BTN_THUMBR,    BTN_MODE,	   BTN_BACK
 +};
-+
-+#define RSINPUT_WD_DELAY          msecs_to_jiffies(1000)
-+#define RSINPUT_WD_PATROL         msecs_to_jiffies(5000)
-+#define RSINPUT_WD_MCU_BOOT       msecs_to_jiffies(3000)
-+#define RSINPUT_WD_PORT_CYCLES    2
 +
 +static uint8_t compute_checksum(const uint8_t *data, size_t len) {
 +    uint8_t checksum = 0;
@@ -403,8 +391,6 @@ index 0000000000000000000000000000000000000000..bdfd7cd32b8ed5cd3082c71d5cfbf804
 +            continue;
 +        }
 +
-+        drv->valid_frames++;
-+
 +        switch (data[FRAME_POS_CMD]) {
 +            case CMD_COMMOD:
 +                handle_cmd_commod(drv, data, payload_length);
@@ -465,84 +451,6 @@ index 0000000000000000000000000000000000000000..bdfd7cd32b8ed5cd3082c71d5cfbf804
 +static const struct serdev_device_ops rsinput_rx_ops = {
 +    .receive_buf = rsinput_rx,
 +};
-+
-+static void rsinput_rx_watchdog(struct work_struct *work) {
-+    struct rsinput_driver *drv =
-+        container_of(to_delayed_work(work), struct rsinput_driver, rx_watchdog);
-+    uint8_t version_request[] = {DATA_COMMOD_VERSION};
-+    unsigned long delay = RSINPUT_WD_DELAY;
-+    int error;
-+
-+    if (drv->wd_probes > 0 && drv->valid_frames != drv->wd_seen_frames) {
-+        if (drv->wd_attempts) {
-+            dev_info(&drv->serdev->dev,
-+                     "link alive after %u recovery attempt(s)\n",
-+                     drv->wd_attempts);
-+            drv->wd_attempts = 0;
-+        }
-+        delay = RSINPUT_WD_PATROL;
-+    } else if (drv->wd_probes > 0) {
-+        drv->wd_attempts++;
-+
-+        serdev_device_close(drv->serdev);
-+
-+        if (drv->wd_attempts <= RSINPUT_WD_PORT_CYCLES) {
-+            dev_warn(&drv->serdev->dev,
-+                     "link silent, cycling port (attempt %u)\n",
-+                     drv->wd_attempts);
-+        } else {
-+            if (drv->wd_attempts <= RSINPUT_WD_PORT_CYCLES + 3)
-+                dev_warn(&drv->serdev->dev,
-+                         "link still silent, power-cycling MCU (attempt %u)\n",
-+                         drv->wd_attempts);
-+
-+            if (drv->enable_gpio)
-+                gpiod_set_value_cansleep(drv->enable_gpio, 0);
-+            regulator_disable(drv->vdd);
-+            msleep(100);
-+            error = regulator_enable(drv->vdd);
-+            if (error)
-+                dev_err(&drv->serdev->dev,
-+                        "Unable to re-enable MCU supply: %d\n", error);
-+
-+            delay = RSINPUT_WD_MCU_BOOT;
-+        }
-+
-+        error = serdev_device_open(drv->serdev);
-+        if (error) {
-+            dev_err(&drv->serdev->dev,
-+                    "Unable to re-open UART device, retrying\n");
-+            schedule_delayed_work(&drv->rx_watchdog, RSINPUT_WD_PATROL);
-+            return;
-+        }
-+        serdev_device_set_baudrate(drv->serdev, 115200);
-+        serdev_device_set_flow_control(drv->serdev, false);
-+
-+        if (drv->wd_attempts > RSINPUT_WD_PORT_CYCLES) {
-+            /* Redo power up */
-+            error = rsinput_init_commands(drv);
-+            if (error < 0)
-+                dev_err(&drv->serdev->dev,
-+                        "MCU re-init failed: %d\n", error);
-+            /* A dead MCU */
-+            if (drv->wd_attempts > RSINPUT_WD_PORT_CYCLES + 3)
-+                delay = 6 * RSINPUT_WD_PATROL;
-+        }
-+
-+        drv->wd_seen_frames = drv->valid_frames;
-+        rsinput_send_command(drv, CMD_COMMOD, version_request,
-+                             sizeof(version_request));
-+        drv->wd_probes++;
-+        schedule_delayed_work(&drv->rx_watchdog, delay);
-+        return;
-+    }
-+
-+    drv->wd_seen_frames = drv->valid_frames;
-+    rsinput_send_command(drv, CMD_COMMOD, version_request,
-+                         sizeof(version_request));
-+    drv->wd_probes++;
-+    schedule_delayed_work(&drv->rx_watchdog, delay);
-+}
 +
 +static int rsinput_probe(struct serdev_device *serdev) {
 +    struct rsinput_driver *drv;
@@ -696,16 +604,12 @@ index 0000000000000000000000000000000000000000..bdfd7cd32b8ed5cd3082c71d5cfbf804
 +        return error;
 +    }
 +
-+    INIT_DELAYED_WORK(&drv->rx_watchdog, rsinput_rx_watchdog);
-+    schedule_delayed_work(&drv->rx_watchdog, RSINPUT_WD_DELAY);
-+
 +    return 0;
 +}
 +
 +static void rsinput_remove(struct serdev_device *serdev) {
 +    struct rsinput_driver *drv = serdev_device_get_drvdata(serdev);
 +
-+    cancel_delayed_work_sync(&drv->rx_watchdog);
 +    serdev_device_close(serdev);
 +    input_unregister_device(drv->input);
 +    if (drv->enable_gpio)
