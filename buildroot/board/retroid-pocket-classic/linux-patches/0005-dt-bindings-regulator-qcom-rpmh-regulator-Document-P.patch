@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: tom <tom@localhost>
+Date: Tue, 17 Nov 2026 18:36:25 -0500
+Subject: [PATCH] dt-bindings: regulator: qcom,rpmh-regulator: Document PM6450
+
+Add the PM6450, a PMIC on SM4450 boards that is reached through the
+RPMh RSC. Its smps1, smps5, smps6, ldo2 and ldo8 rails are handled by
+RPMh ARC resources and are not described here. No input supplies are
+described.
+
+Signed-off-by: tom <tom@localhost>
+---
+ .../devicetree/bindings/regulator/qcom,rpmh-regulator.yaml      | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/regulator/qcom,rpmh-regulator.yaml b/Documentation/devicetree/bindings/regulator/qcom,rpmh-regulator.yaml
+index eed2ce7fa861143988a462e26306fd1f7b00b08c..a7892219664712756e6d2c773039b1291fb66fa0 100644
+--- a/Documentation/devicetree/bindings/regulator/qcom,rpmh-regulator.yaml
++++ b/Documentation/devicetree/bindings/regulator/qcom,rpmh-regulator.yaml
+@@ -37,6 +37,7 @@ description: |
+       For PM6150, smps1 - smps5, ldo1 - ldo19
+       For PM6150L, smps1 - smps8, ldo1 - ldo11, bob
+       For PM6350, smps1 - smps5, ldo1 - ldo22
++      For PM6450, smps7 - smps9, ldo1 - ldo28
+       For PM660, smps1 - smps6, ldo1 - ldo3, ldo5 - ldo19
+       For PM660L, smps1 - smps3, smps5, ldo1 - ldo8, bob
+       For PM7325, smps1 - smps8, ldo1 - ldo19
+@@ -72,6 +73,7 @@ properties:
+       - qcom,pm6150-rpmh-regulators
+       - qcom,pm6150l-rpmh-regulators
+       - qcom,pm6350-rpmh-regulators
++      - qcom,pm6450-rpmh-regulators
+       - qcom,pm660-rpmh-regulators
+       - qcom,pm660l-rpmh-regulators
+       - qcom,pm7325-rpmh-regulators
