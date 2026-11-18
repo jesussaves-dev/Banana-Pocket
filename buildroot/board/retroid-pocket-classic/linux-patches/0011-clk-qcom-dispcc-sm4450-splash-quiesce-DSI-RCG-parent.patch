@@ -4,7 +4,6 @@ Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] clk: qcom: dispcc-sm4450: splash quiesce + DSI RCG parent
  enable
 
-K5 audit: send upstream (K6): CLK_OPS_PARENT_ENABLE on byte0/pclk0 RCGs, not in mainline v7.3.
 ---
  drivers/clk/qcom/dispcc-sm4450.c | 8 ++++++--
  1 file changed, 6 insertions(+), 2 deletions(-)

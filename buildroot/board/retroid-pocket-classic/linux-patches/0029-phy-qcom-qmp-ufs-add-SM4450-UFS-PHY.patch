@@ -3,8 +3,6 @@ From: Noxwell <beebono@gmail.com>
 Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] phy: qcom: qmp-ufs: add SM4450 UFS PHY
 
-K5 audit: send upstream (K6): not in mainline v7.3; binding already in this patch.
-
 Add the SM4450 (parrot/ravelin) UFS PHY with QMP v5 register layout, two
 lanes, up to HS-G4. The host powers the PHY up in its maximum gear, so
 G4 must be accepted even when the attached device is slower.

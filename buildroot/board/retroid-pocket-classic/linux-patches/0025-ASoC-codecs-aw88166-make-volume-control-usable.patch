@@ -3,8 +3,6 @@ From: sunshineinabox <aqemail@gmail.com>
 Date: Mon, 27 Jul 2026 20:43:51 -0700
 Subject: [PATCH] ASoC: codecs: aw88166: make volume control usable
 
-K5 audit: consolidate with the other aw88166 patches, then send upstream (K6): not in mainline v7.3.
-
 - Invert the value to match userspace expectations
 - Provide TLV metadata for the dB scale
 - Set the default volume to the halfway point instead of full blast

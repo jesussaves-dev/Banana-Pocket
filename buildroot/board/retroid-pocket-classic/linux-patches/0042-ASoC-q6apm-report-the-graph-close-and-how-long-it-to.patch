@@ -3,8 +3,6 @@ From: Banana <banana@localhost>
 Date: Sat, 31 Oct 2026 04:00:00 +0000
 Subject: [PATCH] ASoC: q6apm: report the graph close, and how long it took
 
-K5 audit: send upstream (K6): not in mainline v7.3; trim logging to dev_err/dev_dbg first.
-
 The graph behind a frontend is torn down by the ADSP, not by the CPU:
 audioreach_graph_mgmt_cmd(APM_CMD_GRAPH_CLOSE) goes through
 audioreach_send_cmd_sync(), which waits up to 5 s for the DSP's
@@ -15,25 +13,20 @@ start ("start failure") -- was completely silent in dmesg. The handover
 between the menu and a game (MultiMedia1 released, a game opened into the
 same graph id) is exactly where that costs sound.
 
-Log the failure, and the close round-trip when it is slow (>= 50 ms) so the
-window is measurable on the unit without CONFIG_DYNAMIC_DEBUG (which Banana
-does not set). Ordinary closes stay at dev_dbg: the menu reopens its frontend
-on every cue, so anything louder would be spam.
+Log the failure with dev_err, and the close round-trip time with dev_dbg.
 
 This changes no behaviour -- it only makes the one quiet failure visible,
 which is what decides whether the userspace "wait one beat" handover still
 earns its keep or can come out.
-
-Signed-off-by: Banana <banana@localhost>
 ---
- sound/soc/qcom/qdsp6/q6apm.c | 19 ++++++++++++++++++-
- 1 file changed, 18 insertions(+), 1 deletion(-)
+ sound/soc/qcom/qdsp6/q6apm.c | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
 
 diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
-index f167b9dae3fa140989f7f3a39d62c028d37ec66a..e322e5b3ef1bbbf5078540e587bfe5b37bd10c6e 100644
+index f167b9dae3fa140989f7f3a39d62c028d37ec66a..3a02d13eef52e5b7be4a9f82a5ea58cd4041d0f4 100644
 --- a/sound/soc/qcom/qdsp6/q6apm.c
 +++ b/sound/soc/qcom/qdsp6/q6apm.c
-@@ -125,11 +125,28 @@ static void q6apm_put_audioreach_graph(struct kref *ref)
+@@ -125,11 +125,26 @@ static void q6apm_put_audioreach_graph(struct kref *ref)
  {
  	struct audioreach_graph *graph;
  	struct q6apm *apm;
@@ -56,8 +49,6 @@ index f167b9dae3fa140989f7f3a39d62c028d37ec66a..e322e5b3ef1bbbf5078540e587bfe5b3
 +	ms = jiffies_to_msecs(jiffies - t0);
 +	if (ret)
 +		dev_err(apm->dev, "graph %d: close failed (%d) after %u ms\n", graph->id, ret, ms);
-+	else if (ms >= 50)
-+		dev_info(apm->dev, "graph %d: close took %u ms\n", graph->id, ms);
 +	else
 +		dev_dbg(apm->dev, "graph %d: closed after %u ms\n", graph->id, ms);
  
