@@ -822,7 +822,14 @@ int main(int argc, char** argv)
 			double t = nowMs();
 			if (ev.type == InputEvent::PRESS || ev.type == InputEvent::TOUCH_DOWN) boost.frame(t);	// what it starts drawn fast
 			// the AMOLED guard: the first press or touch while dimmed/blanked wakes the panel and is swallowed
-			if (guard.wake(t, &sound)) { swallowTouch = ev.type == InputEvent::TOUCH_DOWN; sound.setBgm(settings["bgm"] != "off"); dirty = true; return; }
+			// (with a game resident the sound is the game's: the guard brings the panel back, not the menu's loop)
+			if (guard.wake(t, gamePid <= 0 ? &sound : nullptr))
+			{
+				swallowTouch = ev.type == InputEvent::TOUCH_DOWN;
+				if (gamePid <= 0) sound.setBgm(settings["bgm"] != "off");
+				dirty = true;
+				return;
+			}
 			guard.input(t);
 		}
 		if ((ev.type == InputEvent::PRESS || ev.type == InputEvent::TOUCH_DOWN) && low.hide(nowMs())) dirty = true;
@@ -1465,7 +1472,10 @@ int main(int argc, char** argv)
 							if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
 						}
 						std::lock_guard<std::mutex> l(worker.uiLock);
-						be.invalidate(); ui->dataChanged(); if (gamePid <= 0) ui->woke(); dirty = true; batteryDue = true; guard.wake(nowMs(), &sound); sound.setBgm(settings["bgm"] != "off"); sound.warm();
+						be.invalidate(); ui->dataChanged(); if (gamePid <= 0) ui->woke(); dirty = true; batteryDue = true;
+						// with a game resident the sound is the game's (SIGHUP left the device alone for it): no menu loop on top of it
+						guard.wake(nowMs(), gamePid <= 0 ? &sound : nullptr);
+						if (gamePid <= 0) { sound.setBgm(settings["bgm"] != "off"); sound.warm(); }
 					}
 					if (c == SIGUSR2)
 					{

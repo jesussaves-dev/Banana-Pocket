@@ -74,6 +74,11 @@ for h in wifi sound-server usb-gadget; do
     } > /usr/libexec/banana/$h
     chmod +x /usr/libexec/banana/$h
 done
+# the real one marks the Speaker sink ready at the end of "up" (bananad's wake waits for it) and clears it on "down"
+cat >> /usr/libexec/banana/sound-server <<'EOF'
+case $1 in up) : > /run/banana/sound-ready ;; down) rm -f /run/banana/sound-ready ;; esac
+EOF
+: > /run/banana/sound-ready
 mkdir -p /sys/class/net/wlan0
 : > /run/banana/wpa.pid
 mount -t tmpfs none /sys/kernel
@@ -94,7 +99,9 @@ EV_KEY=1 KEY_POWER=116
 # with the sound server, which is stopped for the sleep).
 mkfifo /run/banana/retroarch.cmd 2>/dev/null || true
 : > /run/test/ra-cmds
-( exec 4<>/run/banana/retroarch.cmd; while IFS= read -r cmd <&4; do printf '%s\n' "$cmd" >> /run/test/ra-cmds; done ) &
+# SAVE_STATE_AUTO (patch 0015) is answered the way RetroArch does, in /run/banana/autosave.
+( exec 4<>/run/banana/retroarch.cmd; while IFS= read -r cmd <&4; do printf '%s\n' "$cmd" >> /run/test/ra-cmds
+    [ "$cmd" = SAVE_STATE_AUTO ] && echo ok > /run/banana/autosave; done ) &
 
 # press and release power: bananad sleeps on the release
 power() { ev $EV_KEY $KEY_POWER 1; sleep 0.1; ev $EV_KEY $KEY_POWER 0; }
@@ -293,6 +300,35 @@ grep -q 'no RTC wake alarm' /data/banana/logs/sleep.log && ok "logged the refusa
 ev $EV_KEY 304 1; ev $EV_KEY 304 0; sleep 0.3      # BTN_SOUTH: the SoC never slept, so a press lights it again
 [ "$(cat /sys/class/backlight/backlight0/bl_power)" = 0 ] && ok "a press brings the panel back" || bad "panel stayed dark"
 stop
+
+echo "11. Quick resume on: the game writes its .auto state before it is stopped; a frozen game is not asked"
+mkdir -p /data/retroarch
+echo 'savestate_auto_save = "true"' > /data/retroarch/retroarch.cfg
+echo Charging > /sys/class/power_supply/battery/status
+echo 50 > /sys/class/power_supply/battery/capacity
+kill -CONT $GAME 2>/dev/null || true
+echo $GAME > /run/banana/game.pid
+: > /run/test/ra-cmds
+start
+power
+asleep && ok "suspended" || bad "no suspend"
+grep -q '^SAVE_STATE_AUTO$' /run/test/ra-cmds && ok "the game was asked for its state" || bad "SAVE_STATE_AUTO not sent"
+grep -q 'state: saved before the sleep in .* ms (ok)' /data/banana/logs/sleep.log && ok "logged the answer" || bad "no saved-state line"
+wake; sleep 0.2
+grep -q 'audio: the server is not ready' /data/banana/logs/sleep.log && bad "the wake waited out sound-ready" || ok "the wake found the server ready"
+grep -q '^AUDIO_REINIT$' /run/test/ra-cmds && ok "the game's audio was reinitialised" || bad "no AUDIO_REINIT"
+stop
+: > /run/test/ra-cmds
+kill -STOP $GAME
+n=$(grep -c 'state: saved' /data/banana/logs/sleep.log)
+start
+power
+asleep && ok "suspended with the game frozen" || bad "no suspend"
+grep -q '^SAVE_STATE_AUTO$' /run/test/ra-cmds && bad "a frozen game was asked" || ok "a frozen game was not asked"
+[ "$(grep -c 'state: saved' /data/banana/logs/sleep.log)" = "$n" ] && ok "no wait on a game that cannot answer" || bad "a saved-state line for a frozen game"
+wake
+stop
+rm -f /data/retroarch/retroarch.cfg
 
 kill $UI $GAME 2>/dev/null || true
 echo "sleep test: $pass passed, $fail failed"

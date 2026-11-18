@@ -1,0 +1,55 @@
+From: Banana <bananalinux@proton.me>
+Date: Wed, 18 Nov 2026 18:30:00 +0000
+Subject: [PATCH] command: SAVE_STATE_AUTO, the quit-time state on request, for a sleep
+
+Quick resume writes "<state>.auto" only when a game quits, so a handheld that sleeps with a game open and runs
+out of battery overnight loses the session. bananad now asks for that same file just before it freezes the game.
+RetroArch answers a stdin command with nothing, so the result goes to /run/banana/autosave ("ok" or "fail").
+Neither the manual slot nor its number is touched.
+
+Upstream-Status: Inappropriate [a specific handheld's sleep]
+---
+--- a/command.h
++++ b/command.h
+@@ -427,6 +427,7 @@
+ bool command_get_config_param(command_t *cmd, const char* arg);
+ bool command_show_osd_msg(command_t *cmd, const char* arg);
+ bool command_toggle_analog_dpad(command_t *cmd, const char* arg);
++bool command_save_state_auto(command_t *cmd, const char* arg);
+ bool command_load_state_slot(command_t *cmd, const char* arg);
+ bool command_play_replay_slot(command_t *cmd, const char* arg);
+ bool command_seek_replay(command_t *cmd, const char *arg);
+@@ -468,6 +469,7 @@
+    { "LOAD_CORE", command_load_core, "<core path>"},
+    { "AUDIO_REINIT", command_audio_reinit, "No argument"},
+    { "TOGGLE_ANALOG_DPAD", command_toggle_analog_dpad, "No argument"},
++   { "SAVE_STATE_AUTO", command_save_state_auto, "No argument"},
+ };
+ 
+ static const struct cmd_map map[] = {
+--- a/command.c
++++ b/command.c
+@@ -804,6 +804,23 @@
+    return true;
+ }
+ 
++/* The same automatic state RetroArch writes when a game quits (the "<state>.auto" file Quick resume loads at the next
++ * start), written now: bananad sends this just before it freezes a game for a sleep, so a battery that dies overnight
++ * loses nothing. It leaves the manual slot and its number alone. RetroArch gives a stdin command no reply, so the
++ * answer is a file: /run/banana/autosave holds "ok" or "fail" once the state is on the card (bananad removes it first
++ * and polls it). A missing /run/banana just writes nothing. */
++bool command_save_state_auto(command_t *cmd, const char* arg)
++{
++   FILE *f;
++   bool ok = command_event_save_auto_state() > 0;
++   if ((f = fopen("/run/banana/autosave", "w")))
++   {
++      fputs(ok ? "ok\n" : "fail\n", f);
++      fclose(f);
++   }
++   return ok;
++}
++
+ bool command_load_state_slot(command_t *cmd, const char *arg)
+ {
+    char state_path[PATH_MAX_LENGTH] = "";

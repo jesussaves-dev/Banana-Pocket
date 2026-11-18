@@ -27,6 +27,7 @@ case "$1" in
 down)
     pkill -x wireplumber 2>/dev/null
     pkill -x pipewire 2>/dev/null
+    rm -f /run/banana/sound-ready 2>/dev/null
     say "down"
     exit 0
     ;;
@@ -118,5 +119,8 @@ done
 # re-applies the verb immediately before each open (buildroot/patches/pipewire/0002), which is when the DSP latches
 # its FE->BE switches. Nothing here forces the verb or writes a mixer control -- a write to a live graph, or a second
 # application of a one-shot UCM sequence, is exactly what the DSP law in AGENTS.md rules out.
+# bananad waits for this after a wake before it restarts a game's audio driver (a stream opened before the sink is in
+# PipeWire fails with "Host is down" and RetroArch does not retry)
+: > /run/banana/sound-ready 2>/dev/null
 say "up (runtime dir $RUNDIR)"
 exit 0

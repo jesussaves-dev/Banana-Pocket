@@ -1,589 +1,178 @@
 # BananaOS Roadmap (RPC / SM4450)
-Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Ordered by what is recommended next.
+Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Shipped work is one line each under *Done*;
+the detail lives in `git log` and the docs named there. Updated 2026-11-18.
 
 ## Recommended next (in order)
-0.7.0 is the new UI: the SNES style and Banana Street; 0.8.0 adds the Genesis style, Banana Blast; the landing page,
-the web installer and the flasher 2.0.0 followed (see *Done*). Next:
-1. **Confirm the 26 mA standby overnight** (see *In progress*, sleep): the ~39 mA nights were Fast wake audio,
-   left on in the card's `bananad.conf` without anyone knowing; it is off since 2026-11-16. One clean night's reading
-   is the baseline for every test after it.
-2. **The 12.7 s phantom burst** (see *In progress*, sleep): a second, fast wake source that gives up after three
-   re-sleeps and leaves the handheld awake. Read the wakeup sources at the next burst before guessing.
-3. **The standby drain, next sleep test:** one `deep` sleep with the audio drivers unloaded, to release the LPASS clock
-   votes that keep the ADSP (and `aosd`/`cxsd`/`ddr`) from ever sleeping. The biggest user-facing win left.
-4. **Below-minimum brightness (S)**, then **a real CRT personality (S)** -- the two small items picked to build.
-5. **The flasher on real Windows:** one flash and a mid-flash cancel; 2.0.0's Windows paths are verified only with mocks.
-6. **Languages, phase 2:** the Settings sub-pages and the menu chrome.
-7. **Bluetooth** -- designed and planned, not built (see *In progress*), blocked on a Classic controller to test with.
+1. **Confirm the 26 mA standby overnight.** The ~39 mA nights were `wake_audio_fast = on` left in the card's
+   `bananad.conf`; off since 2026-11-16. One clean night is the baseline for every later sleep test.
+2. **The 12.7 s phantom burst.** A fast wake source that gives up after three re-sleeps and leaves the handheld awake.
+   Dump `wakeup_sources` and `/proc/interrupts` deltas at the next burst before guessing.
+3. **Standby drain, next test:** one `deep` sleep with the audio drivers unloaded, to release the LPASS clock votes that
+   keep the ADSP (and `aosd`/`cxsd`/`ddr`) awake. The biggest user-facing win left.
+4. **Below-minimum brightness (S)**, then **a real CRT personality (S)** (see *Ideas*).
+5. **The flasher on real Windows:** one flash and a mid-flash cancel; 2.0.0's Windows paths are tested with mocks only.
+6. **Languages, phase 2:** Settings sub-pages and menu chrome.
+7. **Bluetooth:** designed, not built; blocked on a Classic (BR/EDR) controller to test with.
 
 ## In progress
 
-- **The SNES style after 0.7.0: done.** The plan is the "Banana Street" page (plan artifact); tasks 1-7 are done, and the
-  device checks (wake mosaic, dithered box art, the card's theme refresh) passed on 2026-11-16, with the Genesis ones.
-  - Done since 0.7.1: the battery is a banana that ripens to brown as the charge drops (five stages from
-    `tools/gen-street.py`), a bolt over it on the charger; Settings > Battery picks the banana alone or with its percent.
-  - Done since 0.7.1: the workshop's own pages (Wi-Fi networks, Updates, first-time setup, Save states) on the ledger, a
-    wide sheet on the pegboard (`ledger.png`); the volume/brightness pill (`pill.png`) and the battery and charger notices
-    (`notice.png`, the ripening banana at twice its size); touch in the workshop (a drawer opens its group, a row is
-    chosen then changed) and on the ledger pages. `tests/run.sh` shoots them (headless `level` and `plug` commands).
-  - Done since 0.7.1: the street's own sounds and background loop (`street/sounds/`, synthesised by
-    `tools/gen-street-sounds.py`: pulse voices and the SPC700's echo, F major); a theme's `"sounds"` may name a `"bgm"`,
-    and the cues and loop change with the theme instead of at the next start.
+- **Sleep: cut the 26-42 mA standby drain** (~140 mW at 37-42 mA; Android-class standby is 5-20 mW). Measured with the
+  gauge's `charge_counter` (the awake line logs it).
+  - *Slow phantom wakes = the battery gauge* (confirmed 2026-11-16): one wake per 1 % drop, 73-91 min apart, each re-slept
+    dark (the 0.7.1 fix holds). They cost the wakes only, not the drain.
+  - *Open, fast burst (2026-11-16 14:34):* wake at 85 s, then three more exactly 12.7 s apart at an unchanged 99 %, then
+    `bananad` gave up and woke fully. A fixed period suggests a timer or firmware ping. Decide whether the give-up
+    should leave the panel dark.
+  - *Test 1, sound server (win):* `sleep.d/20-sound` stops PipeWire/WirePlumber for the sleep: 25-29 mA vs 37-42 mA (the
+    AudioReach graph pinned by `session.suspend-timeout-seconds = 0` kept the ADSP up). `make sound-test` passes 14/14 after.
+  - *Test 2, USB gadget (no win):* `sleep.d/30-usb` earns nothing (26-29 mA either way); candidate to drop.
+  - *2026-11-11:* with `qcom,rpmh-stats`, a 76 min `deep` sleep drew ~32 mA and `aosd`/`cxsd`/`ddr` stayed at 0. APSS and
+    WPSS slept; the ADSP never did, with LPASS clock votes held (`LPASS_HW_DCODEC` 6, `TX_CORE_MCLK` 3). The ADSP cannot be
+    stopped to test (it runs `qcom_battmgr` and `ucsi_glink`). Next: unload the audio drivers.
+  - *Audio drivers unloaded: no win, and unsafe (2026-11-18).* With the menu released and the server down, `rmmod` of the
+    sound stack leaves `snd_soc_lpass_va_macro`, `macro_common` and `q6prm_clocks` stuck (`EAGAIN`; sysfs `unbind` is
+    denied), so `TX_CORE_MCLK`/`TX_CORE_NPL_MCLK` (and `LPASS_HW_DCODEC` 2) stay voted. Pulling `q6apm` out also wedged
+    the ADSP's APM (`CMD timeout` x3), and the card never came back by `modprobe`; only a reboot restored it (sound-test
+    14/14 after). Do not retry without an ADSP-side idea. The remaining lever is the ADSP firmware's own idle, not Linux.
+  - *Queued:* an `s2idle` sleep for comparison. If nothing moves it, the floor is firmware S2R depth and the rest is on the
+    wake side. (Unbinding `ath10k_snoc`/WPSS was tried: 69 mA, no win.)
+  - *Wake side:* 57-60 ms from resume to a drawn menu, kernel resume ~1.05 s; Wi-Fi coming back is the slow part
+    (`sleep.d/10-wifi` always downs it). Consider keeping the link across suspend.
+  - *A game's audio after a wake (fixed 2026-11-09):* `bananad` waits for the server and sends `AUDIO_REINIT` to the game
+    (~1.7 s). **Fast wake audio** (Settings > Sleep & power, default off) keeps the server up instead, at ~12 mA more.
 
-- **Bluetooth: designed, not built (2026-11-08).** Stack chosen by request: a bespoke `banana-bt` over the kernel
-  mgmt API, a small SDP client and `hidp` — no D-Bus, no BlueZ, no udev; Bluetooth Classic HID only. Design:
-  `docs/superpowers/specs/2026-11-08-bluetooth-design.md`; plan (9 tasks): `docs/superpowers/plans/2026-11-08-bluetooth.md`
-  (local working notes, not tracked in the repo).
-  The kernel is ready: the device tree carries the `qcom,wcn3950-bt` node under the WCN3990 combo,
-  `bluetooth`/`hci_uart`/`btqca`/`hidp` build as modules, and `qca/cmbtfw13.tlv` + `.ver` ship in `/lib/firmware`; only
-  userspace is missing. **Blocked on test hardware:** the pad here is an 8BitDo Ultimate 2, which speaks BLE, and this
-  design covers Classic (BR/EDR) pads — the on-device checklist needs an 8BitDo Pro 2/SN30 in D-input or a PS4 pad.
-  BLE (and Bluetooth audio) would be the BlueZ/D-Bus design, deliberately not taken.
+- **Bluetooth (designed 2026-11-08).** Bespoke `banana-bt` over the kernel mgmt API, a small SDP client and `hidp`; no
+  D-Bus or BlueZ; Classic HID only. Spec `docs/superpowers/specs/2026-11-08-bluetooth-design.md`, plan (9 tasks) in
+  `docs/superpowers/plans/` (local notes). The kernel side is ready (`qcom,wcn3950-bt` node, `bluetooth`/`hci_uart`/`btqca`/
+  `hidp` modules, `qca/cmbtfw13.*` firmware). Blocked: the pad here (8BitDo Ultimate 2) is BLE; needs a Pro 2/SN30 in
+  D-input or a PS4 pad. BLE and audio would be the BlueZ design, deliberately not taken.
 
-- **An Android-like sleep: find and cut the 37–42 mA standby drain.** Measured on the unit with the gauge's
-  `charge_counter` (the awake line has recorded it since `a81a11f`): `battery 99% -> 96% (164 mAh in 3.9 h, 42 mA)` and
-  `96% -> 94% (105 mAh in 2.8 h, 37 mA)` in `deep` — about **140 mW**, where an Android-class standby is 5–20 mW. The
-  spurious wakes cost well under 1 mAh together, so this is a steady state, not wake churn; the 99→75 in the field notes was the 2026-11-02 hang (100→74 in 15 h).
-  - **The slow phantom wakes are the battery gauge (confirmed 2026-11-16, 0.8.0).** The overnight sleep (01:19 to
-    12:10, 10.9 h) woke eight times with no key or cable, 73–91 min apart, and the battery had dropped exactly 1 % at
-    each one (99, 98 ... 92 %): the battmgr's per-percent notification, as suspected. The 0.7.1 fix holds: every one
-    re-slept with the panel dark. That is 7 % in 9.9 h; at the ~55 mAh per percent that test 0 measured (164 mAh for 3 %), about
-    **39 mA** -- back at the old baseline, not test 1's 26 mA. Not a regression: `wake_audio_fast = on` was in the
-    card's `bananad.conf` (the image's default is off), so `20-sound` skipped every sleep since at least 2026-11-10 --
-    exactly the 37-42 mA mode it documents. Switched off 2026-11-16; check that key before trusting a drain number. Silencing the notification would only save the wakes themselves.
-  - **Open: a fast phantom burst (2026-11-16 14:34).** A wake 85 s into a sleep, then three more exactly **12.7 s**
-    apart at an unchanged 99 %, so not the gauge. After the third re-sleep `bananad` gave up and woke fully ("the
-    fourth in a row"). A steady 12.7 s period points to a periodic timer or firmware ping, not a key glitch. Next:
-    dump `wakeup_sources` and `/proc/interrupts` deltas on each re-sleep of a burst, and decide whether the
-    give-up should leave the panel dark.
-  - **Done — test 1, the sound server (measured win).** The overnight sleep with `sleep.d/20-sound` (stop
-    PipeWire/WirePlumber in `pre`, restart in the background in `post`) held **25–29 mA**, against the 37–42 mA
-    baseline: 3.3 h at 29 mA, 8.0 h at **26 mA** (206 mAh), 2.0 h at 27 mA. The AudioReach graph pinned by
-    `session.suspend-timeout-seconds = 0` was keeping the ADSP awake. `make sound-test` after the wake: all 14 checks
-    pass (DSP graph RUNNING, amp at 81 %), so the chain comes back on its own.
-  - **Done — test 2, the USB gadget (no win).** `sleep.d/30-usb` unbinds the gadget for the sleep (`usb-gadget down`
-    in `pre`, back in the background in `post`; verified on the unit: `a600000.usb` -> empty -> rebound). Six sleeps
-    measured against test 1's 25–29 mA: the two clean half-hour windows held **26 mA** (11 and 12 mAh), a 2.2 h window
-    **29 mA** with two spurious wakes in it, and the short ones 32–36 mA (too brief to read). A bound UDC is **not**
-    what keeps the controller or its PHY clocks alive -- the hook earns nothing and is a candidate to drop.
-  - **Measured 2026-11-11: the SoC never reaches low power, and the ADSP is the prime suspect.** With a `qcom,rpmh-stats`
-    node in the device tree, a 76-minute `deep` sleep with the sound server stopped
-    drew about 32 mA, and `aosd`, `cxsd` and `ddr` in `debugfs/qcom_stats` stayed at **0**. APSS and WPSS slept the whole
-    time; the ADSP's counters never moved, its last sleep being about when the sound card comes up at boot. A second
-    sleep with the sound server down and the LPASS macros runtime-suspended first made no difference, so it is not
-    suspend racing their 3 s autosuspend. LPASS clock votes stay on with everything idle (`LPASS_HW_DCODEC` 6,
-    `TX_CORE_MCLK` 3). Stopping the ADSP to test is unsafe: it also runs `qcom_battmgr` and USB-C (`ucsi_glink`). Next:
-    a sleep with the audio drivers unloaded, to release those votes.
-  - **Queued, one variable per sleep:** (3) a `s2idle` sleep for comparison, to know what `deep` is worth. If none
-    moves it, the floor is the platform's S2R depth (firmware) and the remaining wins are on the wake side.
-    (Unbinding `ath10k_snoc`/WPSS was tried and rejected: 69 mA over 0.4 h, no win.)
-  - **Wake side:** 57–60 ms from the kernel's resume to a drawn menu; the kernel's own resume is ~1.05 s; Wi-Fi coming
-    back is the slow part (the post hook reconnects in the background). Measure it, then consider keeping the link
-    associated across suspend (`sleep.d/10-wifi` currently always downs it) — "works instantly" is mostly this.
-  - The meter (`battery_charge_uah`, the awake line) is in the image (0.5.8+); the `30-usb` hook ships in it too
-    (0.5.10), so the unit's bind-mounted copy went away with the update. The unit runs **0.5.12, slot b**
-    (updated 2026-11-08).
-  - **A game's audio after a wake (fixed 2026-11-09).** The sound server is stopped for the sleep, which kills the
-    running game's audio stream; RetroArch does not reopen it on resume, so the game came back silent for the rest of
-    the session. `bananad` now waits for the server (with its runtime dir set -- it has no session) and sends
-    `AUDIO_REINIT` down the game's stdin after a wake, the same command the headphone jack uses. Measured on the unit:
-    the server takes ~1.7 s to answer, then the game's driver starts again (client and both outputs active in
-    PipeWire). **Fast wake audio** (Settings > Sleep & power, off by default) keeps the server up through the sleep
-    instead: no gap, at ~12 mA more asleep (37-42 mA rather than 26); the sleep hook reads the key, and `bananad`
-    skips the wait/reinit in that mode.
-
-- **Languages: Spanish and German, Settings screen first.** The pipeline is in: the English string is the key,
-  `tr()` in `ui/src/i18n.cpp` falls back to English, catalogs are JSON in `/usr/share/banana/lang/<code>.json` with a
-  `/data/banana/lang/` override on the card (like a theme), and Settings > Display & sound gains a **Language** row
-  (English / Español / Deutsch) that switches at once. The whole main Settings list is translated — group names, row
-  names, help strip, values, buttons, the toasts whose text is catalogued — 130 strings per language, informal
-  (tú/du). `tools/check-lang.py` runs in `make test` (stale or misspelled keys fail, coverage is printed) and the
-  headless menu test loads the German catalog. Next: the Settings sub-pages, the menu chrome, system/app names,
-  date/time formats, then another language or two.
+- **Languages: Spanish and German.** Pipeline done (`tr()` in `ui/src/i18n.cpp`, JSON catalogs in
+  `/usr/share/banana/lang/`, card override in `/data/banana/lang/`, a Language row). The main Settings list is translated
+  (130 strings, informal tú/du); `tools/check-lang.py` runs in `make test`. Next: sub-pages, menu chrome, system/app names,
+  date/time formats, then more languages.
 
 ## Ideas
-Not commitments: sketches to weigh against the list above. Most handheld distros are a frontend that hands the screen to
-an emulator and waits. Banana keeps the screen: it sees every frame, owns a hardware overlay plane, and can freeze, resume
-and frame any game, RetroArch or not. These lean on that and on the rest of what only Banana has (its own daemon, A/B
-updates, a CPU-drawn UI that costs nothing idle). Each group runs smallest first. Sizes are rough: **S** a day or two,
-**M** about a week, **L** a project.
+Not commitments. Banana owns the screen (it sees every frame, owns an overlay plane, can freeze and frame any game), has
+its own daemon and A/B updates, and a CPU-drawn UI that costs nothing idle. Sizes: **S** a day or two, **M** about a
+week, **L** a project.
 
 ### Picked to build
-- **Below-minimum brightness (S).** The panel's `GAMMA_LUT` can scale the picture down past the backlight's lowest level,
-  for playing in a pitch-dark room. A small extension of the night light in `colorLutFill`, on a Brightness or Night light
-  row.
-- **A real CRT personality (S).** With a CRT mask on: on sleep the picture collapses to a line and then a dot by animating
-  the plane's size; on wake a degauss thump through the vibrator, and the colour warms up over about 20 s through the LUT.
-  Optional faint flyback whine.
-- **Rumble for games that never had it (M).** RetroArch's achievement engine (rcheevos) already reads game memory. A small
-  per-game file maps conditions such as "health dropped" or "boss died" to vibrator patterns through `bananad`, and the
-  files can be shared.
+- **Below-minimum brightness (S):** scale the picture below the backlight's lowest level with `GAMMA_LUT` (extend the
+  night light in `colorLutFill`).
+- **A real CRT personality (S):** with a CRT mask on, collapse to a line and dot on sleep (animate the plane size), degauss
+  thump via the vibrator and a ~20 s colour warm-up on wake.
+- **Rumble for games without it (M):** per-game files map rcheevos memory conditions to vibrator patterns via `bananad`.
 
-### The compositor as a feature
-- **Screenshots that are the real frame (S).** A button combo (or a pause-menu row) saves the exact frame the panel
-  shows -- the `3c-dump-now` path already reads it bit-exact -- with the overlay cards left out, into a per-game
-  folder that the game page shows. *(A screenshot gallery was dropped by request on 2026-11-04; this is only the
-  capture -- skip it if that still stands.)*
-- **A frame-time graph on demand (S).** The 3F trace already times every frame; a pause-menu toggle draws a small
-  graph and fps in a corner of the overlay, for everything, not just RetroArch. *(A performance overlay was dropped
-  in favour of RetroArch's own OSD; listed again only because this one also covers ports.)*
-- **Filters for every game (M).** The rotate pass already touches every pixel once, so a colour step there is nearly
-  free: colour-blind filters (protan/deutan/tritan), a GBA colour-correction curve, a grayscale "battery saver" mode.
-  One Settings row and a pause-menu row, for RetroArch, ports and BananaTube alike.
-- **Guides over the game (M).** A pause-menu *Guide* row opens a text or image walkthrough (a `.txt`/`.md`/`.png`
-  beside the ROM, or a per-game folder) on the overlay plane, scrollable with the d-pad while the game is frozen.
-- **Touch controls for ports that need them (M).** Ports that expect a mouse or a touchscreen get a translucent
-  on-screen layer on the overlay plane, injected through uinput, defined per port in a small file.
-- **The handheld as a webcam (M).** Add a UVC function to the USB gadget beside NCM/adb and feed it the compositor's
-  frames: plug into a computer and OBS sees a camera showing the game, no capture card.
-- **Home button, game keeps waiting (L).** From the pause menu, *Home* goes back to the library with the game still
-  frozen (it is already SIGSTOPped and its buffers are imported); its tile shows a "running" badge and A picks it up
-  instantly, with no reload. A second game asks to close the first.
-- **Last-30-seconds clips (L).** Keep a ring of recent frames (downscaled; hardware encode only if the SoC's video
-  block -- the `venus` driver, not in this trimmed kernel today -- can be enabled) and save the last half-minute on a
-  combo.
+### Compositor
+- **Real-frame screenshots (S):** save the exact panel frame without overlays (the `3c-dump-now` path). *Gallery dropped 2026-11-04.*
+- **Frame-time graph (S):** pause-menu toggle drawing fps/graph from the 3F trace, for ports too.
+- **Filters for every game (M):** colour-blind modes, GBA colour correction, grayscale, in the rotate pass.
+- **Guides over the game (M):** a pause-menu row showing a `.txt`/`.md`/`.png` walkthrough on the overlay.
+- **Touch controls for ports (M):** translucent overlay layer injected via uinput, defined per port.
+- **Handheld as a webcam (M):** UVC gadget function fed compositor frames.
+- **Home button, game keeps waiting (L):** return to the library with the game still frozen and a "running" badge.
+- **Last-30-seconds clips (L):** frame ring buffer; hardware encode needs the `venus` driver, not in the kernel.
 
 ### Play sessions
-- **Per-game memory (S).** Brightness, volume, the shader toggle, fast-forward and the slot last used, restored when that
-  game starts again (`pergame.conf` already exists).
-- **Quick-resume shelf (S).** The last three games with their saved state, one button away from the home screen, so a
-  pick-up-where-you-left-off session needs no library browsing.
-- **Sleep means paused, always (S).** On a power-button sleep, write a quick state first (the game is about to be frozen
-  anyway), so even a dead battery overnight loses nothing.
-- **Session recap and play diary (S).** After a game: time played, achievements this session, the state slot used --
-  then a weekly "you played 6 h, mostly Kirby" card. The data is already in `playstats.tsv` and `/run/banana/cheevos`.
-- **Gentle limits (S).** An optional "remind me after 1 h" and a bedtime reminder on the overlay (no forced stop), and a
-  separate kid profile with a daily allowance and a locked Settings.
-- **The game page (M).** The shelf shows a title and "genre · year". The scraper receives description, developer,
-  publisher, players and rating and throws them away (`scrape.cpp` writes only genre and date); `playstats.tsv` holds
-  plays, seconds and achievements that no shipped theme renders. One X page per game: art, description, facts,
-  playtime and achievements, with play/states/saves/reset actions.
-- **Sessions that survive a hang (M).** Quick resume writes a state only on a clean quit (`savestate_auto_save`), so a
-  hang or forced power-off loses everything since the last manual save. The bridge can save into two alternating hidden
-  slots on a timer, with a one-line fsynced journal in `/data/banana/sessions.tsv`; the menu offers the survivor on the
-  home card. The save-RAM `autosave_interval` does not cover states.
-- **Autosave that survives a crash (M).** Combine the pause-menu slot plumbing with the idea above: a rolling hidden
-  state every few minutes, and on the next boot the home card offers "the game was cut off 4 minutes ago -- resume?".
-- **Instant "off" (M).** Make the power-off a deep sleep that resumes into the menu or the frozen game in about a
-  second, with a real shutdown only at a low battery or after N days.
+- **Per-game memory (S):** restore brightness, volume, shader, fast-forward and slot (`pergame.conf` exists).
+- **Quick-resume shelf (S):** last three games with their saved state on the home screen.
+- **Sleep means paused (S): built, untested on the unit (2026-11-18).** `bananad` asks RetroArch for the quit-time `.auto`
+  state (patch `0015`, `SAVE_STATE_AUTO`, answer in `/run/banana/autosave`) before it freezes the game; needs Quick resume
+  on, skips a game the pause menu froze, gives up after 1.5 s. Needs an image build (`make`) and a sleep with a game open.
+- **Session recap and play diary (S):** from `playstats.tsv` and `/run/banana/cheevos`.
+- **Gentle limits (S):** "remind me after 1 h", bedtime reminder, a kid profile with a locked Settings.
+- **The game page (M):** art, description, facts, playtime, achievements; the scraper already receives the data and drops it.
+- **Sessions that survive a hang / autosave on crash (M):** two alternating hidden state slots on a timer, a fsynced journal
+  in `/data/banana/sessions.tsv`, and a "cut off 4 minutes ago, resume?" card at boot.
+- **Instant "off" (M):** power-off as a deep sleep, real shutdown only at low battery or after N days.
 
 ### Battery and hardware
-- **Haptic cues (S).** `bananad` already drives the vibrator. Use short pulses for achievements, a low-battery warning and
-  a sleep refusal, each switchable in Settings, so the slate can tell you something without a sound.
-- **Charge limit for a handheld left on the cable (S).** If the charger driver exposes
-  `charge_control_end_threshold`, an "80 % when plugged in" switch. Batteries in docked handhelds age fast.
-- **Battery health and an honest estimate (S).** Cycle count and full-charge capacity from the gauge, and "about 3 h left
-  at this game's pace" from the same charge counter the sleep work already reads. *(The battery-time item was
-  dropped by request on 2026-11-04; the health half is new.)*
-- **AMOLED care (S).** Shift the overlay cards and the home shelf's static chrome by a pixel or two over time, and offer
-  a true-black theme and a "dim the bezel" option -- the panel is OLED, and static frames burn in.
-- **Headphone volume limit (S).** A separate maximum for headphones, remembered per output.
-- **Auto clocks from real frame times (M).** The compositor knows how long each frame took. Start a game on
-  `balanced` and step the clocks down while there is headroom and up before a frame is missed: battery life without a
-  profile to pick per game.
+- **Haptic cues (S)** for achievements, low battery, refused sleep.
+- **Charge limit (S):** "80 % when plugged in" if the charger exposes `charge_control_end_threshold`.
+- **Battery health (S):** cycle count and full-charge capacity. *Battery-time estimate dropped 2026-11-04.*
+- **AMOLED care (S):** drift static chrome by a pixel or two, a true-black theme, dim the bezel.
+- **Headphone volume limit (S),** remembered per output.
+- **Auto clocks from frame times (M):** step clocks down with headroom, up before a miss.
 
 ### Saves and sharing
-- **Save sync over Wi-Fi without an account (M).** Two-way sync of `saves/` and `states/` with a folder on your own
-  computer or NAS (SMB/WebDAV, or Syncthing's protocol later), conflict-safe by keeping both copies.
-- **A web page on the handheld (M).** Open `http://banana.local` from a phone or laptop on the same Wi-Fi: upload ROMs
-  and BIOS files, browse and download screenshots and saves, edit `settings.conf` safely, read the logs, start an
-  update. ksmbd already shares the card; this is the friendly version, with a QR code in Settings > Network.
-- **Achievement hunting (M).** A game-page tab with every achievement, locked ones included (from the
-  RetroAchievements API, cached for offline), shown by rarity, plus "closest to unlocking" hints.
-- **Two handhelds, one game (L).** RetroArch netplay between two Banana Pockets found automatically on the same Wi-Fi
-  (mDNS), started from the pause menu: *Invite* on one, a toast on the other.
+- **Save sync over Wi-Fi (M):** SMB/WebDAV to your own computer/NAS, keep both copies on conflict.
+- **A web page on the handheld (M):** `http://banana.local` for uploads, saves, logs, settings, updates; QR code in Settings > Network.
+- **Achievement hunting (M):** all achievements by rarity, cached from the RetroAchievements API.
+- **Two handhelds, one game (L):** RetroArch netplay via mDNS, started from the pause menu.
 
-### Updates, recovery and trust
-- **Slot versions in Settings (S).** Show each slot's version and build date in Settings > System (the 0.5.17 test build
-  that kept the same version number is exactly why). Pruning old packages is already done (`update prune`).
-- **Offline update cache (S).** Keep the last good update package on the card until the new slot boots once, so a failed
-  update can be reapplied without Wi-Fi.
-- **Field diagnostics bundle (S).** One Settings button that packs the logs, the sound-server log, `dmesg` tail and
-  `settings.conf` (with secrets stripped) into `/data/banana/backups` for a bug report.
-- **Delta updates (M).** Ship a binary diff of the squashfs against the previous release (zchunk/bsdiff) so a typical
-  OTA is a few MB instead of ~240 MB, with the full package kept as the fallback.
-- **A recovery screen without Android (M).** Hold a button at power-on to get a minimal menu: boot the other slot,
-  reset settings, run a filesystem check, or start transfer mode -- for when the menu itself will not start.
-- **Signed releases (M).** Sign the update package and check the signature before writing a slot, so an update from a
-  card or a mirror is provably Banana's.
+### Updates, recovery, trust
+- **Slot versions in Settings (S)** (version and build date per slot).
+- **Offline update cache (S):** keep the last good package until the new slot boots once.
+- **Field diagnostics bundle (S):** logs, `dmesg` tail, `settings.conf` (secrets stripped) into `/data/banana/backups`.
+- **Delta updates (M):** zchunk/bsdiff against the previous release, full package as fallback.
+- **Recovery screen without Android (M):** hold a button at power-on: other slot, reset settings, fsck, transfer mode.
+- **Signed releases (M):** verify a signature before writing a slot.
 
 ### Polish
-- **Quick settings in the pause menu (S).** Brightness, volume and Wi-Fi as sliders and toggles at the
-  bottom of the pause menu, so nobody leaves a game to change them. *(A quick-settings overlay was dropped earlier;
-  the pause menu now exists, so this would be a few rows in it rather than a new overlay.)*
-- **Sleep timer for BananaTube (S).** "Stop after this video / in 30 min" in the player, then the handheld sleeps.
-- **Fresh-card welcome (S).** When the library is empty, a friendly page instead of empty shelves: where ROMs go, the
-  file-sharing address and QR code, and which BIOS files each system still needs (checked against `bios/`).
-- **What's new after an update (S).** The first boot of a new version shows a short card with the release's headlines
-  (shipped with the image), once.
-- **Per-game controls (M).** A Banana-styled remap page from the pause menu (swap A/B, turbo on a button, d-pad as
-  stick), saved per game, in place of RetroArch's remap menu.
-- **Faster to the menu (M).** The menu now waits ~1.8 s for the sound on a cold boot. Show the menu while the audio
-  comes up and play the click on the first sound that is ready (or skip it) as a "fast boot" option.
+- **Quick settings in the pause menu (S):** brightness, volume, Wi-Fi rows.
+- **Sleep timer for BananaTube (S).**
+- **Fresh-card welcome (S):** where ROMs go, share address and QR, missing BIOS files.
+- **What's new after an update (S):** a one-time card of headlines.
+- **Per-game controls (M):** a Banana remap page replacing RetroArch's.
+- **Faster to the menu (M):** show the menu while audio comes up (~1.8 s wait on cold boot).
 
-## Field notes (open questions, from working on the unit)
-
-- **The settings.conf reset on 2026-11-03 was a device test, not an update.** During the back-up/restore work the
-  busybox `tar` on the unit failed to create an archive (`-z` is not built in); the test had already moved
-  `settings.conf` aside and the script's own cleanup removed that copy, so the file was restored from the image's
-  template (`/etc/banana/settings.conf`). That template has `ssh = off`, `adb = off` and every other default, which is
-  what reset the unit's SSH/ADB (and theme) settings. The OTA does not touch `/data`. Current values were set back to
-  `ssh = on`, `adb = on` at 23:21; the 23:04 archive still holds the defaulted copy. **Rule for future device tests:
-  never modify `/data/banana/settings.conf` while testing; keep any safety copy on the card, outside the tree under
-  test, and verify the archive exists before deleting anything.**
-- **Unexplained, 2026-11-03 23:21:59 on 0.5.5:** `banana-ui-session` exited and init respawned the menu, and
-  `settings.conf` was rewritten at 23:21. The user did not press Restore, and the file is not the 23:04 archive's copy
-  (`ssh`/`adb` differ), so it was not a restore of that archive. A dropbear restart at 23:21:55 (an SSH/ADB toggle from
-  the menu) is the only nearby event. Watch for a repeat: `banana-ui.log.1` tail + `/run/banana/messages`.
-- **Update packages pile up -- fixed after 0.6.0 (2026-11-10).** `update prune` keeps the two newest packages (by
-  version, so 0.10 sorts above 0.9) and the running version's own, deletes the rest and logs each to `updates.log`;
-  rcS runs it two minutes into a boot (a good boot), never while an update is written or downloaded, and drops a
-  partial `*.new` only when it is a day old. Tested on the unit against a scratch directory (`BANANA_UPDATES=`); the
-  card's ~40 old packages go at the first boot of the next image.
-- **`rcK` transfer mode wants one real card handover (0.5.10).** The shutdown path that leaves the card to a computer
-  (`usb-msc.mode = rw`, `/data` unmounted) is reasoned from code and the sleep tests; the refused-handover branch is the
-  one to try on hardware with a real card before trusting it.
+## Field notes
+- **Rule for device tests: never modify `/data/banana/settings.conf`;** keep any safety copy on the card, outside the tree
+  under test, and verify the archive exists before deleting anything. (2026-11-03: a failed `tar -z` test reset
+  `settings.conf` to the image template, turning off SSH/ADB and the theme. The OTA does not touch `/data`.)
+- **Unexplained, 2026-11-03 23:21:59 on 0.5.5:** `banana-ui-session` exited and `settings.conf` was rewritten, with no
+  Restore pressed. If it repeats: `banana-ui.log.1` tail + `/run/banana/messages`.
+- **`rcK` transfer mode:** the refused-handover branch (`usb-msc.mode = rw`, `/data` unmounted) is reasoned from code only;
+  try it once on hardware with a real card.
+- **Update packages piling up:** fixed after 0.6.0 (`update prune`, run 2 min into a boot).
 
 ## Maintenance
-- **System shaders, two loose ends.** With a mask or colour active, the first commits after a wake can fail `EBUSY`: at
-  most 5 frames (about 83 ms) as the screen returns, not visible; 45 failures in 21 game wakes against 2 in 9 with both
-  off, cause not found. And one `[dpu error] enc35 timeout pending` in about 60 wakes, on the retry after a failed
-  `deep` suspend (`-95`, which predates the shaders).
-- **Agent DX:** `make agent-check` (quiet syntax + host compile + the fast suite, 4 lines on success) and `make agent-map` (regenerates the source map) were added 0.5.x; keep the `AGENTS.md` Source Map fresh when core files move.
+- **System shaders, two loose ends:** with a mask or colour active the first commits after a wake can fail `EBUSY` (at most
+  5 frames, ~83 ms, not visible; cause unfound); and one `[dpu error] enc35 timeout pending` in ~60 wakes, after a failed
+  `deep` suspend (`-95`, predates the shaders).
+- **Agent DX:** `make agent-check` and `make agent-map`; keep the `AGENTS.md` Source Map fresh when core files move.
 
-*(Dropped: a quick-settings/performance overlay -- performance is fine and RetroArch's own OSD (`fps_show` /
-`statistics_show`, already rotated by its patches) covers FPS/CPU if wanted. And on 2026-11-04, by request: a screenshot
-gallery and collections/tags (auto genre shelves from the scraped `gamelist.xml` were proposed; not wanted). The
-library-UX item is closed: the scraper already skips games that have art, and now starts only on the charger or cable.
-Also dropped by request: porting BananaTube's newer settings screen (its in-app settings are kept as they are), and the
-accessibility / in-menu log viewer / battery-time item (2026-11-04).)*
+*Dropped by request: quick-settings/performance overlay (RetroArch's OSD covers it), screenshot gallery, collections/tags,
+porting BananaTube's newer settings screen, accessibility / log viewer / battery-time (2026-11-04); 802.1X, static IP and
+hotspot for Wi-Fi unless someone asks.*
 
-## Completed Baseline (0.4.9+)
-- **Core & CI:** End-to-end QEMU `virt` boot/update/test (`tools/qemu-boot.sh`), A/B OTA updates, first-time setup, `ksmbd`, `dropbear`, `ath10k_snoc`.
-- **Input & Library:** `rsinput` Nintendo layout (`A=east, B=south`). Single-screen RetroArch library only (no DS/3DS dual-screen launchers).
-- **Display & Graphics:** 90°-rotated 1240x1080 panel in `banana-ui`; games run upright as Wayland clients of `banana-ui`'s compositor (one EGL rotate pass, `video_rotation = 0`). Mesa **26.2.6** (freedreno GL + **Turnip Vulkan**) on the Adreno `a613` -- supported natively from Mesa 26.2.0, so the image carries no local a613 source patch (SwanStation 60 fps @ 4x).
-- **Development access:** the USB-C port is an NCM Ethernet gadget with a DHCP server (`169.254.170.2`) plus SSH, and **adb** over an adb (FunctionFS) function on the same cable, with a TCP `5555` listener on its own **ADB debugging** switch (off by default, independent of SSH). The loopback interface is up, which the adbd control socket needs.
-- **Hardware Validation (`docs/RPC-TEST.md`):** In progress on physical units.
+## Baseline
+QEMU `virt` boot/update/test (`tools/qemu-boot.sh`), A/B OTA, first-time setup, `ksmbd`, `dropbear`, `ath10k_snoc`. Nintendo
+button layout (`A=east`). Single-screen RetroArch library only. 1240x1080 panel rotated 90°; games are Wayland clients of
+`banana-ui`'s compositor (one EGL rotate pass). Mesa 26.2.6 (freedreno GL + Turnip Vulkan) on the a613, no local patch.
+USB-C is an NCM gadget (DHCP `169.254.170.2`, SSH) plus adb (FunctionFS, TCP 5555 on its own switch).
+Hardware validation (`docs/RPC-TEST.md`) is in progress.
 
 ## Done
-- [x] **The landing page, the web installer and the flasher 2.0.0 (2026-11-16).** `site/` is a Banana Blast-styled
-  GitHub Pages site (`pages.yml`), with Ko-fi and Discord. `site/install.html` flashes OpenABL over WebUSB, going
-  through fastbootd because the stock RPC bootloader has no `flash:` command; tested stock -> OpenABL end to end.
-  `docs/INSTALL.md` leads with it and with BananaLinux Flasher 2.0.0 (the Blast theme, plus drive-safety fixes: btrfs/LUKS
-  root detection, fail-closed unmount, drive re-validation before the wipe). CI installs `python3-pil` so
-  `check-themes` can regenerate the baked themes, and compares baked art by pixels rather than PNG bytes.
-- [x] **0.8.0: the Genesis style, Banana Blast (2026-11-16).** Settings > Display & sound > Style lists Genesis
-  beside Classic and SNES. Banana Blast is a neon course at night: a billboard per system in its maker's colour, the
-  banana on a skateboard, and L/R boosting to the next maker with speed lines. Art is baked by `tools/gen-blast.py` to
-  the Mega Drive's rules (9-bit colour, true-black backdrops for the AMOLED, checker dithers, a raster-bar horizon, the
-  floor drawn as 119 per-line scrolled rows, the cross lines live and rolling while the course moves). The leaning HUD
-  face and chrome title face with hard-banded gradients; Options (`settings_genesis.cpp`), the name-entry search, the
-  shadow-mode pause and the cart rack with dithered box art; a palette-fade launch with a line-scroll wobble (the
-  backend's FADE9 and WOBBLE ops); its own FM cues, a boost whoosh and a funk loop with crushed vocal chops
-  (`tools/gen-blast-sounds.py`). The secret: the banana taps a foot after 20 s idle, and the Sound Test code turns on
-  the Blue Banana (a saved setting: blue sprites, afterimages, a rev on boost). Two more palettes, Acid Mall and Hyper
-  Arcade (`blast-<id>.json`, rewritten from `blast.json`); `tools/check-themes.py` checks the bake and the generated
-  themes. The kms backend's damage is a set of rects, so scattered idle changes (the twinkling stars) copy only themselves.
-  Also in 0.8.0, on the street:
-  the achievement and message toasts on the street's panel (`toast.png`, the badge cut to 24 x 24
-    in 15-bit colour); box art on the counter dithered to the Super NES's colours on the grid (the `ditherContain`
-    fit), Settings > Display & sound > Box art keeps the original; a selected closed shop has its folder pinned over
-    the sign (`sys.folder`); back from a sleep the street comes back through the mosaic (`wake.progress`, Motion off
-    skips it). The card's copy of the image's themes is brought up to date once per version (`.image-files`; edited
-    files kept), and `tools/rpc-push-update.sh --apply` checks that the reboot happened and the new version runs.
-- [x] **0.7.0: the new UI, the SNES style (2026-11-11).** Settings > Display & sound > Style picks Classic (the Pocket
-  layout and its themes) or SNES, the new default on a new card. SNES is Banana Street: every system a shop on one
-  street, on a 310 x 270 grid drawn at exactly 4 device px a unit, art baked by `tools/gen-street.py` to the Super NES's
-  rules (15-bit colour, shading ramps, scanline skies, parallax) for each time of day. Banana's own pixel fonts, the
-  mosaic launch, the walker (walks, turns, bobs), and SNES painters for Settings (the workshop), the keyboard (the phone
-  book) and the pause menu (the ticket). Five neighborhoods: Banana Street, Harbor, Blossom Row, Sundown Strip and Old
-  Town. `tools/check-themes.py` checks their art and that the generated ones match `street.json`.
-- [x] **System shaders (on `main`, 2026-11-11).** Settings > Shaders: CRT, aperture-grille and LCD masks on the overlay
-  plane at a strength slider, and Trinitron, PVM and handheld colour through the panel's CTM, with no GPU work. The mask
-  lines up with the game's pixels at integer scales and sits under a frame; MODE + Select toggles it for one game. The
-  night light moved to the same atomic `GAMMA_LUT`, and the flip path no longer allocates. Accepted on the unit: 22
-  wakes in the menu and 21 with a game running, 16.67 ms pacing, 0 drops.
-- [x] **Bezels by the compositor.** Screen frames moved from RetroArch's overlay to the overlay plane, for every
-  RetroArch system and ports, chosen per system (Settings > Frames) and per game (Game options, or the pause menu's
-  *Frame* row, which applies at once). The game's window is sized to the frame's hole, so no integer scale is forced and
-  a shader runs under a frame. GB, GBC and GBA keep their console art with the LCD grid removed; anything else can use a
-  frame drawn from the theme. Measured: 0 dropped frames with the overlay held through play. Design:
-  `docs/superpowers/specs/2026-11-10-compositor-bezels-design.md` (local notes).
-- [x] **0.6.1: the compositor closed out (2026-11-10).** `cage` and `wlroots` are out of the tree and the image, so
-  `banana-ui` is the only path for RetroArch, ports and BananaTube (T7/T8 in `docs/PLAN_DRM_COMPOSITOR.md`). A menu wake
-  keeps DRM master on the same fd, so a surviving child can no longer leave the panel dark (F15). PSX is settled at 60
-  fps emulated on both paths with 0 presented drops (T6), **Change disc** swapped discs on a test `.m3u` (T9), and the
-  menu-button combos (menu, menu + X, menu + Start) pass by hand on the real pad.
-- [x] **0.6.0: one screen, one owner (2026-11-10).** `banana-ui` is an in-process Wayland compositor on atomic KMS
-  (primary + overlay planes) and RetroArch, ports and BananaTube run as its clients -- `cage` is only the
-  `compositor = "cage"` escape hatch now. The game frame goes through one EGL rotate pass (the plane cannot rotate,
-  measured), **bit-exact** after a `mediump` -> `highp` fix (it shifted ~1 column in 12, which is what broke LCD shaders
-  and bezel grids), and any window size is letterboxed; the toplevel says fullscreen, so SDL apps (BananaTube) take
-  the panel's size. **Banana's pause menu** replaces RetroArch's on the menu button: the game is frozen (SIGSTOP of the
-  launcher's whole tree, ports included) under a two-column menu -- slots 0-9 with thumbnails, change disc, fast
-  forward, shader, achievements, restart, RetroArch's menu (also menu + X), quit -- with RetroArch's lines queued one
-  per 100 ms (it collapses repeats per poll, and a query on its stdin crashes it). **Polish:** menu + volume is the
-  backlight in a game; the volume/brightness pill, the low-battery card and one 2.5 s charging notice replace the
-  RetroArch message line and the duplicate charger card; the burn-in guard leaves a game alone. **The boot click**
-  waits for the sound: the splash holds before the drop until a playback frontend is RUNNING (the ADSP's APM only
-  answers ~6.35 s in -- a polling kernel patch proved it is the DSP's start-up, not a lost reply; see
-  `docs/BOOT-SOUND.md`). Measured: RetroArch Vulkan 60.03 fps (0/932 dropped), Dreamcast 59.999 fps, `sound-test`
-  14/14. Plan and trail: `docs/PLAN_DRM_COMPOSITOR.md` (+ `_HISTORY`).
-- [x] **Wi-Fi management, as far as it goes (0.5.12).** WPA2-PSK networks, an old WEP network, saved-network priority
-  (L/R on a network) and the on-screen keyboard all work from Settings > Network. Closed by request: 802.1X, static IP
-  and hotspot are not wanted unless someone asks (802.1X would add wpa_supplicant's EAP build option and a
-  certificate/identity screen; hotspot would need hostapd).
-- [x] **A 32x32 icon set (0.5.12).** The shelf's system icons were a mix of 128 px upscales and 32 px originals; they are
-  one 32x32 pixel-art set now -- Ben Jelter's Console Icon Pack (credited in the README), with new dedicated art for
-  GameCube, PlayStation 2 and PS Vita -- and BananaTube's tile is redrawn from scratch as the master anchor. A 32 px
-  source draws at its own size through `pixelContain`, so the whole shelf is uniform. Two tools came with it:
-  `tools/gen-icon.py` (a local ComfyUI/SDXL pixel-icon generator, img2img references included) and
-  `tools/make-blueprints.py` (deterministic blueprints that assert the 1 px outline and hard alpha).
-- [x] **Screen bezels (0.5.12).** Settings > RetroArch > Screen bezels (on by default) draws SkyWalker541's CC0 Retroid
-  Pocket Classic frames around GB/GBC/GBA games, 1 px LCD grid included. Every frame's window is cut for the integer
-  multiple its system lands at (GB/GBC 160x144 at 7x, GBA 240x160 at 5x), so a framed launch appends an integer scale
-  and the core's own aspect and skips a per-game shader (the grid would double); the switch off disables the overlay
-  even after RetroArch had saved one on, and the card's own RetroArch values are read before a framed game and written
-  back after it. `bezels` had to enter the settings schema: missing there, the boot normaliser re-appended `on` from the
-  template at every boot, and `check-systems.py` now fails on any template key the schema does not know.
-- [x] **The pill in game (0.5.11).** The message the bridge pushed into RetroArch was its own grey box
-  bottom-left. `buildroot/patches/retroarch/0014-banana-osd.patch` (the first patch carried for a look, not a
-  fix) draws `SHOW_MSG BN V <n>` / `BN B <n>` as the menu's own card: the speaker/sun glyphs, a ten-segment
-  bar, the gold percent, the menu's geometry scaled to the panel, in the colours `banana-ui` writes to
-  `/data/banana/osd-style` when it applies a theme (so the pill follows the theme). The achievement popup is
-  restyled to match (badge, title, points; RetroArch's English header dropped) and is now the only achievement
-  channel. `run-retroarch` also sets Banana's Pixelify font as the OSD font. Every other message keeps
-  RetroArch's style; `hud = 0` silences the pill and the popup.
-- [x] **Banana Bridge (0.5.11).** While a game runs, `bananad` speaks through RetroArch's own message line: volume and
-  brightness keys, a low battery (10 % and 5 %) and the shutdown at the floor, the unplugged headphones pausing the
-  game, and achievements as they unlock (an inotify watch on `/run/banana/cheevos`, with `/run/banana/hud-live` so the
-  menu does not toast them again). Four strings in three languages, one Settings row (`hud`, default on), and no new
-  process or socket: the FIFO the daemon already writes was the whole channel.
-- [x] **The volume keys use the ALSA C API (0.5.11).** `bananad` set the amplifier through
-  `/usr/libexec/banana/volume` (busybox `amixer`), one fork/exec per key press, and stored the result with
-  `alsactl store`, which walks all 197 controls of the card (38 KB) two seconds after every change. The keys are
-  `snd_mixer_*` now: `snd_mixer_selem_get_playback_volume` reads the amp, the step is clamped, and
-  `snd_mixer_selem_set_playback_volume_all` writes every channel. The percent arithmetic is amixer's own
-  (`convert_prange`/`convert_prange1`, including "a nonzero percent is never silence"), so the pill and Settings >
-  Volume still show the same numbers. The level is kept in `/data/banana/volume` (the two raw values, temp file +
-  fsync + rename); the card's `asound.state` is replayed once on the first boot after the update and never again.
-  `/usr/libexec/banana/volume` stays for the Settings row, which runs in the menu's process, not the daemon's. ACP's
-  UCM profile sets the amp itself when the sound server opens the card (rcS starts it behind bananad), so the saved
-  level is put back once, five seconds after start; a key press before then cancels it. `sound-config-test` guards
-  the no-fork rule (39 checks).
-- [x] **The hardening sweep (0.5.10, 2026-11-05).** A full read of the tree for bugs, dead weight and doc drift, then one
-  pass over all of it. **Daemon:** `update`, `update-check` and `backup` write `/run/banana/awake.pid`, so a 200 MB
-  slot write, a release download or a whole-card tar can no longer be idle-suspended; `rcK` runs `usb-msc off` so a
-  card handed to a computer comes back before shutdown unmounts it; the wake reason distinguishes a real cable plug
-  from an unplug, which no longer burns one of the three phantom-wake retries; `pid_of` clamps a pidfile whose
-  wall-clock age exceeds the uptime, so a clock step (ntpd at Wi-Fi) cannot make a running game look gone. **The
-  sleep.d hooks are now exercised**: `sleep-test.sh` provides stand-in `wifi`/`sound-server`/`usb-gadget` helpers and
-  asserts the pre hooks ran in name order and the post hooks brought all three back (46 checks, was 41) -- until now
-  every hook took its `[ -x ... ] || exit 0` guard and no-oped, which is what let a broken one ship. **BananaTube:**
-  every write to the shared `results` now takes the thumbnail worker's lock, `qualitySave` writes a temp file with
-  fsync and renames it (a power cut cannot truncate the saved cap), the per-tap log lines are behind
-  `BANANA_TUBE_TOUCH_DEBUG`, a panel that reports only `ABS_MT_TRACKING_ID` still registers taps, `resolveStream`
-  takes the first video and audio URL instead of rejecting three, and `ipcSend` writes the rest of a command on a
-  non-blocking socket. **UI:** X offers a game's options for every system (it worked, only NDS advertised it),
-  `readGamelist` no longer matches the root `<gameList>`, the library rescans a newly copied ROM without waiting for
-  a keypress, and `wifi::Job`'s `active` is atomic. **i18n:** the update and box-art row values are catalog keys
-  (es/de 130/130) and `tools/check-lang.py` now fails on a literal passed to `tr()` that is not a key -- the rule
-  that was missing when they shipped English-only. **Dead weight:** `etc/fstab`, `accounts.conf.example`,
-  `tools/make-console.py`, `tools/qemu-e2e.sh`, `docs/img/readme/`, `docs/img/boot-animation.gif` and the stray
-  `bgm.wav` are gone; `autosleep_minutes` ships 0 (the slate default), `sleep_debug` is commented out as card-only.
-  **CI:** a core's own patch triggers the cores job, the `sh -n` glob no longer trips on a non-shell file, and
-  `make test` builds bananad. ~20 docs corrected to the code (the mono amp, SwanStation at 4x, the lease/blend/test
-  list/volume law, the Makefile inputs, BANANATUBE's touch.conf and harness). **Review:** a whole-branch read before the
-  tag found one critical (the first `rcK` fix could remount `/data` while a computer was still writing it) and four
-  important (a double `wifi down`, an untranslatable count phrase, a `pid_of` clamp that disabled the reuse guard, and
-  an `sh -n` glob that parsed 2 of 22 helpers); all are fixed in the last commit. Released as **0.5.10**. Deferred,
-  with the reasoning in `docs/superpowers/specs/2026-11-05-hardening-sweep-design.md`: the second canvas and the
-  bottom-screen path are the headless dual-mode renderer's tested path, not dead code.
-- [x] **The on-device self-test: dropped, the pieces already exist (2026-11-05).** A `tools/rpc-selftest.sh` that
-  walks the `docs/RPC-TEST.md` checklist was going to be the next thing built; looking at the checklist against what
-  is already in the tree, it would be mostly a driver around existing parts, so it is closed instead. The audio route
-  end to end is `make sound-test` (14 checks: server, ALSA default, sink, AW88166 gain, the AudioReach graph, a real
-  client, the menu handover); `tools/rpc-thermals.sh`, `rpc-usb-trace.sh`, `rpc-hang-watch.sh`, `rpc-gpu-probe*` and
-  `rpc-screen.sh` cover heat/fan, the USB gadget across a plug, a hang and a frame; and the remaining boxes (version
-  and slot, panel size and rotation from banana-ui's log, Wi-Fi state, UDC state, `/data` free space, the update
-  packages on the card) read straight off the unit with one ssh. `docs/RPC-TEST.md` stays the human checklist -- the
-  parts a script cannot judge (does a game run, does a save survive a reboot) are the parts that need eyes anyway.
-- [x] **BananaTube: the picture is back, and the rest of the YouTube work.** Since cage left, a video played sound with no
-  picture: `banana-ui`'s compositor refused a second client, mpv is one, and its Wayland output also wants `wp_viewporter`
-  and sends `wl_shm` frames, neither of which the compositor took. It now admits one player over the kiosk client (it
-  covers the app, and the app's newest frame returns when it leaves), offers `wp_viewporter` to the player only, and
-  uploads shm frames in the EGL presenter. Then the items left over: **captions** (START in the player; yt-dlp fetches
-  them beside playback and mpv takes them with `sub-add`), a **Subs** tab (X follows a channel, InnerTube's browse
-  endpoint, no account), an **Offline** tab (START saves to `/data/banana/downloads`, picture and sound as two files) and
-  a **play-next queue** (hold A; hold SELECT turns autoplay off). `ui/tests/compositor-player-test.cpp` runs real mpv
-  against the real server on the host. Awaiting a pass on the unit.
-- [x] **BananaTube: the Pocket shell, the player OSD and a near-free idle (0.5.9).** Three tracks in one release.
-  **Pocket shell:** the client wears the OS's own theme -- `#17140d` ground, butter ink and olive metadata, banana-gold
-  focus, Pixelify Sans (Medium titles/wordmark, Regular body, Inter fallback), a crisp framed screen with the dot grid,
-  a brand strip with the banana mark and the *BananaTube* wordmark, four Pocket cards per page (duration chip on the
-  thumbnail, gold resume chip), a keyboard that fills the frame (Shift shows `abc`/`ABC`, Search gets a gold ring while
-  the query is non-empty), and button-chip hints; the mpv OSD takes the same palette and face and the app tile is gold.
-  **Player OSD (B1 + Y):** while a video plays the app draws nothing (mpv owns the screen), so every cue is mpv text --
-  `03:21 / 12:04` over a 12-cell bar on seek/pause/SELECT, a throttled `Buffering N%` from
-  `paused-for-cache`/`cache-buffering-state` (polled twice a second, 10 % buckets), a start card with the title, the cap
-  and the whole pad map, and **Y** cycles the quality cap (stop → re-resolve → replay from the same position, ~2 s,
-  announced). The pad had been dead in the player: SDL2 drops joystick events while the app is unfocused and mpv's
-  window has the focus, so `SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS` is what made A/B/d-pad/L/R/L2/R2/Y/SELECT/START
-  work there; OSD font 90 → 40 px, four tabs that no longer run under the quality badge, L/R switch tabs, L2/R2 page
-  the list, SELECT cycles the quality cap everywhere. **Idle (A1/A2):** a `dirty` flag gates drawing (nothing at all
-  while mpv owns the screen), a bounded 256-entry text-texture cache ends the per-frame TTF allocation, the thumbnail
-  worker wakes the loop when a picture lands, and the thumbnail texture map is pruned to the visible page ±1 -- idle
-  CPU **65 % → 0.2 % of a core** (654 → 2 ticks/10 s; 3–4 ticks/20 s on the unit). Selftests: cache, local, thumbs,
-  bar/quality cycle, layout at 1080 and 768, textfit (`run-banana-tube`, 27 checks). Verified on the unit at 0.5.9
-  (`surface 1240x1080`, pad opened) and by host renders at a true 1240x1080; the headless QEMU image cannot start
-  cage/SDL (no EGL on its virtio GPU), so the panel pass is the unit. Known minor: emoji in YouTube titles are tofu.
-  Designs/plans: `docs/superpowers/specs/2026-11-04-bananatube-*`, `docs/superpowers/plans/2026-11-04-bananatube-*`.
-- [x] **Resume the last game at boot (0.5.8).** A clean shutdown while a game runs boots back into it (Quick resume
-  loads the state); a shutdown in the menu boots the menu. The menu writes `/run/banana/game.path` at launch, `bananad`
-  keeps it in `banana/resume` at shutdown, and the next menu start feeds the existing `/run/banana/launch` hook. The
-  cancel window is 0.5 s and ignores the power key — 0.5.6's window was cancelled by the very press that powered the
-  console on, so every real boot showed the menu (found from the unit's log, fixed in 0.5.8). Three launches cap a game
-  that wedges the device; a missing card/ROM clears the marker and logs. A pending resume skips the boot animation:
-  measured menu-ready **7.80 → 6.41 s** and launch **~9.8 → ~6.9 s** after power-on on the unit. A quit back to the menu
-  clears the marker and the tries count (unless `shutting-down` says the exit is the shutdown). Tests: the sleep test
-  (41 checks; marker on a battery-guard shutdown, none from the menu) and five headless `resume` cases; verified on the
-  unit with a real power cycle (`ready` → `launching`, tries 1, no cancel). Only the deliberate non-power cancel press
-  has not been done on hardware; its decision path is the headless cancel case.
-- [x] **Theme validation (0.5.x).** `tools/check-themes.py` validates every bundled theme against
-  `docs/theme.schema.json` in `make test` (and CI): a small validator for the keywords the schema actually uses
-  (`$ref`, `type`, `enum`, `pattern`, `properties`, `items`, `anyOf`, `oneOf`, `additionalProperties`, `required`),
-  with comments and trailing commas stripped the way the menu's parser allows them. A schema keyword it does not
-  implement is an error, so the check cannot silently skip a constraint, and `--selftest` proves it catches a wrong
-  type and an out-of-enum value. The other half of the item, live theme reload, already worked: `Settings::THEME`
-  rebuilds the menu in place (layout and colour themes both).
-- [x] **WEP networks (0.5.x).** The scan's `[WEP]` flag now means "secured, key_mgmt=NONE + wep_key0" instead of
-  "unsupported": A joins it, the password keyboard takes the key (5 or 13 printable characters, or 10/26 hex digits --
-  quotes and backslashes refused so the quoted conf stays valid), and `banana/wifi.conf` gets `key_mgmt=NONE`,
-  `wep_key0="…"`, `wep_tx_keyidx=0` with the usual priority. Enterprise (802.1X) and OWE stay hand-written. Tested
-  through the headless menu (`wifi-add`, `wifi-scan` script verbs): the WEP block, a refused 3-character key, and the
-  scan flags for WEP vs WPA2.
-- [x] **Saved-network priority (0.5.x).** Settings > Network's L/R moves the selected saved network one place up
-  (higher priority, tried first) or down by swapping the two `priority=` values in `banana/wifi.conf`; every other
-  byte of the file is kept, and a network that is not saved is left alone. Tested through the headless menu (the
-  `wifi <ssid> <up|down>` script verb) against a two-block fixture, with the "not saved changes nothing" case.
-- [x] **Local media in BananaTube (0.5.x).** A fourth tab, **Local**, lists `/data/music` and `/data/videos` (one
-  level, common audio/video extensions, by file name) and plays straight from the card: mpv takes the path, so there is
-  no yt-dlp resolve, no SponsorBlock lookup and no thumbnail fetch, and a local file is not written to Recent (a list of
-  video ids). A file added while the app runs appears the next time the tab is opened. The host selftest walks a temp
-  folder (extensions, file names, one level) and `run-banana-tube` checks it (22 checks). The other half of that
-  roadmap item, "porting BananaTube's newer settings screen", was dropped by request -- its in-app settings stay as
-  they are.
-- [x] **Controller remaps per core and per game -- RetroArch's own, not a Banana screen (0.5.4+).** No remap UI was
-  built: RetroArch's *Settings > Input > RetroPad Binds > Save Remap File / Save Game Remap File* is the UI, and it
-  already writes to the card (`input_remapping_directory = /data/retroarch/remaps`, `HOME`/`XDG_CONFIG_HOME` there) as
-  `remaps/<Core>/<Core>.rmp` and `remaps/<Core>/<Game>.rmp`; per-game core options are its *Save Game Override*
-  (`config/<Core>/<Game>.opt`). Two real gaps closed: `run-retroarch` rewrote the Dreamcast core remap whenever its L
-  line was not Banana's `"12"`, so a remap saved from RetroArch's menu was undone on the next launch -- it now writes
-  only when the core has **no** remap at all (37-check launcher test covers both a player's remap surviving and a fresh
-  card getting Banana's swap); and `Settings > System > Back up settings` now carries `retroarch/remaps` (the backup
-  test's 22 checks include a remap restored), so a controller layout survives a restore. `docs/EMULATORS.md` gains
-  *Controller remaps and per-game options* with the exact menu path and file names.
-- [x] **Back up & restore `/data/banana` (0.5.4+).** Settings > System's **Back up settings** (A twice) writes
-  `banana/backups/banana-<date>.tar.gz` with `settings.conf`, `bananad.conf`, `wifi.conf`, `accounts.conf` (when
-  present), `saves/` and `states/` -- logs, updates, box art and the backups themselves stay out. **Restore settings**
-  (A twice) unpacks the newest over `/data` and restarts the menu so the restored file is read; Wi-Fi and sleep
-  settings take effect at the next boot / bananad's SIGHUP. The tool is `/usr/libexec/banana/backup`
-  (`create`/`list`/`restore`, one `ok …`/`error: …` line the menu toasts), written with `tar` then `gzip` because the
-  image's busybox tar has no `-z`. A restore refuses absolute and `../` members before unpacking (a backup on the card
-  is user-supplied), and a `.part` name until the archive is whole. Verified on the unit: create, delete
-  `settings.conf` and a state, restore, both identical by sha256; host test `run-backup-test.sh` (19 checks: archive
-  contents, newest-first list, restore, a hostile `../` archive) and a headless menu test that the two rows run the
-  tool off the loop.
-- [x] **Audio follow-ups (0.5.4).** The automatic recovery in the menu's open path is gone: `banana-ui` forked
-  `sound-server recover` after ~10 s of failed opens, and it never fired in normal use (0 asks across two boots, 439
-  log lines); the wedged-session-manager case it was written for has not been seen since the config re-read. A
-  failing open still logs `open failed: …` and retries every 250 ms (the 0.5.4 backoff), and `sound-server recover`
-  stays as the manual cure the sound test names. `sound-config-test` now asserts the menu never forks the server from
-  its open path.
-- [x] **Confirm the audio on hardware (0.5.4).** All three by-ear checks passed on the unit, each followed by
-  `make sound-test` (14/14): a cold boot (the splash cue and the test's four beeps), a game quit (the menu reopened its
-  PCM and logged `panel back after the game (0 tries)` — the 0.5.4 DRM-master fix), and a sleep/wake (`menu: released
-  the sound device in 0 ms`, `awake (power button)` after 11 s, beeps). The headphone-jack check is dropped: the test
-  unit has no headphones.
-- [x] **The audit's findings, fixed and pruned (0.5.4).** Two independent passes over `system/`, `ui/src`, `app/`,
-  `buildroot/` and `tools/` (bloat, then correctness), every finding re-verified in the source. Fixed: BananaTube died
-  on SIGPIPE whenever mpv exited with a key still in flight (one `signal(SIGPIPE, SIG_IGN)`); the ambient loop read
-  past a truncated `bgm.wav` and divided by zero on an empty one (guard `total >= nframes`, `% total`); `Display::
-  restore()` reported success without `drmSetMaster`/`SetCrtc`, so the 400-try panel-handover retry after a game could
-  never fire (it returns false now); a wedged session manager (EBUSY) spun the sound thread at 100 % CPU and wrote a
-  log line per try (every failed open backs off 250 ms); the BananaTube recent list was rewritten in place and a full
-  card truncated the history (temp + fsync + rename); a pad rescan dropped the evdev fds without the release, so a held
-  direction repeated forever (clear `rep.key`); `run-retroarch` left `cage.pid` behind and `pid_of()` trusted any live
-  pid, so a reused pid got SIGSTOP/SIGTERM/SIGUSR1 (removed at exit; `pid_of()` rejects a pid whose process began
-  after the file was written); the state backup said "Copied" before the data reached the card (`fflush`/`fsync`).
-  Pruned: `pad-profile` (44 lines, no caller), rcS's non-PipeWire routing block (45 lines, could not run), the three
-  launchers' no-cage arms (~70 lines, dead on this image), BananaTube's byte-identical copy of the JSON reader (239
-  lines, now `JSON_SRC`), `sset()`, the inline `retroarch.cmd` write, the duplicate `acct()` (now `ra-secrets get`),
-  the SDL pad map (one `/etc/banana/sdl-pad.map`), six `/sys/class/backlight` walkers (one `backlights()` + `bl_file()`,
-  policy unchanged) and settings' ad-hoc `jsonField()` (the linked `JVal` reader). Net −289 lines. `run-retroarch-test`
-  now stubs cage and checks the Wayland context; all gates green (`make test`, the 37-check sleep test, `make
-  sound-test` on the unit).
-- [x] **A sound test, because the chain fails silently (0.5.3).** Five links (server, ALSA's `default`, the Speaker
-  sink, the AW88166 gain, the AudioReach graph) each fail into the same symptom -- silence -- and the only way to tell
-  them apart was a reboot and guesswork. Now `make sound-test` runs `/usr/libexec/banana/sound-test` on the handheld
-  over ssh (streamed, so it also checks an older image; `ARGS=--listen` plays the cue): server + socket, both asound
-  configs, the Speaker sink *and* that it is the default (a Headphones default is the after-update stall), both amp
-  controls, the frontend `RUNNING` and owned by pipewire, a real client (`aplay -D default`, else mpv) with a stream
-  arriving at the Speaker, and the menu's own `/run/banana/sound-state` handover (`SIGHUP` -> closed, `SIGUSR1` ->
-  open, 2 s each). `make test` runs the half that needs no hardware: `system/tests/sound-config-test.sh`, 33 checks
-  of the laws that have been broken before (config re-read per open, the handover latch, no client on `hw:0`/`amixer`,
-  FE<->BE switches only in `SectionVerb`, `session.suspend-timeout-seconds = 0`, per-node buffering in
-  `monitor.alsa.rules`, sound-server's Speaker wait + `recover`, the runtime dir, and the image's pieces). It found two
-  real defects while being written: the menu's note stayed on `releasing (handover)` for good when the device was
-  already closed (bananad then waited out its 2 s bound on every sleep), and `/etc/asound.conf` existed only in a
-  hand-modified build tree, not in the repo -- a clean build would have had no default device. Both fixed. See
-  `docs/SOUND-TEST.md`.
-- [x] **The 03:40 overnight hang: instrumented, and the handover it was seen mid-way through is closed (0.5.2).** An
-  overnight hang on the 0.5.1 image (asleep at 03:40, no wake line, pstore empty, 100 % -> 74 % by morning) left
-  nothing to read, and the sleep log's `wake mmc0 (irq ?)` was fiction: `mmc0` is only the table's `last_change` --
-  measured on the unit, a real power-key wake leaves `pm_wakeup_irq` absent and **every** `wakeup_sources` counter at 0,
-  so the kernel cannot name a waker on this board (and `wake_only_power` cannot disarm `mmc0` at all: it is a virtual
-  source with no `power/wakeup`). Now: `sleep.log` reports what `bananad` itself saw (`wake: power key|cable (kernel
-  wakeup_count +n)`), `logs/sleep-state` is written just before `mem` with the mode, the armed-source count and the
-  menu's sound state, and the kernel's PM lines are appended on the way out -- the only survivor of a resume that never
-  comes back. That note immediately showed the suspect: `sound device: releasing (handover)` at the write of `mem`, a
-  PCM close in flight (the same boot had reopened the device 16 s before sleeping). `bananad` now sends its `SIGHUP` and
-  **waits for the ack** in `/run/banana/sound-state` (bounded by the menu's own 2 s) instead of a fixed 200 ms, and
-  `Sound::release()` latches `handedOver` so the loop cannot reopen the PCM for the warm-up hold (it did, 10 ms after
-  closing, which is how the `mem` still happened with the device open). Verified on the unit: `menu: released the sound
-  device in 20 ms`, `sound device: closed (release)` at the `mem`, 1.08 s round trip, and the UI reopens on the wake.
-  Whether this was the whole hang is open -- the next one will say so in two files.
-- [x] **BananaTube: the three-tab shelf, recent list and quality cap (0.5.x, uncommitted).** The results screen now has a
-  tab strip under a taller search field: **Search** (the keyboard and its hits), **Recent** (the last 30 videos that
-  actually started, newest first) and **Channels** (the unique uploaders either list mentions, with a video count; A
-  opens one channel's videos, B walks back out, X opens the focused video's channel). Tabs switch with L/R on the
-  keyboard, SELECT (Recent), or a tap; the search field is drawn with the larger face and lights its accent border while
-  typing. Recent persists as `/data/banana/bananatube-recent.tsv` (with the resume point, written every 10 s and on
-  stop; a finished video clears it) and the playback cap (720/480/360p, applied by `yt-dlp -g`) as
-  `/data/banana/bananatube.conf`. SELECT on a list cycles the cap, and in the player it prints
-  position/length/quality. mpv's dead `stats` script (no Lua in this mpv) is gone; the start card and every pause/seek
-  OSD now come from `show-text` over IPC, and the position/duration poll runs even when a video has no SponsorBlock
-  segments (the IPC socket is also connected on the first playback frame, not the first button press, so SponsorBlock
-  and the resume seek work from the start). Verified with the host suite (21 checks); the panel look is not yet checked
-  on the unit.
-- [x] **Menu audio after updates, sleep and games (0.5.x, uncommitted).** Four separate causes, all fixed on the unit: (1) `sound-server` waited only for "no sinks at all" before restarting WirePlumber, so an update's reboot that came up Headphones-only never got its Speaker sink; it now restarts WirePlumber up to four times while the Speaker is missing. (2) `banana-ui` read ALSA's config once, before `bananad` had written the PipeWire default, so it kept the hardware card and fought the server for the Speaker after every game; each device open now re-reads the config (`snd_config_update_free_global`). (3) The menu held the device open with nothing to play, and a boot-time warm-up hold could expire immediately after a game; the device now closes after 20 s of quiet with the loop off, and the warm-up deadline counts from the warm-up itself. (4) Game exit to menu reopen is about 100 ms with no busy retries. Verified on the unit: two clean reboots with the Speaker present, two game quit cycles, and a sleep/wake cycle with a game launch after it.
-- [x] **USB mass storage + gadget reliability (0.5.x).** Settings > System > *Mass storage* adds a USB disk (the card's data partition) over the same cable as NCM and adb: `usb-gadget` creates `functions/mass_storage.0` and `usb-msc` owns the `/data` side -- `ro` exposes a read-only volume with `/data` still mounted, `rw` is transfer mode (`banana-ui-session` waits on `/run/banana/usb-msc.mode`, `/data` is unmounted and handed over, `bananad` refuses suspend), `off` remounts and restarts the menu. It has no udev, so the LUN path is `${DISK}p4` from `/run/banana/disk` (there is no `/dev/disk/by-*`). Both modes were verified on the unit (host mounted the card, wrote into `roms/`, eject remounted `/data` and restarted the menu); the kernel only accepts `lun.0/ro` **before** `lun.0/file` (otherwise `EBUSY`, which silently left the disk read-write), so both the boot and `msc` paths set the attributes first. A reverse-orientation hotplug used to leave the gadget unenumerated: the controller clears the gadget's UDC binding and nothing re-binds it (there is no UDC "add" event), even though the port reports `orientation=reverse`, the PHY and the mux are all fine. `bananad` now re-binds the complete tree within ~3 s (the typec roles never change, so writing `data_role`/`usb_role_switch` does nothing -- the re-bind is the fix); verified on the unit, the host enumerates in either orientation. The intermittent disconnect was a role switch dropping the UDC: a complete gadget is now re-bound in place instead of rebuilt (which used to kill adbd and re-enumerate everything), `usb-adb` backs off and re-binds after an adbd restart, and `bananad` debounces UDC events. `tools/rpc-usb-trace.sh` records a plug for diagnosis; `docs/RPC-TEST.md` and `ARCHITECTURE` §8 carry the checklist and the design.
-- [x] **The last audio leftovers retired (0.5.x).** `audio_route_ar()` and its FE/BE csets, the `/run/banana/audio-route` file and `sound.cpp`'s `routeCheck`/`routeId` reopen are deleted; `rcS`'s manual routing now runs only when `/usr/bin/pipewire` is absent, and `sound-server` no longer forces the HiFi verb or writes the speaker switch (ACP + the `0002` UCM-reopen patch own them). The same audit pass set `sleep_check_hours = 0` (no RTC wakealarm on the RPC), removed the dead `leds-qcom-lpg` patches + `CONFIG_LEDS_QCOM_LPG` + the stale `AnbernicRG55G1` topology, made `update` reject `../`/absolute tar members, made `volume` reject non-numeric levels, and bounds-checked the `/run/banana` inotify walk. Only the hardware jack confirmation is left (see *Recommended next*).
-- [x] **OTA updates over Wi-Fi (0.5.x).** Settings > System > Update gains a **"Check for updates"** row: A runs `/usr/libexec/banana/update-check` (a sh wrapper around python3 `urllib` -- busybox wget has no TLS here, CA bundle in `/etc/ssl`), which reads the GitHub releases list (`releases/latest` skips the alpha prereleases), takes the newest `banana-<board>-*.update.tar` by numeric version and streams it into `banana/updates`, writing progress to `/run/banana/update-status`; the page polls that and re-lists when it lands, and the existing apply/verify/Restart path takes over. Verified on the unit (`up to date: 0.5.0`; the asset URL resolves at 238 MB). A first cut stuck the page (`compare(0,9,"up to date")` never matched the 10-char literal, so `checking` never cleared and the page ignored every key); fixed to 10 with a 90 s bound.
-- [x] **Library UX: multi-disc `.m3u` and shoulder-button jump-to-letter (0.5.x).** The scan reads a `.m3u` (lines relative to its folder; `#`/absolute/`..` skipped) and hides the disc files it names, so a PS1 game is the playlist entry alone -- verified on the unit, an `.m3u` naming 2 discs + `Alpha/Beta/Delta` shows 4 games, not 6. Shoulder **L/R** jump the games by the title's first letter (`Library::letterStep`, and a new `Menu::jumpTo` across the Rnds/Layout/Carts engines): R the next letter, L this letter's first game or the previous letter's; the D-pad still steps one at a time, and on the home shelf L/R still walk the systems. (The recent-played shelf was already there, commit `10fcecf`.)
-- [x] **The sound server (0.5.0): PipeWire + WirePlumber + the RPC's UCM2 profile.** ACP brings the AudioReach (`q6apm`) card up from the UCM profile and every client -- the menu's cues, RetroArch, BananaTube -- mixes through `pcm.!default { type pipewire }` instead of the two fronts being handed over one at a time. Three DSP-specific things made it work: the card's UCM verb is re-applied in the node open path immediately before `snd_pcm_open` (`buildroot/patches/pipewire/0002` -- ACP runs its sequences once, before its probe's open/close tear-down, so the held-open sink latched the topology's "off" and boot was silent); the sink's buffering is set per node with a `monitor.alsa.rules` match (`monitor.alsa.properties` never reaches the ACP-created nodes), which is what cured the short-cue crackle; and the menu's old pre-PipeWire handover wait was deleted (`ui/src/sound.cpp`), so the first cue after a game is instant (measured 0.07 s open-to-ready, was ~1.9 s). The speaker is one mono AW88166 (`0-0035`, on FL -- `FL [on]`/`FR [off]` is normal). `AGENTS.md` carries the DSP laws: the FE<->BE switch only takes a write while its front-end's graph is closed, and shared switches belong only in `SectionVerb.EnableSequence`.
-- [x] **ADB debugging gets its own switch (0.5.x).** The TCP `5555` listener no longer rides the SSH setting: Settings > System > **ADB debugging** (persisted as `adb` in `settings.conf`, off by default) spawns `/usr/libexec/banana/adb up|down`, which restarts the adb supervisor in `usb-adb`; that reads `adb` and starts adbd with `BANANA_ADB_TCP` (on) or without it (off). `ssh` no longer touches adb, and USB adb over the cable is always served, so turning the network listener off cannot disturb SSH or the adb/NCM link.
-- [x] **The pre-PipeWire audio mess cleaned out (0.5.0).** `audio-handoff` and `audio-settle` are deleted, bananad's `audio_handoff_ms`/`audio_menu_ms` knobs and `audio_publish_handoff()` are gone, and the launchers no longer call the handoff or write the FE/BE route with `amixer` before an open (games are PipeWire clients; the handoff's "wait for the frontend to read closed" never ended under the held-open sink and cost ~1.5 s a launch -- measured: launch file -> game 0.17 s, exit -> menu reopen 0.09 s). `HiFi.conf`'s `SectionDevice` `EnableSequence` copies of the shared FE/BE switches are gone too (only the verb's is left, per the UCM rule). `README`, `ARCHITECTURE` §5, `EMULATORS`, `RPC-PORT`, `BANANATUBE`, `CODEBASE-ANALYSIS` and `BOOT-SOUND` now describe the server. The last leftover -- `/run/banana/audio-route`, bananad's dead csets and `sound.cpp`'s `routeCheck` -- was retired in 0.5.x (see the first *Done* entry above).
-- [x] **CI green again (0.5.0).** Five separate reds fixed: `run-bananatube`'s stale `hw:0,1`/format assertions (it plays through the server now), bananad's `-Werror=unused-result` on the `wakeup_sources` header read, the `cores` job calling a `.banana-patched` target that does not exist (the Makefile stamp is absolute), the aarch64 bananad step linking a cross `libasound` the runner has not got (now a compile check), the sleep test releasing the suspend FIFO with no power-key press (broken since the 0.4.54 spurious-wake guard, which `wake()` now satisfies and `rtc_wake()` covers the battery checks), and the defconfig check running on a fresh Buildroot clone without `buildroot/buildroot-patches` (so it dropped the freedreno Vulkan option). Tag pushes no longer trigger CI (`on.push.branches: [main]`), so a release no longer spawns a duplicate run.
-- [x] RetroAchievements progress display on the home shelf.
-- [x] Save-state browser (browse, copy and delete a game's states from the menu).
-- [x] Settings cleanup: the dead rows removed (VSync, Integer scaling, Audio latency, Waking up, LEDs, Accent colour, Motion), the section renamed to **RetroArch**, single-screen only, and the dead ScreenScraper entry gone.
-- [x] A lighter keyboard and a redesigned game list (all five Pocket themes).
-- [x] **Wii/GameCube removed; Mesa bumped to 26.2.6.** The standalone Dolphin frontend is gone -- `[wii]` in `systems.conf`, `run-dolphin`, `buildroot/package/dolphin` (and its ROCKNIX Wayland patches), the `/usr/share/banana/dolphin` configs, the pad profiles, the icon and its test. Measured on the unit: Turnip's a613 Vulkan path topped out at 40-45 fps where the stock Android Adreno driver held the 60 fps cap; the gap is driver efficiency, and closing it needs Qualcomm's closed userspace driver through a libhybris-style bionic shim over a ported KGSL kernel driver -- a large project for a console the handheld already runs on Android. In the same change Mesa goes 26.0.1 -> 26.2.6 (a Release whose `freedreno_devices.py` carries the a613 natively with the correct `reg_size_vec4 = 32`; the local `patches/mesa3d` a613 source patch is dropped). The bump also steadies every Turnip-based RetroArch core. OpenGL was tried as an alternative backend and is clearly worse (more CPU, hotter); a `TU_DEBUG` knob sweep was dropped with the console.
-- [x] **adb on the handheld (0.4.57).** Debian's glibc `android-tools` `adbd` serves the adb protocol over an adb (FunctionFS) function in the same composite gadget as the NCM network -- `adb devices` over the cable -- and, when the SSH setting is on, over TCP 5555 on every interface, so `adb connect <ip>:5555` works over Wi-Fi (a local patch makes the listener opt-in and binds it everywhere; the stock code only listens on TCP when USB is absent, and only on loopback). `usb-adb` mounts FunctionFS and supervises adbd; the `ssh` toggle restarts it so the port follows the switch live. Verified over Wi-Fi: `adb shell` as root, `push`, `pull`.
-- [x] **Loopback was never brought up.** `rcS` now does `ip link set lo up`. Nothing did, and any program binding `127.0.0.1` failed with `EADDRNOTAVAIL` -- which is what actually killed `adbd` (its control socket on `tcp:5037`) before it reached `usb_init()`, so USB adb failed too.
-- [x] **adb hardened, and USB verified (0.4.59).** adbd now reports Banana's own identity (`product:banana model:Pocket_Classic device:rpc`, not a Nexus 4 -- the values were compiled defaults) and the gadget's adb function binds correctly at boot: an ffs function whose ep0 is not yet open makes the controller refuse the whole gadget (ENODEV, taking the network down with it), so `usb-gadget` now starts adbd and waits for the function's `ready` before binding, `usb-adb` re-binds the controller if a restart leaves it with no gadget, `flock` keeps `rcS` and bananad's UDC-event re-run from racing, and an image without adbd just skips the function. Verified from a clean boot: the host enumerates the composite gadget and `adb devices` lists it (`adb shell` as root over the cable). Windows needs its own adb driver (documented): configfs `f_fs` exposes no OS-descriptor entry to bind WinUSB to that interface.
-- [x] **`audio_latency` test/doc mismatch fixed.** The image deliberately lowered it 64 -> 48 ms (audit `f28412b`), but `run-retroarch-test.sh` still expected 64 and `docs/RPC-PORT.md` still said 64. Both now say 48; `make test` is green again.
-- [x] **Audio handover tuned; the launch wait removed (0.4.60).** The "one beat" a launcher waited was covering the wrong thing: it went in when a game shared the menu's MultiMedia1 frontend, and `4075c75` fixed that properly by giving games their own frontend (`$HOME/.asoundrc` -> MultiMedia2, the one the menu never releases). Measured on the unit with the kernel's q6apm close timing (patch 0063): no close is slow and none fails, so a launch needs no settle -- games had sound over many launches and after a reboot with `audio_handoff_ms = 0`, which also takes 0.8 s off every launch. The menu's own reopen *does* race the outgoing graph (0 cuts its cues out for a moment, ~400 leaves a trace, 600 is clean), so it keeps a settle of its own. The knob is now two: `audio_handoff_ms` (launchers, default 0) and `audio_menu_ms` (banana-ui's Sound, default 600), published as `/run/banana/audio-handoff-ms` and `/run/banana/audio-menu-ms`. A *fast relaunch* is the one case that still races (the outgoing game's own graph may still be tearing down when the new one is instantiated, which resets the route switches to off and leaves the new frontend silent for its life), so the launchers note when they exit and `audio-settle` waits out the remainder of a short cooldown -- an ordinary launch stays at 0, an immediate relaunch is covered.
-- [x] **Thermals & fan: nothing to tune.** Profiled on the unit under the then-heaviest load (Dolphin/NSMBW, since the console was dropped): `cpuss0` avg 46 / peak **55 °C**, `gpu` peak 52 °C, clocks steady (`policy0` 1.96 / `policy6` 2.40 GHz), no CPU or GPU throttle -- and the **`pwm_fan` never engaged** (its first trip is 60 °C). Nothing in the image reaches the SoC's limits, so the curve is a safety net that does not need characterising. (`tools/rpc-thermals.sh`'s bogus `gpu=<Hz>` column is fixed, and `tools/rpc-emu-bench.sh` is the general profiler if a heavier load ever appears.)
-- [x] **Sleep/Wake: closed (0.4.54).** The power-key sleep that came straight back was traced to the PMIC pwrkey being the only armed wake source and its edge-both IRQ firing on a glitch, or on the release of the very press that asked for the sleep: bananad now names the waker (reads debugfs `wakeup_sources`), a wake with no real `KEY_POWER` press and no cable change logs `wake ... (spurious): back to sleep` and re-suspends (bounded x3), `&pon_pwrkey` gained `debounce = <15625>`, and the idle burn-in guard stops at the dim stage while charging (a dark panel on the cable had read as a sleep). Working well enough on the unit; the leftovers (residual spurious wakes, panel/SD resume latency, keeping the Wi-Fi module across suspend, overnight drain) are not being tracked. An RTC wake alarm is not available (the alarm IRQ is ADSP-owned, no `qcom,no-alarm`), so a low battery refuses the sleep instead (`bananad`'s `sleep_floor_percent`).
+- [x] **Landing page, web installer, flasher 2.0.0 (2026-11-16).** `site/` on GitHub Pages; `install.html` flashes OpenABL over
+  WebUSB via fastbootd; flasher 2.0.0 with the Blast theme and drive-safety fixes. See `docs/INSTALL.md`.
+- [x] **0.8.0 Genesis style, Banana Blast (2026-11-16).** Third Style option; art baked by `tools/gen-blast.py` to Mega Drive
+  rules, FM cues and funk loop (`tools/gen-blast-sounds.py`), three palettes, the Blue Banana secret. Street extras: toasts,
+  dithered box art, closed-shop folder, wake mosaic.
+- [x] **0.7.0 SNES style, Banana Street (2026-11-11).** Default on a new card; shops on a street, art from `tools/gen-street.py`,
+  five neighborhoods, workshop Settings, ticket pause menu. Since 0.7.1: ripening-banana battery, ledger pages, pill and
+  notices, touch in the workshop, its own sounds and `"bgm"` theme key. Device checks passed 2026-11-16.
+- [x] **System shaders (2026-11-11).** CRT/aperture/LCD masks on the overlay plane, Trinitron/PVM/handheld colour via the CTM,
+  night light on `GAMMA_LUT`; 0 drops over 43 wakes.
+- [x] **Compositor bezels.** Frames on the overlay plane for RetroArch and ports, per system and per game, sized to the hole.
+- [x] **0.6.1 / 0.6.0: one screen, one owner (2026-11-10).** `banana-ui` is the in-process Wayland compositor on atomic KMS;
+  `cage` and `wlroots` removed. Bit-exact EGL rotate, Banana's pause menu (frozen game, slots, discs, shaders), pill and
+  notices, boot click waits for sound. 60 fps measured on Vulkan, PSX and Dreamcast. `docs/PLAN_DRM_COMPOSITOR.md`.
+- [x] **Wi-Fi management (0.5.12):** WPA2, WEP, saved-network priority, on-screen keyboard.
+- [x] **32x32 icon set (0.5.12)** and **screen bezels for GB/GBC/GBA (0.5.12).**
+- [x] **Banana Bridge and in-game pill (0.5.11):** volume, brightness, low battery, headphones, achievements through
+  RetroArch's message line; the ALSA C API for the volume keys.
+- [x] **Hardening sweep (0.5.10, 2026-11-05):** daemon, BananaTube, UI and i18n fixes, sleep hooks under test, dead weight removed.
+- [x] **BananaTube:** Pocket shell and near-free idle (0.5.9); tabs, recents, quality cap; Local media; captions, Subs,
+  Offline, play-next queue; picture restored under the new compositor.
+- [x] **Resume last game at boot (0.5.8).** Menu ready 7.80 -> 6.41 s with a pending resume.
+- [x] **Theme validation, WEP, saved-network priority, per-core/per-game remaps (RetroArch's own), back up & restore** (0.5.x).
+- [x] **Audio:** PipeWire + WirePlumber + UCM2 (0.5.0), menu audio after updates/sleep/games, sound test (`make sound-test`,
+  0.5.3), follow-ups (0.5.4), pre-PipeWire code removed.
+- [x] **The 03:40 hang instrumented (0.5.2);** the sound-handover race closed.
+- [x] **USB mass storage and gadget reliability (0.5.x);** **adb** (0.4.57-0.4.59) with its own switch; loopback brought up.
+- [x] **OTA updates over Wi-Fi (0.5.x);** **library UX** (multi-disc `.m3u`, jump-to-letter); **audit fixes and pruning (0.5.4).**
+- [x] **Dropped or closed:** the on-device self-test (the pieces exist, 2026-11-05); Wii/GameCube removed and Mesa 26.2.6
+  (Turnip a613 topped out at 40-45 fps); thermals needed no tuning (peak 55 °C, fan never engaged); Sleep/Wake closed in 0.4.54
+  (spurious-wake guard; no RTC wake alarm on this board, so a low battery refuses sleep).

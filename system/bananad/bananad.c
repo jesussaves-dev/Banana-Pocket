@@ -679,6 +679,52 @@ static int msc_rw(void)
 	read_str("/run/banana/usb-msc.mode", m, sizeof m);
 	return !strcmp(m, "rw");
 }
+/* Quick resume's automatic state, written now: the quit-time ".auto" state is the one thing that survives a battery
+ * that dies while the game sleeps in RAM (the next launch loads it). A RetroArch game that is running and not already
+ * frozen by the pause menu is asked over the stdin FIFO (SAVE_STATE_AUTO, patch 0015) and answers in
+ * /run/banana/autosave; bounded, so a wedged game costs a second and a half of the sleep, never the sleep. Only with
+ * Quick resume on (the same key that makes RetroArch write it at quit). */
+static void sleep_save_state(pid_t game)
+{
+	if (!game || skip("state")) return;
+	char buf[64] = "";
+	FILE *f = fopen("/data/retroarch/retroarch.cfg", "r");
+	int on = 0;
+	if (f) {
+		char line[256];
+		while (fgets(line, sizeof line, f))
+			if (!strncmp(line, "savestate_auto_save ", 20)) on = strstr(line, "\"true\"") != NULL;
+		fclose(f);
+	}
+	if (!on) return;
+	char path[48];
+	snprintf(path, sizeof path, "/proc/%d/stat", (int)game);
+	f = fopen(path, "r");
+	if (!f) return;
+	char st[256] = "";
+	if (fgets(st, sizeof st, f)) {
+		char *rp = strrchr(st, ')');
+		if (rp && rp[1] == ' ' && rp[2] == 'T') { fclose(f); return; }	/* the pause menu froze it: it cannot answer */
+	}
+	fclose(f);
+	unlink("/run/banana/autosave");
+	double t = mono();
+	if (!ra_cmd("SAVE_STATE_AUTO")) return;
+	for (;;) {
+		f = fopen("/run/banana/autosave", "r");
+		if (f) {
+			if (fgets(buf, sizeof buf, f) && buf[0]) {
+				fclose(f);
+				sleep_log("state: saved before the sleep in %.0f ms (%s)", (mono() - t) * 1000, strtok(buf, "\n"));
+				return;
+			}
+			fclose(f);
+		}
+		if (mono() - t > 1.5) { sleep_log("state: no answer from the game after 1500 ms: sleeping anyway"); return; }
+		sleep_us(20000);
+	}
+}
+
 static void suspend_now(const char *why)
 {
 	double t0 = mono();
@@ -699,6 +745,7 @@ static void suspend_now(const char *why)
 	}
 	pid_t game = pid_of("/run/banana/game.pid");
 	pid_t pg = game ? getpgid(game) : 0;
+	sleep_save_state(game);
 	if (pg > 0 && !skip("stop")) kill(-pg, SIGSTOP);	/* an emulator's dynarec mustn't run on while the clocks drop */
 	/* the menu's ambient loop, if any: stop it and have it release the DSP before the ADSP sleeps (SIGHUP). Wait for
 	 * the close it publishes to /run/banana/sound-state instead of guessing at a delay -- a PCM close still in flight
@@ -1292,6 +1339,15 @@ static void sound_wait(double seconds)
 	setenv("PIPEWIRE_RUNTIME_DIR", "/run/banana/wayland", 1);
 	double t = mono();
 	int seen = 0;
+	/* the server script says when the Speaker sink is in PipeWire (/run/banana/sound-ready, removed by "down"): a probe
+	 * alone passes while the server is still starting, and the game's stream then fails with "Host is down" for good */
+	if (access("/usr/libexec/banana/sound-server", X_OK) == 0) {
+		while (access("/run/banana/sound-ready", F_OK) != 0) {
+			if (mono() - t >= 8.0) { sleep_log("audio: the server is not ready after 8000 ms"); break; }
+			sleep_us(50000);
+		}
+		t = mono();	/* the probe below gets its own bound: the sink just appeared, the first opens can still fail */
+	}
 	for (;;) {
 		snd_pcm_t *pc = NULL;
 		if (snd_pcm_open(&pc, "default", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) == 0) {
@@ -1300,7 +1356,9 @@ static void sound_wait(double seconds)
 			if (ok) return;
 		}
 		if (!seen) {
-			FILE *p = popen("pidof pipewire 2>/dev/null", "r");
+			/* the server, or the hook that is still bringing it up (a sleep that did not take wakes within a second,
+			 * before sound-server up has even started pipewire: giving up then left the game with no sound for good) */
+			FILE *p = popen("pidof pipewire 2>/dev/null || ps 2>/dev/null | grep '[s]ound-server up'", "r");
 			seen = p && fgetc(p) != EOF;
 			if (p) pclose(p);
 		}
