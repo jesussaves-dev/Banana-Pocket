@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: tom <tom@localhost>
+From: Thomas Mulkey <thomasmulkey1997@gmail.com>
 Date: Tue, 17 Nov 2026 18:36:25 -0500
 Subject: [PATCH] dt-bindings: remoteproc: qcom,sm6350-pas: Document SM4450
  ADSP and WPSS
@@ -9,7 +9,7 @@ and CDSP: an XO clock, five interrupts, and LCX/LMX respectively CX/MX
 power domains. Extend the existing binding instead of adding a
 near-identical one.
 
-Signed-off-by: tom <tom@localhost>
+Signed-off-by: Thomas Mulkey <thomasmulkey1997@gmail.com>
 ---
  .../bindings/remoteproc/qcom,sm6350-pas.yaml           | 10 ++++++++--
  1 file changed, 8 insertions(+), 2 deletions(-)

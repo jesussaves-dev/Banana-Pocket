@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: tom <tom@localhost>
+From: Thomas Mulkey <thomasmulkey1997@gmail.com>
 Date: Tue, 17 Nov 2026 18:36:25 -0500
 Subject: [PATCH] dt-bindings: regulator: qcom,rpmh-regulator: Document PM6450
 
@@ -8,7 +8,7 @@ RPMh RSC. Its smps1, smps5, smps6, ldo2 and ldo8 rails are handled by
 RPMh ARC resources and are not described here. No input supplies are
 described.
 
-Signed-off-by: tom <tom@localhost>
+Signed-off-by: Thomas Mulkey <thomasmulkey1997@gmail.com>
 ---
  .../devicetree/bindings/regulator/qcom,rpmh-regulator.yaml      | 2 ++
  1 file changed, 2 insertions(+)

@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Banana <banana@localhost>
+From: Thomas Mulkey <thomasmulkey1997@gmail.com>
 Date: Thu, 29 Oct 2026 02:00:00 +0000
 Subject: [PATCH] ASoC: codecs: aw88166: lock on the I2S clocks, not the ACF
  re-upload
@@ -19,6 +19,8 @@ on a short timer instead: the amp then locks a few attempts after the first
 write starts BCLK. Only a non-clock failure still reloads the ACF, once, and
 the final error line now carries the SYSST register so a stuck clock is
 visible in dmesg without CONFIG_DYNAMIC_DEBUG.
+
+Signed-off-by: Thomas Mulkey <thomasmulkey1997@gmail.com>
 ---
  sound/soc/codecs/aw88166.c | 67 ++++++++++++++++++++++++++------------
  sound/soc/codecs/aw88166.h |  3 ++

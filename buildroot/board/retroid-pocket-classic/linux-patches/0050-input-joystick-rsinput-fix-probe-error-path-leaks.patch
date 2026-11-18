@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Thomas Mulkey <thomasmulkey1997@gmail.com>
+Date: Tue, 17 Nov 2026 20:17:54 -0500
+Subject: [PATCH] input: joystick: rsinput: fix probe error-path leaks
+
+Probe leaves the vdd regulator enabled when serdev_device_open() fails,
+and leaves both the UART open and the regulator enabled when setting the
+baud rate, allocating or registering the input device, or the init
+commands fail. Unwind through a single err_close label.
+
+Also drop the unused <linux/workqueue.h> include.
+
+Assisted-by: Claude:claude-sonnet-5-5
+Signed-off-by: Thomas Mulkey <thomasmulkey1997@gmail.com>
+---
+ drivers/input/joystick/rsinput.c | 30 +++++++++++++++++++-----------
+ 1 file changed, 19 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/input/joystick/rsinput.c b/drivers/input/joystick/rsinput.c
+index 6f4c6955667dd2c43285d5737d4a2f2470886463..0620b3ada0693dd66f9543b09ae89e5ab8c67a3b 100644
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -16,7 +16,6 @@
+ #include <linux/of.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/serdev.h>
+-#include <linux/workqueue.h>
+ #include <linux/slab.h>
+ #include <uapi/linux/sched/types.h>
+ 
+@@ -496,8 +495,10 @@ static int rsinput_probe(struct serdev_device *serdev) {
+     }
+ 
+     error = serdev_device_open(serdev);
+-    if (error)
++    if (error) {
++        regulator_disable(drv->vdd);
+         return dev_err_probe(&serdev->dev, error, "Unable to open UART device\n");
++    }
+ 
+     drv->serdev = serdev;
+     drv->sequence_number = 0;
+@@ -505,14 +506,18 @@ static int rsinput_probe(struct serdev_device *serdev) {
+     serdev_device_set_drvdata(serdev, drv);
+ 
+     error = serdev_device_set_baudrate(serdev, 115200);
+-    if (error < 0)
+-        return dev_err_probe(&serdev->dev, error, "Failed to set up host baud rate\n");
++    if (error < 0) {
++        dev_err_probe(&serdev->dev, error, "Failed to set up host baud rate\n");
++        goto err_close;
++    }
+ 
+     serdev_device_set_flow_control(serdev, false);
+ 
+     drv->input = devm_input_allocate_device(&serdev->dev);
+-    if (!drv->input)
+-        return -ENOMEM;
++    if (!drv->input) {
++        error = -ENOMEM;
++        goto err_close;
++    }
+ 
+     drv->input->phys = "rsinput-gamepad/input0";
+ 
+@@ -563,17 +568,20 @@ static int rsinput_probe(struct serdev_device *serdev) {
+ 
+     error = input_register_device(drv->input);
+     if (error)
+-        return error;
++        goto err_close;
+ 
+     serdev_device_set_client_ops(serdev, &rsinput_rx_ops);
+ 
+     error = rsinput_init_commands(drv);
+-    if (error < 0) {
+-        serdev_device_close(serdev);
+-        return error;
+-    }
++    if (error < 0)
++        goto err_close;
+ 
+     return 0;
++
++err_close:
++    serdev_device_close(serdev);
++    regulator_disable(drv->vdd);
++    return error;
+ }
+ 
+ static void rsinput_remove(struct serdev_device *serdev) {
