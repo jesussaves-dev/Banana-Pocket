@@ -11,10 +11,18 @@ export XDG_RUNTIME_DIR=/run/banana/wayland
 mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null; chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null
 : "${SDL_VIDEODRIVER:=wayland}"; export SDL_VIDEODRIVER
 : "${SDL_AUDIODRIVER:=alsa}"; export SDL_AUDIODRIVER
-SDL_GAMECONTROLLERCONFIG="$(cat /etc/banana/sdl-pad.map 2>/dev/null)"
+# banana's map names the face buttons by their labels (a = the A button); PokeDaisy reads SDL's Xbox naming (SDL "a" is
+# the bottom button = its B), so swap a/b and x/y or A in the game list backs out and quits.
+# F (guide) is dropped: banana-ui already opens its quick menu on F, and PokeDaisy would open its own on top of it.
+# PokeDaisy's menu is START + SELECT here.
+SDL_GAMECONTROLLERCONFIG="$(sed -e 's/,a:\(b[0-9]*\),b:\(b[0-9]*\),x:\(b[0-9]*\),y:\(b[0-9]*\),/,a:\2,b:\1,x:\4,y:\3,/' \
+    -e 's/,guide:b[0-9]*,/,/' /etc/banana/sdl-pad.map 2>/dev/null)"
 export SDL_GAMECONTROLLERCONFIG
 export POCKET_CORE_DIR=/usr/lib/pokedaisy
 export POCKET_FULLSCREEN=1
+# vsync pacing waits on the compositor's frame callbacks, which come at ~19 Hz here (the game ran at 18 fps); the host's
+# timer pacing holds 60 fps
+export POCKET_NO_VSYNC=1
 # the game list: the same card folders the GB / GBC / GBA systems use
 export POCKET_ROM_DIRS=/data/roms/gba:/data/roms/gbc:/data/roms/gb
 
