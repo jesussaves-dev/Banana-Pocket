@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: tom <tom@localhost>
+From: Thomas Mulkey <thomasmulkey1997@gmail.com>
 Date: Tue, 17 Nov 2026 11:20:55 -0500
 Subject: [PATCH] input: joystick: add banana-pad serdev gamepad MCU driver
 
@@ -8,7 +8,8 @@ docs/BANANA-PAD-PROTOCOL.md. Matches "banana,pad" so rsinput stays
 selectable. Proper stream framing, per-device button state, watchdog
 recovery as documented.
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Assisted-by: Claude:claude-sonnet-5-5
+Signed-off-by: Thomas Mulkey <thomasmulkey1997@gmail.com>
 ---
  drivers/input/joystick/Kconfig      |  11 +
  drivers/input/joystick/Makefile     |   1 +

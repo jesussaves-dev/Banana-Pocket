@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: tom <tom@localhost>
+From: Thomas Mulkey <thomasmulkey1997@gmail.com>
 Date: Tue, 17 Nov 2026 18:36:25 -0500
 Subject: [PATCH] dt-bindings: iommu: arm,smmu: Document SM4450 SMMU
 
@@ -7,7 +7,7 @@ Add the SM4450 apps SMMU (qcom,smmu-500, no clocks) and the SM4450 GPU
 SMMU (qcom,adreno-smmu, which takes the same six clocks as the SM8450
 one: gmu, hub, hlos, bus, iface and ahb).
 
-Signed-off-by: tom <tom@localhost>
+Signed-off-by: Thomas Mulkey <thomasmulkey1997@gmail.com>
 ---
  Documentation/devicetree/bindings/iommu/arm,smmu.yaml | 7 ++++++-
  1 file changed, 6 insertions(+), 1 deletion(-)

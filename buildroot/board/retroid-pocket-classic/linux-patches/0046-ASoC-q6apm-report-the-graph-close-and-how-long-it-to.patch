@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Banana <banana@localhost>
+From: Thomas Mulkey <thomasmulkey1997@gmail.com>
 Date: Sat, 31 Oct 2026 04:00:00 +0000
 Subject: [PATCH] ASoC: q6apm: report the graph close, and how long it took
 
@@ -18,6 +18,8 @@ Log the failure with dev_err, and the close round-trip time with dev_dbg.
 This changes no behaviour -- it only makes the one quiet failure visible,
 which is what decides whether the userspace "wait one beat" handover still
 earns its keep or can come out.
+
+Signed-off-by: Thomas Mulkey <thomasmulkey1997@gmail.com>
 ---
  sound/soc/qcom/qdsp6/q6apm.c | 17 ++++++++++++++++-
  1 file changed, 16 insertions(+), 1 deletion(-)

@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: tom <tom@localhost>
+From: Thomas Mulkey <thomasmulkey1997@gmail.com>
 Date: Tue, 17 Nov 2026 13:53:48 -0500
 Subject: [PATCH] leds: qcom-lpg: add PM6450 PWM
 
@@ -7,7 +7,8 @@ One PWM-only channel at 0xe800 (no LUT, no triled), taken from the stock
 Android DT (qcom,pwms@e800 under qcom,pm6450@1). Lets the RPC fan's
 pwm-fan bind.
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Assisted-by: Claude:claude-sonnet-5-5
+Signed-off-by: Thomas Mulkey <thomasmulkey1997@gmail.com>
 ---
  .../devicetree/bindings/leds/leds-qcom-lpg.yaml     |  2 ++
  drivers/leds/rgb/leds-qcom-lpg.c                    | 13 +++++++++++++

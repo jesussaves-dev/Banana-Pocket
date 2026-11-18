@@ -1,10 +1,12 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Tom <jesussaves-ai@users.noreply.github.com>
+From: Thomas Mulkey <thomasmulkey1997@gmail.com>
 Date: Tue, 27 Oct 2026 15:21:41 -0400
 Subject: [PATCH] Bluetooth: hci_qca: keep IBS disabled for WCN3950
 
 Downstream only (K6.2): no justification for skipping IBS/suspend on WCN3950 beyond
 the device working this way; not sent upstream until one is found.
+
+Signed-off-by: Thomas Mulkey <thomasmulkey1997@gmail.com>
 ---
  drivers/bluetooth/hci_qca.c | 6 +++++-
  1 file changed, 5 insertions(+), 1 deletion(-)
