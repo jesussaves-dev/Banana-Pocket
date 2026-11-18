@@ -1,0 +1,34 @@
+#!/bin/sh
+# PokeDaisy: GB / GBC / GBA frontend + Pokemon companion, as a Wayland client of banana-ui's compositor (like run-bananatube).
+#   run-pokedaisy [<marker>]        the marker is what banana-ui found (the app's one entry); unused here
+BIN=/usr/bin/pokedaisy-linux
+[ -x "$BIN" ] || { echo "run-pokedaisy: no $BIN" >&2; exit 1; }
+
+D=/data/banana/pokedaisy
+mkdir -p "$D" /data/banana/logs 2>/dev/null
+export HOME="$D/home"; mkdir -p "$HOME" 2>/dev/null
+export XDG_RUNTIME_DIR=/run/banana/wayland
+mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null; chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null
+: "${SDL_VIDEODRIVER:=wayland}"; export SDL_VIDEODRIVER
+: "${SDL_AUDIODRIVER:=alsa}"; export SDL_AUDIODRIVER
+SDL_GAMECONTROLLERCONFIG="$(cat /etc/banana/sdl-pad.map 2>/dev/null)"
+export SDL_GAMECONTROLLERCONFIG
+export POCKET_CORE_DIR=/usr/lib/pokedaisy
+export POCKET_FULLSCREEN=1
+# the game list: the same card folders the GB / GBC / GBA systems use
+export POCKET_ROM_DIRS=/data/roms/gba:/data/roms/gbc:/data/roms/gb
+
+L=/data/banana/logs/pokedaisy.log
+[ -s "$L" ] && mv -f "$L" "$L.1"
+export WAYLAND_DISPLAY=banana-0
+setsid "$BIN" --data "$D" >"$L" 2>&1 &
+C=$!
+trap 'kill -TERM -$C 2>/dev/null' TERM INT HUP
+wait $C; S=$?
+while kill -0 $C 2>/dev/null; do wait $C; S=$?; done
+if kill -0 -$C 2>/dev/null; then
+    kill -TERM -$C 2>/dev/null
+    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 -$C 2>/dev/null || break; sleep 0.2; done
+    kill -KILL -$C 2>/dev/null
+fi
+exit $S

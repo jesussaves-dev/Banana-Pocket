@@ -1,0 +1,9 @@
+config BR2_PACKAGE_POKEDAISY
+	bool "pokedaisy"
+	depends on BR2_INSTALL_LIBSTDCPP
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_SDL2
+	help
+	  PokeDaisy (github.com/lidor30/pokedaisy): a Game Boy / Game Boy Color / Game Boy Advance frontend with a live
+	  Pokemon companion, as an app on the Apps shelf. The SDL2 host plus its mGBA (GB/GBC) and armGBA (GBA) libretro
+	  cores. The DS core is not built yet. GPL-3.0; the NOTICE term "Based on PokeDaisy" applies.
