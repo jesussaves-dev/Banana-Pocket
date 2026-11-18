@@ -2165,6 +2165,7 @@ struct App
 	int tMinX = 0, tMaxX = 0, tMinY = 0, tMaxY = 0;
 	int tX = 0, tY = 0;
 	bool tDown = false, tWasDown = false;
+	bool tDropping = false;								// SYN_DROPPED seen: events up to the next SYN_REPORT are stale
 	bool tXse = false, tYse = false, tLatched = false;	// both axes seen for this contact; its press point latched
 	int tDownX = 0, tDownY = 0;							// the latched press point (raw)
 	Uint32 tLastFire = 0;								// one tap per gesture; swallows a finger's chatter
@@ -2189,11 +2190,17 @@ struct App
 		}
 		if (const char* r = getenv("BANANA_TUBE_TOUCH_ROT")) panelRot = atoi(r);
 		// the panel's native mode (the touchscreen's own axes): /sys/class/drm/card*-DSI-1/modes -> "1080x1240"
-		if (FILE* f = fopen("/sys/class/drm/card1-DSI-1/modes", "r"))
+		// (the card's number depends on what probed first: card0 or card1)
+		for (int card = 0; card < 4; card++)
 		{
+			char mp[64];
+			snprintf(mp, sizeof mp, "/sys/class/drm/card%d-DSI-1/modes", card);
+			FILE* f = fopen(mp, "r");
+			if (!f) continue;
 			int w = 0, h = 0;
-			if (fscanf(f, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) { panelW = w; panelH = h; }
+			bool got = fscanf(f, "%dx%d", &w, &h) == 2 && w > 0 && h > 0;
 			fclose(f);
+			if (got) { panelW = w; panelH = h; break; }
 		}
 		DIR* d = opendir("/dev/input");
 		if (!d) return;
@@ -2204,12 +2211,17 @@ struct App
 			int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 			if (fd < 0) continue;
 			unsigned long abs[ABS_MAX / (8 * sizeof(long)) + 1] = {};
+			unsigned long keys[KEY_MAX / (8 * sizeof(long)) + 1] = {};
 			ioctl(fd, EVIOCGBIT(EV_ABS, sizeof abs), abs);
+			ioctl(fd, EVIOCGBIT(EV_KEY, sizeof keys), keys);
 			auto bit = [&](int n) { return (abs[n / (8 * sizeof(long))] >> (n % (8 * sizeof(long)))) & 1; };
+			auto kbit = [&](int n) { return (keys[n / (8 * sizeof(long))] >> (n % (8 * sizeof(long)))) & 1; };
 			// multitouch (ABS_MT_POSITION_X/Y), else a single-touch screen or absolute pointer (ABS_X/Y): the RPC's
 			// FT5x06 is multitouch, but a card with a plain touchscreen must work too
 			bool mt = bit(ABS_MT_POSITION_X) && bit(ABS_MT_POSITION_Y);
-			bool st = !mt && bit(ABS_X) && bit(ABS_Y);
+			// (a gamepad's analog stick is ABS_X/ABS_Y too: a screen or pointer has BTN_TOUCH, or BTN_LEFT and no face
+			// buttons -- the same test as banana-ui's)
+			bool st = !mt && bit(ABS_X) && bit(ABS_Y) && (kbit(BTN_TOUCH) || (kbit(BTN_LEFT) && !kbit(BTN_SOUTH)));
 			if (mt || st)
 			{
 				input_absinfo ax = {}, ay = {};
@@ -2288,6 +2300,17 @@ struct App
 			for (int i = 0; i < (int)(n / sizeof(input_event)); i++)
 			{
 				const input_event& e = ev[i];
+				// the kernel's queue overflowed: what follows up to the next SYN_REPORT is a partial packet, and the
+				// lift may have been in what was lost; the contact's state now says (the report below acts on it)
+				if (e.type == EV_SYN && e.code == SYN_DROPPED) { tDropping = true; continue; }
+				if (tDropping)
+				{
+					if (!(e.type == EV_SYN && e.code == SYN_REPORT)) continue;
+					tDropping = false;
+					unsigned long held[KEY_MAX / (8 * sizeof(long)) + 1] = {};
+					if (ioctl(touchFd, EVIOCGKEY(sizeof held), held) >= 0)
+						tDown = (held[BTN_TOUCH / (8 * sizeof(long))] >> (BTN_TOUCH % (8 * sizeof(long)))) & 1;
+				}
 				int x = 0, y = 0;
 				if (feedTouch(e.type, e.code, e.value, W, H, now, x, y))
 				{

@@ -39,11 +39,18 @@ for u in /sys/class/block/*p2/uevent; do
     p=${u%/uevent}; DISK=/dev/${p##*/}; DISK=${DISK%p2}
 done
 [ -n "$DISK" ] || DISK=/dev/mmcblk0
+# firstboot partitions $DISK: it only ever touches a disk that really carries the two root slots, so a failed lookup
+# above (and the guessed fallback) can never repartition some other device
+BANANA_DISK_OK=no
+[ -b ${DISK}p2 ] && [ -b ${DISK}p3 ] && BANANA_DISK_OK=yes
 echo "$DISK" > /run/banana/disk
 SLOT=a; grep -q 'root=PARTLABEL=banana-root-b' /proc/cmdline && SLOT=b
 echo "$SLOT" > /run/banana/slot
 mark "rcS: slot $SLOT booted"
-if [ ! -b ${DISK}p4 ]; then
+if [ "$BANANA_DISK_OK" != yes ]; then
+    echo "Banana: no root slots on $DISK, not making a data partition" > /dev/kmsg
+    mark "rcS: $DISK has no root slots, firstboot skipped"
+elif [ ! -b ${DISK}p4 ]; then
     /usr/libexec/banana/firstboot "$DISK"
 elif grep -q '^PARTNAME=banana-new$' /sys/class/block/${DISK##*/}p4/uevent 2>/dev/null; then
     # a first boot cut off before the partition was formatted (it is still named banana-new): format it now

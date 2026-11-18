@@ -152,6 +152,43 @@ namespace banana
 		return at;
 	}
 
+	void Input::resync(Dev& dv, const std::function<void(const InputEvent&)>& sink)
+	{
+		unsigned long now[KEY_MAX / (8 * sizeof(long)) + 1] = {};
+		if (ioctl(dv.fd, EVIOCGKEY(sizeof now), now) >= 0)
+		{
+			for (int k = 0; k <= KEY_MAX && k < (int)dv.held.size(); k++)
+			{
+				if (!dv.held[k] || testBit(now, k)) continue;
+				dv.held.reset(k);
+				if (raw) raw(EV_KEY, k, 0, dv.cls);
+				if (dv.touch)
+				{
+					if (k == (dv.pointer ? BTN_LEFT : BTN_TOUCH)) dv.down = false;
+					continue;
+				}
+				Key m = mapKey(k);
+				if (m == Key::NONE) continue;
+				InputEvent o;
+				o.type = InputEvent::RELEASE;
+				o.key = m;
+				sink(o);
+			}
+		}
+		if (dv.touch) return;
+		for (int axis = ABS_HAT0X; axis <= ABS_HAT0Y; axis++)
+		{
+			input_absinfo ai = {};
+			if (ioctl(dv.fd, EVIOCGABS(axis), &ai) < 0) continue;
+			int& last = axis == ABS_HAT0X ? dv.hatX : dv.hatY;
+			if (ai.value == last) continue;
+			Key neg = axis == ABS_HAT0X ? Key::LEFT : Key::UP, pos = axis == ABS_HAT0X ? Key::RIGHT : Key::DOWN;
+			if (last != 0) { InputEvent o; o.type = InputEvent::RELEASE; o.key = last < 0 ? neg : pos; sink(o); }
+			if (ai.value != 0) { InputEvent o; o.type = InputEvent::PRESS; o.key = ai.value < 0 ? neg : pos; sink(o); }
+			last = ai.value;
+		}
+	}
+
 	void Input::read(int fd, const std::function<void(const InputEvent&)>& sink)
 	{
 		if (fd == watch)
@@ -172,6 +209,15 @@ namespace banana
 			for (int i = 0; i < n / (int)sizeof(input_event); i++)
 			{
 				const input_event& e = ev[i];
+				// the kernel's queue overflowed: what follows up to the next SYN_REPORT is a partial packet
+				if (e.type == EV_SYN && e.code == SYN_DROPPED) { dv->dropping = true; continue; }
+				if (dv->dropping)
+				{
+					if (!(e.type == EV_SYN && e.code == SYN_REPORT)) continue;
+					dv->dropping = false;
+					resync(*dv, sink);	// (a touch's lift is sent by the report below, once resync cleared `down`)
+				}
+				if (e.type == EV_KEY && e.value != 2 && e.code < dv->held.size()) dv->held.set(e.code, e.value != 0);
 				if (raw) raw((int)e.type, (int)e.code, e.value, dv->cls);
 				if (dv->touch)
 				{

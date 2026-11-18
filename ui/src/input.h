@@ -2,6 +2,7 @@
 // banana-ui: buttons and touch from evdev. Every input device that has buttons or a touchscreen is opened; the
 // buttons are mapped to the UI's (Nintendo layout, as the RPC's MCU gamepad reports them), and the touchscreen
 // becomes taps and drags on the screen.
+#include <bitset>
 #include <functional>
 #include <poll.h>
 #include <string>
@@ -54,10 +55,15 @@ namespace banana
 			int x = 0, y = 0;
 			bool down = false, wasDown = false, moved = false;
 			int hatX = 0, hatY = 0;
+			bool dropping = false;			// SYN_DROPPED seen: everything up to the next SYN_REPORT is stale
+			std::bitset<0x300> held;		// keys this device has pressed (KEY_MAX is 0x2ff), to release after a drop
 			std::string path, name;
 			InputClass cls = InputClass::PAD;
 			bool grabbable = false;	// pad or touch, not the power/volume keys
 		};
+		// after a SYN_DROPPED: the keys and hat the kernel says are down now, against what was seen; what let go while
+		// events were lost is released (a lost release would hold a button down for good)
+		void resync(Dev& dv, const std::function<void(const InputEvent&)>& sink);
 		std::vector<Dev> devs;
 		bool grabWanted = false, grabbed = false;
 		int pw = 640, ph = 480;		// what the menu draws in

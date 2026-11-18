@@ -80,6 +80,7 @@ static struct {
 static int skip(const char *what) { return cfg.sleep_skip[0] && strstr(cfg.sleep_skip, what) != NULL; }
 
 static int devfd[MAXDEV], ndev;
+static unsigned char devdrop[MAXDEV];	/* SYN_DROPPED seen: events up to the next SYN_REPORT are stale */
 static void power_update(void);
 static void audio_route(void);
 static void jack_settle_begin(void);
@@ -416,6 +417,15 @@ static void jack_log(void)
 	else if (!said_absent) { said_absent = 1; say("sound: no input device carries SW_HEADPHONE_INSERT yet"); }
 }
 
+/* whether the kernel has `code` down on this input device right now (0 when the device has no such key or can't say) */
+static int key_held_now(int fd, int code)
+{
+	unsigned long k[KEY_MAX / (8 * sizeof(long)) + 1];
+	memset(k, 0, sizeof k);
+	if (ioctl(fd, EVIOCGKEY(sizeof k), k) < 0) return 0;
+	return (k[code / (8 * sizeof(long))] >> (code % (8 * sizeof(long)))) & 1;
+}
+
 static void drain_inputs(void)
 {
 	struct input_event ev[64];
@@ -434,8 +444,13 @@ static int wake_key_press(void)
 	for (int i = 0; i < ndev; i++) {
 		ssize_t r;
 		while ((r = read(devfd[i], ev, sizeof ev)) > 0)
-			for (ssize_t k = 0; k < r / (ssize_t)sizeof ev[0]; k++)
+			for (ssize_t k = 0; k < r / (ssize_t)sizeof ev[0]; k++) {
+				if (ev[k].type == EV_SYN && ev[k].code == SYN_DROPPED) {
+					/* the queue overflowed and the press may be among what was lost: the key's state now says */
+					if (key_held_now(devfd[i], KEY_POWER)) pressed = 1;
+				}
 				if (ev[k].type == EV_KEY && ev[k].code == KEY_POWER && ev[k].value == 1) pressed = 1;
+			}
 	}
 	return pressed;
 }
@@ -447,6 +462,7 @@ static int wake_key_press(void)
  * the game and the menu go on first, then the post-sleep hooks in the background. Woken by the battery check:
  * straight back to sleep, without running anything again. */
 static void shutdown_now(const char *why);
+static void handle(const struct input_event *e);
 static int battery_discharging_pct(void);
 static int battery_pct_any(void);
 static long battery_charge_uah(void);
@@ -2233,6 +2249,7 @@ static void open_inputs(void)
 {
 	for (int i = 0; i < ndev; i++) close(devfd[i]);
 	ndev = 0;
+	memset(devdrop, 0, sizeof devdrop);
 	DIR *d = opendir("/dev/input");
 	if (!d) return;
 	struct dirent *e;
@@ -2264,6 +2281,28 @@ static int ra_cmd(const char *cmd)
 	int ok = write(fd, cmd, len) == (ssize_t)len && write(fd, "\n", 1) == 1;
 	close(fd);
 	return ok;
+}
+
+/* After a SYN_DROPPED the release of a key bananad was tracking may be gone, and a lost release leaves Fn or Select
+ * held (the combos fire for good) or power "down" (the sleep never starts). Read what the device holds now and let go
+ * of what it doesn't -- only for keys this device has, since the same flag may be held on another one. */
+static void resync_keys(int fd)
+{
+	unsigned long caps[KEY_MAX / (8 * sizeof(long)) + 1];
+	memset(caps, 0, sizeof caps);
+	if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof caps), caps) < 0) return;
+	static const struct { int code; int *flag; } keys[] = { { BTN_MODE, &fn_held }, { BTN_SELECT, &select_held }, { KEY_POWER, &power_down } };
+	for (unsigned i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+		int c = keys[i].code;
+		if (!((caps[c / (8 * sizeof(long))] >> (c % (8 * sizeof(long)))) & 1)) continue;
+		if (!*keys[i].flag || key_held_now(fd, c)) continue;
+		struct input_event ev;
+		memset(&ev, 0, sizeof ev);
+		ev.type = EV_KEY;
+		ev.code = c;
+		ev.value = 0;
+		handle(&ev);
+	}
 }
 
 static void handle(const struct input_event *e)
@@ -2571,7 +2610,14 @@ int main(int argc, char **argv)
 			struct input_event ev[64];
 			ssize_t r;
 			while ((r = read(devfd[i], ev, sizeof ev)) > 0)
-				for (int k = 0; k < r / (ssize_t)sizeof ev[0]; k++) handle(&ev[k]);
+				for (int k = 0; k < r / (ssize_t)sizeof ev[0]; k++) {
+					if (ev[k].type == EV_SYN && ev[k].code == SYN_DROPPED) { devdrop[i] = 1; continue; }
+					if (devdrop[i]) {
+						if (ev[k].type == EV_SYN && ev[k].code == SYN_REPORT) { devdrop[i] = 0; resync_keys(devfd[i]); }
+						continue;
+					}
+					handle(&ev[k]);
+				}
 		}
 		if (uev_at >= 0 && (pf[uev_at].revents & POLLIN) && uevent_read(uev)) power_update();
 		save_settings(now);

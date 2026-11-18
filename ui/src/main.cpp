@@ -1467,9 +1467,20 @@ int main(int argc, char** argv)
 							logf("resume: panel restore failed, reopening it");
 							comp.stop();
 							disp.close();
-							for (int tries = 0; !disp.openSingle(o.top, err) && tries < 50; tries++) sleepUs(20000);
-							shaderApply(true);	// close() let go of the mask's buffers
-							if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
+							// the same wait as at boot (the panel's driver may still be probing after a wake); with no panel
+							// there is nothing to show, so quit and let init start the menu again
+							bool back = false;
+							for (int tries = 0; tries < 100 && !(back = disp.openSingle(o.top, err)); tries++) sleepUs(50000);
+							if (!back)
+							{
+								logf("resume: the panel did not come back: %s", err.c_str());
+								quit = true;
+							}
+							else
+							{
+								shaderApply(true);	// close() let go of the mask's buffers
+								if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
+							}
 						}
 						std::lock_guard<std::mutex> l(worker.uiLock);
 						be.invalidate(); ui->dataChanged(); if (gamePid <= 0) ui->woke(); dirty = true; batteryDue = true;
