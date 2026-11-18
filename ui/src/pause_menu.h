@@ -9,6 +9,7 @@
 #include <deque>
 #include <functional>
 #include <string>
+#include <utility>
 #include <sys/types.h>
 #include <vector>
 
@@ -25,6 +26,7 @@ namespace banana
 			  ffOn(ffOn), raQueue(raQueue) {}
 
 		bool open = false, pending = false;	// pending: MENU is held and may yet open it on release
+		std::deque<int> keyQueue;			// evdev keys a chosen app row wants tapped in the client (sent by the main loop once it is thawed)
 		Settings::PauseView view;			// what the overlay draws, rebuilt before each draw
 
 		// set once by the main loop
@@ -61,5 +63,6 @@ namespace banana
 
 		int sel = 0, armed = -1, pickSlot = 0, discPick = 1;
 		std::vector<std::string> rows;	// the row ids (English labels) for this game
+		std::vector<std::pair<std::string, int>> appKeys;	// an app's rows that tap a key: label, evdev code (from menu_keys)
 	};
 }

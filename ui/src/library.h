@@ -23,6 +23,7 @@ namespace banana
 		bool always = false;			// on the shelf with no games (a fresh card shows where games go)
 		bool flat = false;				// games only in the folder itself (ports: their own folders hold scripts too)
 		bool app = false;				// an application, not a console: scanned from an app manifest (see scanApps)
+		std::string menuKeys;			// app.json "menu_keys": "Save state=F2,Load state=F4" -- quick-menu rows that tap a key in the app
 	};
 
 	struct Game

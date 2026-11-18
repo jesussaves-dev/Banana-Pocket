@@ -1,6 +1,9 @@
 // banana-ui: the pause menu over a frozen game.
 #include "app.h"
 #include "pause_menu.h"
+#include <cctype>
+#include <cstdlib>
+#include <linux/input.h>
 
 void PauseMenu::build()
 {
@@ -23,7 +26,7 @@ void PauseMenu::build()
 	{
 		Settings::PauseRow r;
 		r.label = id;
-		if (id == "Save state" || id == "Load state") { r.value = tr("Slot") + " " + std::to_string(pickSlot); r.arrows = true; }
+		if (gameRA && (id == "Save state" || id == "Load state")) { r.value = tr("Slot") + " " + std::to_string(pickSlot); r.arrows = true; }
 		else if (id == "Change disc") { r.value = tr("Disc") + " " + std::to_string(discPick) + "/" + std::to_string(discs); r.arrows = true; }
 		else if (id == "Fast-forward") r.value = ffOn ? "On" : "Off";
 		else if (id == "Frame") { r.value = frameKind == FrameKind::Art ? "Console" : frameKind == FrameKind::Banana ? "Banana" : "None"; r.arrows = true; }
@@ -34,7 +37,7 @@ void PauseMenu::build()
 	v.picture.clear();
 	v.caption.clear();
 	v.lines.clear();
-	if (row == "Save state" || row == "Load state")
+	if (gameRA && (row == "Save state" || row == "Load state"))
 	{
 		std::string st = statePath(gameRom, pickSlot);
 		std::string slot = tr("Slot") + " " + std::to_string(pickSlot);
@@ -80,6 +83,52 @@ void PauseMenu::build()
 }
 void PauseMenu::draw() { build(); drawCard(); }
 
+// "F2", "SPACE", "R" ... -> an evdev key code (0: unknown)
+static int keyByName(std::string n)
+{
+	for (char& c : n) c = (char)toupper((unsigned char)c);
+	if (n.size() >= 2 && n[0] == 'F' && isdigit((unsigned char)n[1]))
+	{
+		int f = atoi(n.c_str() + 1);
+		if (f >= 1 && f <= 10) return KEY_F1 + f - 1;
+		if (f == 11) return KEY_F11;
+		if (f == 12) return KEY_F12;
+		return 0;
+	}
+	if (n == "SPACE") return KEY_SPACE;
+	if (n == "ENTER") return KEY_ENTER;
+	if (n == "TAB") return KEY_TAB;
+	if (n == "ESC") return KEY_ESC;
+	if (n.size() == 1 && n[0] >= 'A' && n[0] <= 'Z')
+	{
+		static const int az[26] = { KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G, KEY_H, KEY_I, KEY_J, KEY_K, KEY_L, KEY_M,
+		                            KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R, KEY_S, KEY_T, KEY_U, KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z };
+		return az[n[0] - 'A'];
+	}
+	return 0;
+}
+// "Save state=F2,Load state=F4" -> the app's rows that tap a key
+static std::vector<std::pair<std::string, int>> parseMenuKeys(const std::string& spec)
+{
+	std::vector<std::pair<std::string, int>> out;
+	size_t at = 0;
+	while (at < spec.size())
+	{
+		size_t end = spec.find(',', at);
+		if (end == std::string::npos) end = spec.size();
+		std::string item = spec.substr(at, end - at);
+		at = end + 1;
+		size_t eq = item.find('=');
+		if (eq == std::string::npos) continue;
+		std::string label = item.substr(0, eq);
+		while (!label.empty() && label.front() == ' ') label.erase(label.begin());
+		while (!label.empty() && label.back() == ' ') label.pop_back();
+		int code = keyByName(item.substr(eq + 1));
+		if (!label.empty() && code) out.push_back({ label, code });
+	}
+	return out;
+}
+
 // The pause menu: MENU over a game freezes it (SIGSTOP on the launcher's whole tree, so a port or BananaTube stops
 // too) and lists what can be done; RetroArch's own menu stays one row away (and on MENU + X). It replaces the
 // RetroArch menu as the first thing MENU opens: fewer choices, Banana's look, the same for every game.
@@ -103,8 +152,15 @@ void PauseMenu::show()
 		if (access("/run/banana/ra-progress", R_OK) == 0) rows.push_back("Achievements");
 		for (const char* r : { "Restart game", "RetroArch menu", "Quit game" }) rows.push_back(r);
 	}
-	else if (gameFramable && frameMaster()) rows = { "Resume", "Frame", "Quit" };
-	else rows = { "Resume", "Quit" };
+	else
+	{
+		appKeys.clear();
+		if (gameIndex >= 0) appKeys = parseMenuKeys(lib.systemOf(gameIndex).menuKeys);
+		rows = { "Resume" };
+		for (const auto& k : appKeys) rows.push_back(k.first);
+		if (gameFramable && frameMaster()) rows.push_back("Frame");
+		rows.push_back("Quit");
+	}
 	signalTree(gamePid, SIGSTOP);
 	if (FILE* f = fopen("/run/banana/overlay-open", "w")) { fputs("1\n", f); fclose(f); }
 	draw();
@@ -145,6 +201,8 @@ void PauseMenu::act()
 		draw();
 		return;
 	}
+	for (const auto& k : appKeys)
+		if (!gameRA && k.first == row) { close(); keyQueue.push_back(k.second); return; }	// tapped by the main loop once the client has the keys again
 	pid_t game = gamePid;
 	close();	// thawed first: RetroArch reads its stdin only while it runs
 	if (row == "Save state") { syncSlot(); raQueue.push_back("SAVE_STATE"); }
@@ -178,7 +236,7 @@ void PauseMenu::key(Key k)
 	else if (k == Key::LEFT || k == Key::RIGHT)
 	{
 		int d = k == Key::LEFT ? -1 : 1;
-		if (row == "Save state" || row == "Load state") pickSlot = (pickSlot + d + 10) % 10;
+		if (gameRA && (row == "Save state" || row == "Load state")) pickSlot = (pickSlot + d + 10) % 10;
 		else if (row == "Change disc") discPick = (discPick - 1 + d + discs) % discs + 1;
 		else if (row == "Frame" && gameIndex >= 0)
 		{

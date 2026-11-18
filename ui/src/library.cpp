@@ -255,6 +255,7 @@ namespace banana
 						def.maker = doc->str("maker", def.maker);
 						def.run = doc->str("run", def.run);
 						def.perf = doc->str("perf", def.perf);
+						def.menuKeys = doc->str("menu_keys", "");
 						parseExts(doc->str("ext", ""), def.exts);
 						std::string icon = doc->str("icon", "");
 						if (!icon.empty())
