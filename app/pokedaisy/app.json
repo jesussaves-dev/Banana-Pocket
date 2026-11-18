@@ -7,5 +7,7 @@
         "run": "/usr/libexec/banana/run-pokedaisy %ROM%",
         "ext": "app",
         "perf": "balanced",
+        // quick-menu rows that tap a key in PokeDaisy (its F2 / F4 save and load the state); FF and rewind are hold keys
+        "menu_keys": "Save state=F2,Load state=F4",
         "accent": "#ff7aa8"
 }

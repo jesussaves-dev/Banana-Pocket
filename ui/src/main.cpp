@@ -28,6 +28,7 @@
 #include "sound.h"
 #include "idle.h"
 #include "menu.h"
+#include <linux/input.h>
 #include "layout.h"
 
 #include <algorithm>
@@ -499,6 +500,8 @@ int main(int argc, char** argv)
 	if (!comp.start(err)) logf("compositor: off: %s", err.c_str());
 	// 3E.2: keyboard-class devices reach a client on the primary; the pad and the power/volume keys stay direct.
 	bool forwardOn = false;
+	int tapKey = -1;							// a quick-menu row's key, held in the client until tapRelease
+	double tapRelease = 0, tapNext = 0;
 	input.raw = [&](int type, int code, int value, InputClass cls)
 	{
 		if (cls == InputClass::KEYBOARD) comp.forwardInput(type, code, value);
@@ -1072,6 +1075,7 @@ int main(int argc, char** argv)
 			gameRA = sd.run.find("run-retroarch") != std::string::npos;
 			gameRom = rom;
 			raQueue.clear();
+			pause.keyQueue.clear();
 			// the pause menu's view of RetroArch: slot 0 (run-retroarch starts every launch there; retroarch.cfg's
 			// saved state_slot is not what it starts on), disc 1, fast-forward off
 			raSlot = 0;
@@ -1133,6 +1137,21 @@ int main(int argc, char** argv)
 		// 3E.2: keys reach the client only while it owns the primary, the quick menu is down and the guard is awake
 		bool fwd = comp.clientOnScreen() && !pause.open && guard.stage() == 0;
 		if (fwd != forwardOn) { forwardOn = fwd; comp.setInputForward(fwd); }
+		// a quick-menu app row (menu_keys): tap its key in the client once it has the keys back; held ~60 ms so a frame sees it
+		if (tapKey >= 0 && (now >= tapRelease || !forwardOn))
+		{
+			if (forwardOn) comp.forwardInput(EV_KEY, tapKey, 0);
+			tapKey = -1;
+			tapNext = now + 100;
+		}
+		else if (tapKey < 0 && !pause.keyQueue.empty() && forwardOn && now >= tapNext)
+		{
+			tapKey = pause.keyQueue.front();
+			pause.keyQueue.pop_front();
+			logf("quick menu: tap key %d in the client", tapKey);
+			comp.forwardInput(EV_KEY, tapKey, 1);
+			tapRelease = now + 60;
+		}
 		{
 			std::lock_guard<std::mutex> l(worker.uiLock);
 			ui->update(now);

@@ -57,6 +57,15 @@ root filesystem is read-only. The log is `/data/banana/logs/pokedaisy.log`, with
 the previous run in `.1`. The script runs the host in its own process group, forwards `TERM`/`INT`/`HUP` to it, and
 kills any stragglers on exit, so sleep (`SIGSTOP`/`SIGCONT`) and quitting behave as in docs/EMULATORS.md.
 
+## Quick menu
+
+F opens Banana's quick menu over PokeDaisy like over any app (`banana-ui` freezes it with `SIGSTOP`). `app.json`'s
+`menu_keys` (`"Save state=F2,Load state=F4"`) adds those rows: choosing one thaws the game and `banana-ui` taps the key in
+PokeDaisy through the compositor's keyboard forwarding (`PauseMenu::keyQueue`, sent by the main loop once the client has
+the keys back). Load state asks for a second A, as RetroArch's does. PokeDaisy keeps one state per game, so there is no
+slot picker. Fast-forward and rewind are hold keys in PokeDaisy, so they are not rows. PokeDaisy's own menu is
+START + SELECT. `menu_keys` is generic: any app manifest can use it (names: F1-F12, SPACE, ENTER, TAB, ESC, A-Z).
+
 ## Hardware notes
 
 - The RPC Classic has no analog sticks. Anything upstream binds to a stick needs a button alternative; upstream's
@@ -67,6 +76,10 @@ kills any stragglers on exit, so sleep (`SIGSTOP`/`SIGCONT`) and quitting behave
 
 - Boot, tile, launch, input and audio on hardware; a performance profile.
 - Tile icon.
+- System shaders and console borders (frames): both live in `banana-ui`'s compositor, not in PokeDaisy's code, so they
+  could be offered for PokeDaisy too -- the Shaders settings (mask, colour) probably already draw over it, and a
+  Frame row in the quick menu would need the app marked framable (`gameFramable`). Check what applies and what
+  looks right on a 160x144 / 240x160 picture.
 - DS core (`libretro/linux/libretro-ds`, needs the `dsperate-lr` submodule fetched recursively).
 - Tell the upstream author before distributing builds that include it.
 
