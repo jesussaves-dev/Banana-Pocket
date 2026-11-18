@@ -442,6 +442,22 @@ struct PlugNotice
 	}
 };
 
+// The overlay's precedence, in one place for the menu (main.cpp) and the headless harness (headless.cpp), so the tests
+// run the same choice the handheld makes: the battery notice, else the charger's, else the volume/brightness level,
+// else the pause menu (pauseDraw draws it and returns true when it is open), else the achievement toasts. It returns
+// which one it chose, so a test can say what was on the screen and not only that something was.
+template <class View, class PauseDraw>
+static const char* drawOverlay(View& v, const LowBattery& low, const PlugNotice& plug, const std::string& osdLabel, int osdPercent,
+	double osdUntil, double t, PauseDraw pauseDraw)
+{
+	if (low.showing(t)) { v.notice(low.title, low.body, low.percent); return "battery"; }
+	if (plug.showing(t)) { v.notice(plug.title, plug.body, plug.percent, plug.seen == 1); return "plug"; }
+	if (osdUntil > t) { v.level(osdLabel, osdPercent); return "level"; }
+	if (pauseDraw()) return "pause";
+	v.drawToast(t);
+	return "toast";
+}
+
 static int shutdownPercent(const std::string& data)
 {
 	return atoi(getConfValue(data + "/bananad.conf", "battery_shutdown_percent",

@@ -65,6 +65,12 @@ printf 'pwn' > "$D/pwn-$$"
 ( cd "$D" && tar -czf hostile.tar.gz --transform='s|^|../|' "pwn-$$" ) 2>/dev/null
 out=$(run restore "$D/hostile.tar.gz" 2>&1); rc=$?
 [ $rc -ne 0 ] && ok "refused ($out)" || bad "a ../ member was accepted"
+# GNU tar refuses a ../ member itself, so a refusal alone proves nothing about backup's own guard (the handheld's busybox
+# tar may not): the guard's message is what shows the guard ran before tar did
+case "$out" in *"unsafe path"*) ok "the guard refused it, not tar" ;; *) bad "backup's own unsafe-path guard did not fire: $out" ;; esac
+( cd "$D" && tar -czf abs.tar.gz -P "$D/pwn-$$" ) 2>/dev/null
+out=$(run restore "$D/abs.tar.gz" 2>&1); rc=$?
+[ $rc -ne 0 ] && case "$out" in *"unsafe path"*) ok "an absolute member is refused by the guard" ;; *) bad "absolute member: wrong refusal: $out" ;; esac || bad "an absolute member was accepted"
 [ ! -e "$D/../pwn-$$" ] && ok "nothing written outside the root" || { bad "wrote outside the root"; rm -f "$D/../pwn-$$"; }
 
 echo "6. a card with no accounts.conf still backs up"

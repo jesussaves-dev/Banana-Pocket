@@ -56,6 +56,7 @@ if command -v mpv >/dev/null && [ -f "$HERE/build/wayland/viewporter-server-prot
 	[ "$fail" = 1 ] || "$OUT/compositor-player-test" "$WLT" > "$OUT/player.log" 2>&1 || { echo "FAIL: compositor-player-test"; cat "$OUT/player.log"; fail=1; }
 else
 	echo "skip: compositor-player-test (needs mpv and a built banana-ui)"
+	[ -z "$BANANA_STRICT" ] || { echo "FAIL: compositor-player-test was skipped (BANANA_STRICT is set: install mpv, build banana-ui)"; fail=1; }
 fi
 # A golden theme test: the key screens compared to committed baselines, so a change that moves or drops an element
 # fails here instead of only being seen on the handheld. The comparison is at 32x24 grey -- a layout change is a big
@@ -64,10 +65,12 @@ fi
 GOLDEN=$HERE/tests/golden
 golden() {	# golden <name> <png>
 	f=$2
-	[ -s "$f" ] || return 0
+	[ -s "$f" ] || { echo "FAIL $size: golden $1: no screenshot to compare ($f)"; fail=1; return 0; }
 	g=$GOLDEN/$size-$1.png
 	convert "$f" -resize 32x24! -colorspace Gray "$OUT/golden-now.png" 2>/dev/null
-	if [ -n "$UPDATE_GOLDEN" ] || [ ! -s "$g" ]; then mkdir -p "$GOLDEN"; cp "$OUT/golden-now.png" "$g"; return 0; fi
+	if [ -n "$UPDATE_GOLDEN" ]; then mkdir -p "$GOLDEN"; cp "$OUT/golden-now.png" "$g"; return 0; fi
+	# a missing baseline is a failure, not a new baseline: otherwise deleting one (or a new screen) passes unchecked
+	[ -s "$g" ] || { echo "FAIL $size: golden $1 has no baseline $g (UPDATE_GOLDEN=1 writes it)"; fail=1; return 0; }
 	d=$(compare -metric RMSE "$g" "$OUT/golden-now.png" null: 2>&1 | sed 's/.*(\(.*\))/\1/')
 	awk -v d="$d" 'BEGIN { if (d + 0 > 0.04) exit 1 }' || { echo "FAIL $size: golden $1 changed (RMSE $d)"; fail=1; }
 }
@@ -88,6 +91,11 @@ for size in 640x557; do
     check "splash boot-click at 1100 ms"
     check "battery 19%: notice Battery low: 19%"
     check "press left: notice hidden"
+    # which overlay the frame was drawn with (drawOverlay, shared with main.cpp): the screenshots' coarse golden compare
+    # cannot tell a notice that was drawn from one that was not
+    check "shot battery-low (.*overlay battery)"
+    check "shot battery-empty (.*overlay battery)"
+    check "shot home (.*overlay toast)"
     check "battery 4%: notice Battery nearly empty: 4%"
     check "battery 4%: notice hidden"      # the charger on
     [ "$(grep -c 'notice Battery low: 19%' "$log")" = 2 ] || { echo "FAIL $size: the notice didn't come back after charging"; fail=1; }
@@ -404,6 +412,8 @@ for size in 640x557; do
             press b; press b; press b; setup; wait 200; shot ledger-setup; press b; wait 300; level Volume 60; shot pill; plug 80 battery; plug 81 charging; shot plug" \
         2>> "$stlog" || { echo "FAIL $size: banana-ui (ledger) exited $?"; fail=1; }
     sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    grep -q "shot pill (.*overlay level)" "$stlog" || { echo "FAIL $size: the volume pill was not the overlay"; fail=1; }
+    grep -q "shot plug (.*overlay plug)" "$stlog" || { echo "FAIL $size: the charger's notice was not the overlay"; fail=1; }
     grep -q "plug: notice Charging" "$stlog" || { echo "FAIL $size: the charger's notice"; fail=1; }
     for s in ledger-wifi ledger-setup pill plug; do
         f=$OUT/$size-street-$s.png

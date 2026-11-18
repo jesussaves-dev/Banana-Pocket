@@ -587,12 +587,8 @@ int main(int argc, char** argv)
 	PauseMenu pause(lib, input, comp, gamePid, gameStart, gameIndex, gameRA, gameFramable, gameRom, frameKind, raSlot, discs, discNow, ffOn, raQueue);
 	be.overlay = [&]()
 	{
-		double t = nowMs();
-		if (low.showing(t)) settingsView.notice(low.title, low.body, low.percent);
-		else if (plug.showing(t)) settingsView.notice(plug.title, plug.body, plug.percent, plug.seen == 1);
-		else if (osdUntil > t) settingsView.level(osdLabel, osdPercent);
-		else if (pause.open) settingsView.pauseMenu(pause.view);
-		else settingsView.drawToast(t);	// the achievement toasts, over whatever page is up
+		drawOverlay(settingsView, low, plug, osdLabel, osdPercent, osdUntil, nowMs(),
+			[&] { if (!pause.open) return false; settingsView.pauseMenu(pause.view); return true; });	// else the achievement toasts, over whatever page is up
 	};
 
 	// 3D cards and the 3E quick menu. showCard draws the menu's own card on a cleared screen and turns only its box

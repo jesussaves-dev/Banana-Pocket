@@ -21,6 +21,7 @@ bad() { fail=$((fail + 1)); echo "  FAIL: $*"; }
 echo "1. the touch transform: the panel's corners, turned 90, in the app's 1240x1080 surface"
 if ! pkg-config --exists sdl2 SDL2_ttf SDL2_image libcurl 2>/dev/null; then
     echo "  skip: SDL2/libcurl not found on this host"
+    [ -z "${BANANA_STRICT:-}" ] || bad "SDL2/libcurl missing and BANANA_STRICT is set: the client was not tested"
 else
     make -s -C "$APP" banana-tube >/dev/null 2>&1 || { bad "the client did not build"; }
     out=$(SDL_VIDEODRIVER=dummy BANANA_TUBE_SELFTEST=1 "$APP/banana-tube" \

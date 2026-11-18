@@ -216,7 +216,6 @@ grep -q "rcS: data partition ready" "$OUT/serial.log" && ok "the data partition 
 grep -q "banana-ui: first-time setup" "$OUT/serial.log" && bad "the first-time setup opened again" || ok "no setup the second time"
 sleep 5; measure second-menu
 key ret; sleep 1; shot second-library
-grep -q "Boot Test" "$OUT/serial.log" || true
 key ret            # the ready screen: the cartridge goes in and the game starts
 wait_for "starting gba" 30 "the GBA game was started (run-retroarch)"
 sleep 10; shot second-game

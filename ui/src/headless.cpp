@@ -45,6 +45,7 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 	std::string osdLabel;	// the volume/brightness pill, from the `level` command (test only)
 	int osdPercent = 0;
 	double osdUntil = 0;
+	const char* lastOverlay = "none";	// what the last render's overlay drew (drawOverlay), logged by `shot`
 	IdleGuard guard;	// the burn-in guard's logic, driven by the `guard`/`idle` script commands (test only)
 	guard.configure(atoi(getConfValue(o.data + "/bananad.conf", "dim_minutes", "2").c_str()),
 		atoi(getConfValue(o.data + "/bananad.conf", "dim_percent", "30").c_str()));
@@ -55,11 +56,7 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 	{
 		// endScreen runs inside the locked update, where the loop's own `now` is not in scope; the settings-view
 		// overlay took its own time for the same reason
-		double t = nowMs();
-		if (low.showing(t)) settings.notice(low.title, low.body, low.percent);
-		else if (plug.showing(t)) settings.notice(plug.title, plug.body, plug.percent, plug.seen == 1);
-		else if (osdUntil > t) settings.level(osdLabel, osdPercent);
-		else settings.drawToast(t);
+		lastOverlay = drawOverlay(settings, low, plug, osdLabel, osdPercent, osdUntil, nowMs(), [] { return false; });
 	};
 	// the menu's start-up, timed before any script command: its constructor (the theme's build) ran above, the first
 	// update lays out the home shelf, finishWork decodes its pictures, the first render draws the first frame
@@ -101,7 +98,7 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 			std::string ch;
 			cs >> lib.testPower.percent >> ch;
 			lib.testPower.charging = ch == "charging";
-			if (low.check(lib.power(), shutdownPercent(o.data), now)) logf("battery %d%%: notice %s", lib.testPower.percent, low.showing(now) ? low.title.c_str() : "hidden");
+			if (low.check(lib.power(), shutdownPercent(o.data), nowMs())) logf("battery %d%%: notice %s", lib.testPower.percent, low.showing(nowMs()) ? low.title.c_str() : "hidden");
 		}
 		else if (op == "plug")
 		{
@@ -216,7 +213,7 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 			Menu::Button btn;
 			auto it = keys.find(b);
 			if (it == keys.end()) { logf("unknown button %s", b.c_str()); return 2; }
-			if (low.hide(now)) logf("press %s: notice hidden", b.c_str());
+			if (low.hide(nowMs())) logf("press %s: notice hidden", b.c_str());
 			if (!settings.isOpen() && it->second == Key::SELECT) { settings.openSearch(lib.searchQuery()); logf("press select: search open"); continue; }
 			if (!settings.isOpen() && it->second == Key::X && ui.view() == Menu::LIBRARY)
 			{
@@ -288,6 +285,7 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 		{
 			std::string name; cs >> name;
 			double t0 = 0, t1 = 0;
+			lastOverlay = "none";
 			if (settings.isOpen())
 			{
 				settings.update(now);	// what came back since the last command (a press skips the update below)
@@ -303,7 +301,7 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 				t1 = nowMs();
 			}
 			if (!save(o.headless + name + ".png")) { logf("can't write %s", name.c_str()); return 1; }
-			logf("shot %s (frame %.2f ms, wake %d)", name.c_str(), t1 - t0, ui.nextWake());
+			logf("shot %s (frame %.2f ms, wake %d, overlay %s)", name.c_str(), t1 - t0, ui.nextWake(), lastOverlay);
 		}
 		else if (op == "splash")
 		{

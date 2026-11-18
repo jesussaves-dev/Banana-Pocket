@@ -2,7 +2,7 @@
 # The bridge's text, tested without the handheld: bananad's own formatter and the achievement parser, run through
 # the --selftest hook the same way `banana-tube --selftest` is tested.
 set -e
-[ -f /usr/include/alsa/asoundlib.h ] || { echo "hud-test: skipped (no libasound headers)"; exit 0; }
+[ -f /usr/include/alsa/asoundlib.h ] || { echo "hud-test: skipped (no libasound headers)"; [ -z "${BANANA_STRICT:-}" ] || { echo "hud-test: FAIL (BANANA_STRICT is set)"; exit 1; }; exit 0; }
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT INT TERM

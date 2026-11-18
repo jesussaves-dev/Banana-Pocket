@@ -27,8 +27,16 @@ PASS=0 FAIL=0 WARN=0
 ok() { PASS=$((PASS + 1)); printf '  ok:   %s\n' "$*"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL: %s\n' "$*"; }
 warn() { WARN=$((WARN + 1)); printf '  warn: %s\n' "$*"; }
-has() { if grep -q -- "$2" "$1" 2>/dev/null; then ok "$3"; else bad "$3"; fi }
-lack() { if grep -q -- "$2" "$1" 2>/dev/null; then bad "$3"; else ok "$3"; fi }
+# has/lack look at the file with its comments removed, so a commented-out line or a mention in a comment can neither
+# satisfy a rule nor break one: C/C++ go through the compiler's own comment stripper, the rest drop # lines.
+code() {
+    case "$1" in
+    *.c|*.cpp|*.h) gcc -fpreprocessed -dD -E -P -x c++ "$1" 2>/dev/null ;;
+    *) sed -e 's/^[[:space:]]*#.*$//' "$1" 2>/dev/null ;;
+    esac
+}
+has() { if code "$1" | grep -q -- "$2"; then ok "$3"; else bad "$3"; fi }
+lack() { if code "$1" | grep -q -- "$2"; then bad "$3"; else ok "$3"; fi }
 
 echo "1. the menu is a PipeWire client (ui/src/sound.cpp)"
 has "$SRC/sound.cpp" 'snd_config_update_free_global' "each open re-reads ALSA's config (elects the server, not card 0)"

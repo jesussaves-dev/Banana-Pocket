@@ -22,9 +22,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Packages
-        run: sudo apt-get update && sudo apt-get install -y libfreetype-dev libdrm-dev libasound2-dev zlib1g-dev libwayland-dev libwayland-bin wayland-protocols libegl-dev libgles-dev libgbm-dev libxkbcommon-dev imagemagick python3-pil g++-aarch64-linux-gnu
+        run: sudo apt-get update && sudo apt-get install -y libfreetype-dev libdrm-dev libasound2-dev zlib1g-dev libwayland-dev libwayland-bin wayland-protocols libegl-dev libgles-dev libgbm-dev libxkbcommon-dev imagemagick python3-pil g++-aarch64-linux-gnu mpv libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libcurl4-openssl-dev
       - name: banana-ui (headless test, both panel sizes)
-        run: make test
+        # BANANA_STRICT: a test that cannot run (missing mpv/SDL/ALSA, no golden baseline) fails instead of skipping
+        run: BANANA_STRICT=1 make test
       - name: banana-ui with ALSA
         run: make -C ui clean && make -C ui
       - name: bananad (native and aarch64)
