@@ -1,12 +1,12 @@
 # Theme icons
 
-The system/collection icons the menu draws on the shelf tiles, the resume cards and the game lists. One PNG per
+The system and collection icons the menu draws on the shelf tiles, the resume cards and the game lists. One PNG per
 system (or one per kind), named in `ui/assets/rnds/systems.cfg`.
 
 ## Where they live
 
-- `ui/assets/overrides/icons/` — **Banana's own** icons (the ones this project adds or redraws). `tools/import-rnds.sh`
-  copies this folder over the theme it imports from ROCKNIXDS, so a re-import never loses them. **Add new icons here.**
+- `ui/assets/overrides/icons/` — **Banana's own** icons (the ones this project adds or redraws). `tools/icons/sheet_icons.py`
+  writes here (the source of truth) and into the working set below. **Add new icons here.**
 - `ui/assets/rnds/icons/` — the working set ([Ben Jelter's Console Icon Pack](https://benjelter.itch.io/console-icon-pack)
   plus the overrides). This is what the build
   installs to `/usr/share/banana/rnds/icons`. It is regenerated on import, so treat it as output, not source.

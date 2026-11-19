@@ -46,7 +46,7 @@ Not commitments. Banana owns the screen (it sees every frame, owns an overlay pl
 its own daemon and A/B updates, and a CPU-drawn UI that costs nothing idle.
 
 ### Next in line
-- **Languages, phase 2:** Settings sub-pages, menu chrome, system/app names, date/time formats, then more languages.
+- **Languages, phase 2:** Settings sub-pages, menu chrome, system and app names, date/time formats, then more languages.
   Pipeline done (`ui/src/i18n.cpp`, `/usr/share/banana/lang/`, card override `/data/banana/lang/`); the main Settings
   list is translated (130 strings, informal tú/du).
 - **Rumble for games without it (M):** per-game files map rcheevos memory conditions to vibrator patterns via `bananad`.

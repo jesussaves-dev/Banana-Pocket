@@ -185,8 +185,8 @@ on a grey) and the position you typed (280 is fine, 680 is off the 640-wide scre
 - **[THEMES.md](THEMES.md)** — every element, every property, every expression function. The full reference.
 - **[pocket.json](../system/rootfs/usr/share/banana/themes/pocket.json)** — the handheld's own layout theme, and
   the best starting point to copy.
-- The other examples: [hillside.json](themes/hillside.json) (all shapes, no pictures),
-  [turntable.json](themes/turntable.json) (moves on its own), [classic.json](themes/classic.json) (a status bar).
+- The other shipped themes in [the same folder](../system/rootfs/usr/share/banana/themes/) (`blast.json`,
+  `fantasy.json`, the `lcd` set...) show other layouts to start from.
 - **[themes/README.txt](../system/rootfs/usr/share/banana/themes/README.txt)** — the colour keys, by what they
   paint.
 - **[theme.schema.json](theme.schema.json)** — the format as a machine-readable schema, if you would rather have

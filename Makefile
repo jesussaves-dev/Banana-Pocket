@@ -112,6 +112,7 @@ test: ui bananad probe check-kver
 	tools/check-themes.py --selftest
 	tools/check-themes.py
 	tools/check-lang.py
+	tools/check-docs.py
 	system/tests/run-retroarch-test.sh
 	system/tests/rpc-thermals-test.sh
 	system/tests/run-banana-tube-test.sh
@@ -165,6 +166,7 @@ agent-check:
 	@if [ -f /usr/include/alsa/asoundlib.h ]; then \
 	    gcc -std=c11 -Wall -Wextra -Werror -fsyntax-only system/bananad/bananad.c || exit 1; echo "bananad: OK"; \
 	 else echo "bananad: skipped (no host alsa)"; fi
+	@out=$$(tools/check-docs.py) && echo "docs: OK" || { echo "FAIL docs"; echo "$$out" | head -n 10; exit 1; }
 	@ui/tests/run.sh >/tmp/agent-test.log 2>&1 && echo "tests: OK" || { echo "FAIL tests"; tail -n 20 /tmp/agent-test.log; exit 1; }
 
 # Regenerate the Source Map block in AGENTS.md: file:line: symbol for the core files. Line numbers drift

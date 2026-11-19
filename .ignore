@@ -42,7 +42,7 @@ resources-*.txt
 # Vendored third-party (never edited)
 ui/third_party/
 
-# Imported rnds engine: a parity copy, edited upstream then tools/import-rnds.sh
+# Imported rnds engine: a parity copy, edited upstream, then re-imported
 ui/rnds/
 
 # Historical port log: kept at its path so cross-references stay valid, but not searched
