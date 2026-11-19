@@ -1107,13 +1107,25 @@ static int selem_raw(snd_mixer_elem_t *e, long *v)
 	return -1;
 }
 
-/* amixer's own arithmetic (convert_prange/convert_prange1): a level set by the keys and read by Settings > Volume
- * must be the percent the script reported, or the two disagree by a step. */
+/* The amp's gain is 0.25 dB a step: raw 0 is -127.75 dB, 511 is 0 dB. A percent linear in the raw value put 30 % at
+ * -89 dB, silence, with everything audible in the top quarter. So on that amp 1..100 % spans only the last 50 dB
+ * (raw 311..511, linear in dB, which is what the ear hears as even steps) and 0 % is the raw 0 mute. Other mixers keep
+ * amixer's own arithmetic. The `volume` script uses the same arithmetic, so the keys and Settings agree on a level. */
+#define AMP_RAW_MAX 511
+#define AMP_RAW_FLOOR 311	/* -50 dB: where 1 % sits */
+
+static int amp_range(long min, long max) { return min == 0 && max == AMP_RAW_MAX; }
+
 static int selem_percent(snd_mixer_elem_t *e)
 {
 	long min, max, v;
 	if (snd_mixer_selem_get_playback_volume_range(e, &min, &max) < 0 || max <= min) return -1;
 	if (selem_raw(e, &v) < 0) return -1;
+	if (amp_range(min, max)) {
+		if (v <= 0) return 0;
+		if (v <= AMP_RAW_FLOOR) return 1;
+		return 1 + (int)rint((double)(v - AMP_RAW_FLOOR) * 99.0 / (double)(AMP_RAW_MAX - AMP_RAW_FLOOR));
+	}
 	return (int)rint((double)(v - min) / (double)(max - min) * 100.0);
 }
 
@@ -1121,6 +1133,10 @@ static int selem_set_percent(snd_mixer_elem_t *e, int pct)
 {
 	long min, max;
 	if (snd_mixer_selem_get_playback_volume_range(e, &min, &max) < 0) return -1;
+	if (amp_range(min, max)) {
+		long raw = pct <= 0 ? 0 : AMP_RAW_FLOOR + (long)rint((double)(pct - 1) * (AMP_RAW_MAX - AMP_RAW_FLOOR) / 99.0);
+		return snd_mixer_selem_set_playback_volume_all(e, raw);
+	}
 	long v = (long)rint((double)pct * (double)(max - min) * 0.01);
 	if (v == 0 && pct > 0) v++;	/* amixer: a nonzero percent is never silence */
 	return snd_mixer_selem_set_playback_volume_all(e, min + v);	/* all channels, like sset */
