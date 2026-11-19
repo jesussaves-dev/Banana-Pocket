@@ -1,5 +1,5 @@
 # BananaOS Roadmap (RPC / SM4450)
-Refs: `docs/RPC-PORT.md` (port log), `docs/RPC-TEST.md` (hardware checklist). Shipped work lives in `git log` and the
+Refs: `docs/ARCHITECTURE.md` (how it works, and why), `docs/RPC-TEST.md` (hardware checklist). Shipped work lives in `git log` and the
 release notes, not here. Updated 2026-11-18 (rewritten around 1.0; the old *Done* list is in git history).
 
 ## BananaOS 1.0
@@ -105,7 +105,8 @@ its own daemon and A/B updates, and a CPU-drawn UI that costs nothing idle.
 - **Sleep timer for BananaTube (S).**
 - **What's new after an update (S):** a one-time card of headlines.
 - **Per-game controls (M):** a Banana remap page replacing RetroArch's.
-- **Faster to the menu (M):** show the menu while audio comes up (~1.8 s wait on cold boot).
+- **Faster to the menu (M):** show the menu while audio comes up (~1.8 s wait on cold boot; measurements in
+  `git show 6288890:docs/BOOT-SOUND.md`).
 
 ### Parked
 - **Bluetooth (designed 2026-11-08):** bespoke `banana-bt` over the kernel mgmt API, a small SDP client and `hidp`; no

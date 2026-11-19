@@ -362,7 +362,7 @@ fi
 # no longer has rows for them and does not overwrite them here. One clock still paces the emulation, and with VSync on
 # it is the panel's: `audio_sync` makes RetroArch throttle the emulation to the *audio device* instead, and the two
 # clocks disagree by design (the panel is 60.00 Hz, the PS1 59.94), which measured as long stretches of the emulation
-# making no progress at all while a game played (docs/RPC-PORT.md has the numbers). audio_rate_control resamples it to
+# making no progress at all while a game played (docs/ARCHITECTURE.md, Pacing, has the numbers). audio_rate_control resamples it to
 # the device's own rate rather than letting the buffer fill, so the audio stays right either way. Follow whatever VSync
 # RetroArch has: with it off the audio has to be the pacer, or nothing would pace it.
 set_cfg audio_rate_control true

@@ -115,13 +115,37 @@ In the OpenABL menu set **Boot mode → Android**. Installing OpenABL does **not
 bootloader is already unlocked and nothing is wiped to flash it. To go fully back to the factory bootloader you need a
 backup of the stock ABL partitions (see [below](#back-up-the-stock-bootloader)).
 
-## When something is wrong
+## If it doesn't boot, or something is wrong
 
-`banana/logs/` on the card (put it in a computer) has `boot.txt` (the milestones in seconds), `dmesg.txt`, the menu's
-`banana-ui.log`, `sleep.log`, and the last game's `retroarch.log`. **[`FIRST-BOOT.md`](FIRST-BOOT.md)** has the common
-cases: a black panel with no `BANANA` drive (the kernel or init — a serial console on `ttyMSM0`, `banana.console=1`),
-a black panel with the drive there (the menu could not open the panel), a black panel a second after a game starts
-(the probes in [`RPC-TEST.md`](RPC-TEST.md)), and "can't read the card's games" (the data partition did not mount).
+Everything Banana knows about a boot is in `banana/logs/` on the card (put it in a computer):
+
+| File | What |
+|---|---|
+| `boot.txt` | the milestones, in seconds since the kernel started: init, rcS, the data partition, the panel, the menu |
+| `dmesg.txt` | the kernel's log (`dmesg.1.txt`: the boot before) |
+| `banana-ui.log` | the menu's log (`.1`: the run before) |
+| `sleep.log` | one line per sleep: time to fall asleep, time asleep, why it woke (`power key`, `cable`, or `no key and no cable`: the kernel cannot name the source on this board), time to come back |
+| `sleep-state` | the handheld as it went under, and the kernel's PM lines on the way out: read this first if it hung overnight and came back on a long press |
+| `sleep-devices.log` | with `sleep_debug = yes` in `banana/bananad.conf`: every device's suspend and resume time, slowest first |
+| `retroarch.log` | the last game's RetroArch log (a game that would not show anything) |
+
+The common cases:
+
+- **A black panel, and no `BANANA` drive on the computer afterwards:** the kernel or init never got far enough to make
+  the data partition. Only a serial console tells more (the UART, `ttyMSM0`; add `banana.console=1` to the `APPEND`
+  lines in `extlinux/extlinux.conf` to send rcS's milestones and the menu's log there too).
+- **A black panel, but the `BANANA` drive is there:** `banana-ui.log` and `dmesg.txt` say why the menu couldn't open
+  the panel.
+- **A black panel a second after a game starts:** run the probes in [`RPC-TEST.md`](RPC-TEST.md) before touching the
+  kernel; the three causes look identical on the panel.
+- **The menu, but "Can't read the card's games":** the `BANANA` partition couldn't be mounted (formatted as something
+  other than exFAT?).
+- **Slow wake from sleep:** set `sleep_debug = yes` in `banana/bananad.conf`, sleep and wake a few times, and send
+  `sleep.log` and `sleep-devices.log`.
+
+With Wi-Fi working, SSH saves taking the card out: put your public key in `banana/ssh/authorized_keys`, switch on
+Settings → Network → SSH, then `ssh root@<address>`. `dmesg`, `cat /run/banana/boot-times` and
+`tail -f /data/banana/logs/banana-ui.log` all work there.
 
 ---
 

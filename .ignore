@@ -46,7 +46,6 @@ ui/third_party/
 ui/rnds/
 
 # Historical port log: kept at its path so cross-references stay valid, but not searched
-docs/RPC-PORT.md
 
 # Artifacts git already ignores; so rg --no-ignore-vcs skips them too
 qemu-out/

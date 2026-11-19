@@ -5,8 +5,9 @@
 #
 #   tools/kernel-report.sh [out-file]
 #
-# The default out-file is docs/reports/kernel-report-<version>-<slot>-<YYYY-MM-DD>.txt; the full kernel config is
-# saved next to it as <out-file>.config. Sections: identity, image, modules, boot marks, config counts, probed drivers.
+# The default out-file is docs/reports/kernel-report-<version>-<slot>-<YYYY-MM-DD>.txt. KEEP_CONFIG=1 also saves the
+# full kernel config next to it as <out-file>.config (off by default: each tag rebuilds it from linux-banana.fragment,
+# so a committed dump is ~7k lines of bulk; the counts below are always reported). Sections: identity, image, modules, boot marks, config counts, probed drivers.
 #
 # Host: $BANANA_HOST, else root@169.254.170.2 (the USB gadget, same as tools/rpc-push-update.sh). $SSH_OPTS overrides
 # the ssh options. Over Wi-Fi instead: BANANA_HOST=root@<the handheld's address> tools/kernel-report.sh
@@ -27,7 +28,12 @@ VER=$(run 'cat /etc/banana/version 2>/dev/null || echo unknown')
 SLOT=$(run 'cat /run/banana/slot 2>/dev/null || echo unknown')
 KREL=$(run 'uname -r')
 OUT=${1:-$HERE/docs/reports/kernel-report-$VER-$SLOT-$(date +%F).txt}
-CONF=$OUT.config
+if [ "${KEEP_CONFIG:-0}" = 1 ]; then
+    CONF=$OUT.config
+else
+    CONF=$(mktemp) || exit 1
+    trap 'rm -f "$CONF"' EXIT
+fi
 mkdir -p "$(dirname "$OUT")"
 
 {
@@ -62,7 +68,7 @@ mkdir -p "$(dirname "$OUT")"
     echo "== config"
     if run 'test -s /proc/config.gz'; then
         run 'zcat /proc/config.gz' > "$CONF"
-        echo "file: ${CONF##*/}"
+        [ "${KEEP_CONFIG:-0}" = 1 ] && echo "file: ${CONF##*/}"
         # Anchored to a bare value so a string ("...=y") cannot match; symbols may be mixed case (CONFIG_ARM_CCI5xx_PMU).
         echo "=y: $(grep -c '^CONFIG_[A-Za-z0-9_]*=y$' "$CONF")"
         echo "=m: $(grep -c '^CONFIG_[A-Za-z0-9_]*=m$' "$CONF")"
