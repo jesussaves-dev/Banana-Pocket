@@ -26,7 +26,7 @@
 // Lifetimes: the compositor owns the ClientBuffers and keeps each source referenced until the frame's flip; this
 // presenter owns the source EGLImages/textures (destroyed by forget(), called before the ClientBuffer is freed) and
 // the slots (destroyed in stop()). It never calls drmModeRmFB: the compositor blanks the primary before stop() and
-// the DRM file close releases the remaining framebuffer ids (documented in docs/PLAN_DRM_COMPOSITOR.md).
+// the DRM file close releases the remaining framebuffer ids (docs/ARCHITECTURE.md, Compositor).
 namespace banana
 {
 	namespace

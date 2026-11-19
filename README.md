@@ -16,8 +16,8 @@ card. There's no systemd and no PulseAudio: the sound server is PipeWire with Wi
 
 This is early access, built from source. Every image CI makes is booted in QEMU and tested. The hardware work is
 real too: the panel timings, the amplifiers, the DSP graph and the sleep behaviour were measured on an actual
-handheld. [`docs/BOOT-SOUND.md`](docs/BOOT-SOUND.md) is one of those stories: why the first sound used to take about
-20 seconds, and how it got down to about 8.
+handheld. The boot sound is one of those stories: the first sound used to take about 20 seconds, and now the splash
+waits about 2 s for the DSP instead ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), Audio).
 
 ## Take a walk
 
@@ -145,7 +145,7 @@ black, so the AMOLED's pixels stay off. Two more palettes come with it: **Acid M
 `pocket-sakura`, `pocket-sunset`, `pocket-terminal`, `fantasy` and six four-shade LCD themes. Each style remembers the
 theme you last used in it.
 
-<p align="center"><img src="docs/screenshots/menu_thumb.png" alt="The Classic style's menu" width="420"></p>
+<p align="center"><img src="docs/readme/classic.png" alt="The Classic style's menu" width="420"></p>
 
 Themes are JSON, and you can make your own: [`docs/THEMES.md`](docs/THEMES.md) covers both styles.
 
@@ -196,7 +196,7 @@ flowchart LR
 ```
 
 - **The game** goes through one GPU pass that turns it the right way up for the portrait-mounted panel (the plane
-  can't rotate in hardware, [measured](docs/PLAN_DRM_COMPOSITOR.md)). Any window size is letterboxed, and the pass is
+  can't rotate in hardware, [measured](docs/ARCHITECTURE.md#3-ui-engine-banana-ui)). Any window size is letterboxed, and the pass is
   **bit-exact**: a 1-pixel LCD grid comes out as a 1-pixel LCD grid.
 - **Banana's layer** (volume and brightness, the battery, achievements, the pause menu) sits on the overlay plane.
   When nothing is showing, that plane is switched off entirely.
@@ -235,6 +235,7 @@ sign in.
 | **Bandai** | WonderSwan / Color |
 | **Computers** | Commodore 64, ZX Spectrum |
 | **Ports** | PortMaster |
+| **Apps** | [BananaTube](docs/BANANATUBE.md) (video), [PokeDaisy](docs/POKEDAISY.md) (GB/GBC/GBA with a Pokémon companion) |
 
 **RetroAchievements** is built in. The account from the first-time setup unlocks achievements in-game, and back in
 the menu the ones you earned pop up with their badges. Mid-game, the pause menu's **Achievements** row shows how far
@@ -329,8 +330,8 @@ Through the compositor, on the handheld:
 | the rotate pass | **0** pixels different from the game's own frame |
 | PlayStation (SwanStation) | **60.22 fps** emulated; 1800 of 1800 frames presented, 0 dropped |
 
-The full trail (the plane probes, the rotation the hardware refused, every measurement) is in
-[`docs/PLAN_DRM_COMPOSITOR.md`](docs/PLAN_DRM_COMPOSITOR.md).
+The settled facts (the planes, the rotation the hardware refused, the bit-exact check) are in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#3-ui-engine-banana-ui) under *Compositor*.
 
 ## License
 

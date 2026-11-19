@@ -1,7 +1,7 @@
 // drm-plane-probe: what the display controller can actually do -- planes, formats, modifiers, rotation,
 // z-order, alpha, and which atomic combinations the driver accepts.
 //
-// It is a diagnostic for the "native DRM plane compositor" plan (docs/PLAN_DRM_COMPOSITOR.md). It never changes
+// It is a diagnostic for the "native DRM plane compositor" work (docs/ARCHITECTURE.md, Compositor). It never changes
 // the display unless asked to with --color: its other atomic commits are DRM_MODE_ATOMIC_TEST_ONLY, which run the driver's check
 // without touching hardware. Enumeration is safe with the menu up; the atomic matrix needs DRM master, which the
 // kernel requires for DRM_IOCTL_MODE_ATOMIC even when the commit is TEST_ONLY (drivers/gpu/drm/drm_ioctl.c:

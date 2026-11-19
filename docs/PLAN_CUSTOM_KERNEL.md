@@ -60,7 +60,7 @@ Three facts frame every recommendation below:
    the AudioReach topology are Qualcomm/vendor binaries loaded *by* the kernel; they are signed or undocumented. No
    kernel choice removes them. (They are 30 MB of `board/.../firmware`.)
 3. **The kernel is not the slow part of the boot.** It hands over to init at **0.49 s**. The 5–6 s before sound is the
-   ADSP firmware starting (`docs/BOOT-SOUND.md`), which no kernel change moves.
+   ADSP firmware starting (`docs/ARCHITECTURE.md`, *Boot sound*), which no kernel change moves.
 
 ## 1. Where it stands (2026-11-10)
 

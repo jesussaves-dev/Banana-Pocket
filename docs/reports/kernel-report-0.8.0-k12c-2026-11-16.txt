@@ -70,7 +70,7 @@ banana-ui: the menu           10.16 s
 init: [    0.452498] Run /sbin/init as init process
 
 == config
-file: kernel-report-0.8.0-k12c-2026-11-16.txt.config
+file: identical to kernel-report-0.8.0-k2-2026-11-16.txt.config (duplicate removed)
 =y: 1262
 =m: 61
 

@@ -335,7 +335,7 @@ namespace banana
 			if (e < 0) { slog("open failed: %s", snd_strerror(e)); pcm = nullptr; return false; }
 			if (closeNow) { snd_pcm_close(pcm); pcm = nullptr; return false; }	// release() arrived during the open
 			/* The host buffer: as small as the DSP will take, so a cue starts as soon as the mixer has it. A 128 ms
-			 * buffer is refused outright on this card (no sound at all, docs/RPC-PORT.md), so try 15 ms and 20 ms
+			 * buffer is refused outright on this card (no sound at all, docs/ARCHITECTURE.md), so try 15 ms and 20 ms
 			 * before the 30 ms that has always worked; what took is logged. */
 			int us = 0;
 			for (int tryUs : { 15000, 20000, 30000 })
