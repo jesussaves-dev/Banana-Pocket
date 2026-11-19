@@ -145,7 +145,7 @@ black, so the AMOLED's pixels stay off. Two more palettes come with it: **Acid M
 `pocket-sakura`, `pocket-sunset`, `pocket-terminal`, `fantasy` and six four-shade LCD themes. Each style remembers the
 theme you last used in it.
 
-<p align="center"><img src="docs/screenshots/menu_thumb.png" alt="The Classic style's menu" width="420"></p>
+<p align="center"><img src="docs/readme/classic.png" alt="The Classic style's menu" width="420"></p>
 
 Themes are JSON, and you can make your own: [`docs/THEMES.md`](docs/THEMES.md) covers both styles.
 
@@ -235,6 +235,7 @@ sign in.
 | **Bandai** | WonderSwan / Color |
 | **Computers** | Commodore 64, ZX Spectrum |
 | **Ports** | PortMaster |
+| **Apps** | [BananaTube](docs/BANANATUBE.md) (video), [PokeDaisy](docs/POKEDAISY.md) (GB/GBC/GBA with a Pokémon companion) |
 
 **RetroAchievements** is built in. The account from the first-time setup unlocks achievements in-game, and back in
 the menu the ones you earned pop up with their badges. Mid-game, the pause menu's **Achievements** row shows how far
