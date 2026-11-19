@@ -1,7 +1,10 @@
 # Languages
 
-The menu has a language setting, currently for the **Settings screen**: English (the original), Spanish and German.
-The rest of the menu follows in a later update.
+The menu has a language setting: English (the original), Spanish and German. The main **Settings** list is translated;
+the rest of the menu is phase 2, first in line after 1.0 (`docs/ROADMAP.md`).
+
+**Rule:** every new user-facing string goes through `tr()` with its `es` and `de` entries in the same change, so the
+untranslated list below only shrinks.
 
 ## How it works
 
@@ -30,7 +33,7 @@ are fine, and it must be UTF-8.
 - every key in `es`/`de` must exist in `en` (a typo or a removed string fails);
 - every key in `en` must still appear in `ui/src` (a reworded English string fails instead of silently falling back);
 - `en` maps each key to itself, values are non-empty strings, each catalog has a `name`;
-- coverage is printed (`121/121 strings`), so a half-finished translation is visible but not a failure.
+- coverage is printed (`181/191 strings`), so a half-finished translation is visible but not a failure.
 
 The headless menu test also loads the German catalog once and checks the `i18n: de (N strings)` log line.
 

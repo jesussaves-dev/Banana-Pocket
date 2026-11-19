@@ -13,8 +13,11 @@ set -e
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 GAMES=${1:-${BENCH_GAMES:-600}}
 RUNS=${2:-${BENCH_RUNS:-3}}
-WORK=${BENCH_DIR:-/tmp/opencode/bench}
+WORK=${BENCH_DIR:-${TMPDIR:-/tmp}/banana-bench}
 rm -rf "$WORK"; mkdir -p "$WORK/roms" "$WORK/data"
+# the menu reads its theme from the card's settings.conf (as ui/tests/run.sh does); without one it draws nothing
+# and every number below is ~0
+echo "theme = file:$HERE/../system/rootfs/usr/share/banana/themes/pocket.json" > "$WORK/data/settings.conf"
 
 # a library of $GAMES games, spread over the systems in the test list (folder names only; the ROMs are sparse)
 i=0
@@ -39,10 +42,11 @@ echo "bench: $GAMES games in $WORK/roms"
 
 for size in 640x557; do
     for run in $(seq "$RUNS"); do
-        "$HERE/banana-ui" --headless "$WORK/$size-" --size "$size" --assets "$HERE/assets/rnds" \
+        "$HERE/banana-ui" --headless "$WORK/$size-" --size "$size" --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
             --systems "$HERE/tests/systems.conf" --roms "$WORK/roms" --data "$WORK/data" \
             --script "boot; home 0; wait 100; bench 300; bench 300 10 right" 2> "$WORK/$size-$run.log" || true
     done
+    grep -q "theme: can't open" "$WORK/$size-1.log" && { echo "bench: FAIL, no theme ($WORK/$size-1.log)"; exit 1; }
     # report the middle run (the first is cold, the last is noise)
     mid=$(( (RUNS + 1) / 2 ))
     echo "--- $size (run $mid of $RUNS)"

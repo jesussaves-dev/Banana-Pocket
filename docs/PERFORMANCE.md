@@ -30,6 +30,12 @@ press every 10 frames.
 | 640×480 | ~1.6 ms | ~3.3 ms | ~9.5 ms | ~0.07 ms | ~0.97 ms avg / 1.9 ms worst | ~41% |
 | 1024×768 | ~1.8 ms | ~10 ms | ~45 ms | ~0.07 ms | ~2.8 ms avg / 6.5 ms worst | ~49% |
 
+**Re-measured 2026-11-18** (`pocket.json` layout theme, 640×557, the canvas the handheld draws): scan ~1.0 ms, menu
+~1.5 ms, first frame ~1.4 ms, idle ~0.15 ms (299 of 300 unchanged), scrolling ~0.20 ms avg / 0.65 ms worst with ~2.4%
+of pixels redrawn. Not comparable row for row with the table above (that was the old carousel at 640×480 and
+1024×768): the layout theme redraws only the selection that moved. Between 2026-11 and this date `bench.sh` gave no
+theme to the menu, so it drew nothing and reported ~0 everywhere; it now fails loudly instead.
+
 What the numbers say:
 
 - **The scan is cheap, even at 600 games** (~2 ms): it is directory reads plus two small text files per shelf, not

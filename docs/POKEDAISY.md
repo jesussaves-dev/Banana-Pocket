@@ -3,9 +3,9 @@
 Based on [PokeDaisy](https://github.com/lidor30/pokedaisy) by lidor30, GPL-3.0. Banana ships the unmodified upstream
 Linux host and two of its cores; the Banana side is only the package, the manifest and a launcher.
 
-**Status: builds, not yet tested on hardware.** Boot, the tile on the Apps shelf, launch, input and audio are
-unverified. No display is attached to the dev unit's DP, and the image's SDL2 has no dummy video driver, so there is no
-headless run either.
+**Status: runs on the handheld (2026-11-18).** Launch from the Apps shelf, input (A/B and X/Y swapped in its SDL map,
+F left to Banana's quick menu) and audio work, at 60 fps with `POCKET_NO_VSYNC=1`. The quick menu's `menu_keys` rows are
+built but not yet checked on the unit. The image's SDL2 has no dummy video driver, so there is no headless run.
 
 ## What is in the image
 
