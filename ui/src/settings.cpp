@@ -754,6 +754,10 @@ namespace banana
 				closedir(d);
 			}
 			std::ofstream(data + "/backlight") << pm << "\n";	// bananad restores it at boot
+			// a real backlight level ends the picture scale below it
+			std::ofstream("/run/banana/pic-scale") << "100\n";
+			std::ofstream(data + "/bl-scale") << "100\n";
+			nightChanged = true;	// the menu applies the panel's gamma (main.cpp)
 			return;
 		}
 		if (it.kind == Item::VOLUME)
@@ -904,6 +908,8 @@ namespace banana
 				closedir(d);
 			}
 			std::ofstream(data + "/backlight") << "1000\n";
+			std::ofstream("/run/banana/pic-scale") << "100\n";
+			std::ofstream(data + "/bl-scale") << "100\n";
 			if (system("/usr/libexec/banana/volume set 50 2>/dev/null") != 0) {}
 			// the side effects save() runs for keys that live outside settings.conf
 			std::map<std::string, std::string> rs = readSettings(data);

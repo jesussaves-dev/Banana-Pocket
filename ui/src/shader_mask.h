@@ -149,16 +149,18 @@ namespace banana
 
 	// the panel's GAMMA_LUT: the profile's curve (only PVM has one) with the night light's gains, so both share it.
 	// Entry 0 stays 0: a black pixel must stay black.
-	inline void colorLutFill(drm_color_lut* lut, unsigned n, ColorProfile c, int warmth)
+	inline void colorLutFill(drm_color_lut* lut, unsigned n, ColorProfile c, int warmth, int scalePct = 100)
 	{
 		if (!lut || n == 0) return;
 		double kg, kb;
 		warmthGains(warmth, kg, kb);
+		// below the backlight's lowest level: the whole picture scaled down (bananad's /run/banana/pic-scale)
+		double ks = scalePct >= 100 ? 1.0 : scalePct < 1 ? 0.01 : scalePct / 100.0;
 		for (unsigned i = 0; i < n; i++)
 		{
 			double t = n > 1 ? (double)i / (n - 1) : 0.0;
 			// gamma-encoded content (2.2) shown on a 2.4 display: the PVM profile's bend
-			double v = 65535.0 * (c == COLOR_PROFILE_PVM_6500K ? std::pow(t, 2.4 / 2.2) : t);
+			double v = 65535.0 * ks * (c == COLOR_PROFILE_PVM_6500K ? std::pow(t, 2.4 / 2.2) : t);
 			lut[i].red = (uint16_t)(v + 0.5);
 			lut[i].green = (uint16_t)(v * kg + 0.5);
 			lut[i].blue = (uint16_t)(v * kb + 0.5);

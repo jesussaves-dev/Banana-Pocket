@@ -19,6 +19,9 @@ internal Android is there.
 
 ## Panel and power
 
+- [ ] Below-minimum brightness: at the lowest backlight F+volume-down three more times dims the picture (card reads 1%),
+      F+volume-up undoes it before the backlight rises, the Settings slider resets it, and it survives a reboot
+      (`/data/banana/bl-scale`). Watch dark gradients for banding.
 - [ ] Brightness (Settings > Display & sound) changes the backlight over its whole range
 - [ ] Sleep (Settings > Sleep & power, or the power button) turns the panel off, and waking it
       shows the menu again -- this is the ROCKNIX backlight bug, watch for a black screen

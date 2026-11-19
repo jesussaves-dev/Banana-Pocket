@@ -521,10 +521,17 @@ int main(int argc, char** argv)
 	Settings settingsView(&be, o.assets, o.data, scale, variant, &lib);
 	settingsView.setBananaDir(o.banana);
 	// the night light is the panel's own gamma, set before any game is handed the panel
+	// the picture scale below the backlight's lowest level (bananad's /run/banana/pic-scale; absent is 100)
+	std::function<void()> picScaleLoad = [&]() {
+		int ps = 100;
+		{ std::ifstream f("/run/banana/pic-scale"); if (!(f >> ps) || ps < 1 || ps > 100) ps = 100; }
+		disp.setPicScale(ps);
+	};
 	std::function<void()> nightLight = [&]() {
 		std::string v = getConfValue(o.data + "/settings.conf", "night_light",
 		                             getConfValue("/etc/banana/settings.conf", "night_light", "off"));
 		disp.setWarmth(v == "warmer" ? 2 : v == "warm" ? 1 : 0);
+		picScaleLoad();
 	};
 	nightLight();
 	// the system shader's saved mask and colour, set before the first flip like the night light
@@ -1486,6 +1493,7 @@ int main(int argc, char** argv)
 					}
 					if (c == SIGUSR2)
 					{
+						picScaleLoad();	// a brightness key may have moved the picture scale
 						// "volume 85" / "brightness 40", written just now (an old one is from a key pressed in a game)
 						struct stat st;
 						std::ifstream f("/run/banana/osd");

@@ -183,6 +183,19 @@ static void testColor()
 	CHECK(lut[512].red < 32768, "pvm midpoint: %u", lut[512].red);
 	CHECK(lut[1023].red == 65535, "pvm top: %u", lut[1023].red);
 
+	// the picture scale below the backlight's lowest level: 100 is the plain ramp, lower scales every channel, black stays 0
+	{
+		std::vector<drm_color_lut> a(1024), b(1024);
+		colorLutFill(a.data(), 1024, COLOR_PROFILE_BYPASS, 1);
+		colorLutFill(b.data(), 1024, COLOR_PROFILE_BYPASS, 1, 100);
+		CHECK(memcmp(a.data(), b.data(), a.size() * sizeof a[0]) == 0, "scale 100 is not the plain ramp");
+		colorLutFill(b.data(), 1024, COLOR_PROFILE_BYPASS, 1, 50);
+		CHECK(b[0].red == 0 && b[0].green == 0 && b[0].blue == 0, "scaled entry 0");
+		CHECK(b[1023].red == (uint16_t)(65535 * 0.5 + 0.5), "scaled top: %u", b[1023].red);
+		for (unsigned i = 1; i < b.size(); i++)
+			CHECK(b[i].red >= b[i - 1].red && b[i].red <= a[i].red, "scaled ramp at %u", i);
+	}
+
 	// the plane alpha for the slider's ten steps
 	CHECK(maskPlaneAlpha(10) == 6554 && maskPlaneAlpha(50) == 32768 && maskPlaneAlpha(100) == 65535, "maskPlaneAlpha");
 }

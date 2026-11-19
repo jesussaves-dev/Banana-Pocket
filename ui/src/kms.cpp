@@ -458,6 +458,13 @@ namespace banana
 		applyGamma();
 	}
 
+	void Display::setPicScale(int pct)
+	{
+		if (pct == picScale) return;
+		picScale = pct;
+		applyGamma();
+	}
+
 	bool Display::shaderSetColor(ColorProfile c)
 	{
 		if (c >= COLOR_PROFILE_COUNT) return false;
@@ -480,7 +487,7 @@ namespace banana
 		c.retired[0] = c.ctm;
 		c.retired[1] = c.lut;
 		c.ctm = c.lut = 0;
-		colorLutFill(lutScratch, pn.lut_size, colorProfile, warmth);
+		colorLutFill(lutScratch, pn.lut_size, colorProfile, warmth, picScale);
 		bool ok = drmModeCreatePropertyBlob(fd, lutScratch, pn.lut_size * sizeof(drm_color_lut), &c.lut) == 0;
 		if (ok && colorProfile != COLOR_PROFILE_BYPASS && pn.crtc_ctm)
 		{
@@ -510,7 +517,7 @@ namespace banana
 			std::vector<uint16_t> r(n), g(n), b(n);
 			for (unsigned i = 0; i < n; i++)
 			{
-				uint32_t v = (uint32_t)((uint64_t)i * 65535u / (n - 1));
+				uint32_t v = (uint32_t)((uint64_t)i * 65535u * (picScale < 100 ? (picScale < 1 ? 1 : picScale) : 100) / (n - 1) / 100u);
 				r[i] = (uint16_t)v;
 				g[i] = (uint16_t)(v * kg);
 				b[i] = (uint16_t)(v * kb);

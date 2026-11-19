@@ -1844,26 +1844,70 @@ static void volume(int dir)
 	else if (!game || cfg.hud) osd("volume", pct);
 }
 
-static void brightness(int dir, int step_pct)
+/* Below the backlight's lowest level the picture itself is scaled: banana-ui folds this percent into the panel's GAMMA_LUT
+ * (ui/src/shader_mask.h colorLutFill). /run/banana/pic-scale is the state (the menu's slider resets it to 100); the
+ * level is saved beside the backlight and put back at boot. */
+static const int pic_steps[] = { 100, 70, 50, 35 };
+#define PIC_N ((int)(sizeof pic_steps / sizeof pic_steps[0]))
+
+static int pic_index(void)
+{
+	int v = read_int("/run/banana/pic-scale", 100);
+	int best = 0;
+	if (v < 1) return 0;	/* a stray 0 is no scale, not the darkest one */
+	for (int i = 0; i < PIC_N; i++)
+		if (v <= pic_steps[i]) best = i;
+	return best;
+}
+
+static int pic_publish(int idx)
+{
+	FILE *f = fopen("/run/banana/pic-scale.new", "w");
+	if (!f) { say("pic-scale: can't write"); return -1; }
+	int bad = fprintf(f, "%d\n", pic_steps[idx]) < 0;
+	if (fclose(f) != 0 || bad) { say("pic-scale: write failed"); return -1; }
+	if (rename("/run/banana/pic-scale.new", "/run/banana/pic-scale") != 0) {
+		say("pic-scale: rename failed");
+		return -1;
+	}
+	return 0;
+}
+
+static void brightness(int dir, int step_pct, int may_scale)
 {
 	char bl[MAX_BL][64];
 	int n = backlights(bl, MAX_BL), pct = -1;
+	int pic = may_scale ? pic_index() : 0, at_floor = n > 0, scaled = 0;
+	/* up first undoes the picture scale; the backlight stays where it is */
+	if (dir > 0 && pic > 0) {
+		if (pic_publish(pic - 1) == 0) { pic--; scaled = 1; }
+		n = 0;
+	}
 	for (int i = 0; i < n; i++) {
 		char p[320], v[32];
 		bl_file(p, sizeof p, bl[i], "max_brightness");
 		int max = read_int(p, 0);
 		bl_file(p, sizeof p, bl[i], "brightness");
-		int cur = read_int(p, 0);
+		int cur = read_int(p, -1);
+		if (cur < 0) { at_floor = 0; cur = 0; }	/* unreadable: the level is unknown, not at the floor */
 		int step = max * step_pct / 100;
 		if (step < 1) step = 1;
 		int floor = max * 2 / 100;	/* a night-mode floor: 2%, dim but never a dead-looking panel */
 		if (floor < 1) floor = 1;
 		int nv = cur + dir * step;
+		if (cur > floor) at_floor = 0;
 		if (nv < floor) nv = floor;
 		if (nv > max) nv = max;
 		snprintf(v, sizeof v, "%d", nv);
 		write_file(p, v);
 		if (max > 0) pct = nv * 100 / max;
+	}
+	/* a down step that found every backlight already at its floor goes on into the picture scale */
+	if (dir < 0 && may_scale && at_floor && pic < PIC_N - 1) {
+		if (pic_publish(pic + 1) == 0) { pic++; scaled = 1; }
+	}
+	if (scaled) {
+		pct = pic > 0 ? 1 : 2;	/* the card has no fractions: a scaled picture reads 1%, the lit floor 2% */
 	}
 	save_backlight_at = mono() + 2;
 	if (pct >= 0) {
@@ -1991,6 +2035,8 @@ static void save_settings(double now)
 			FILE *f = fopen("/data/banana/backlight", "w");
 			if (f) { fputs(v, f); fclose(f); }
 		}
+		FILE *g = fopen("/data/banana/bl-scale", "w");
+		if (g) { fprintf(g, "%d\n", pic_steps[pic_index()]); fclose(g); }
 	}
 	if (save_volume_at > 0 && now >= save_volume_at) {
 		save_volume_at = 0;
@@ -2002,6 +2048,16 @@ static void restore_settings(void)
 {
 	int pm = read_int("/data/banana/backlight", -1);
 	if (pm > 0 && pm <= 1000) backlight_set_permille(pm);
+	{
+		int sc = read_int("/data/banana/bl-scale", 100);
+		if (sc < 100 && sc > 0) {
+			FILE *f = fopen("/run/banana/pic-scale", "w");
+			if (f) {
+				if (fprintf(f, "%d\n", sc) < 0) say("pic-scale: restore write failed");
+				if (fclose(f) != 0) say("pic-scale: restore close failed");
+			}
+		}
+	}
 	/* started again while the panel was dimmed (/run/banana/dim: the level before): undimmed, as the last one would */
 	int dimmed_from = read_int("/run/banana/dim", -1);
 	if (dimmed_from > 0 && dimmed_from <= 1000) { backlight_set_permille(dimmed_from); unlink("/run/banana/dim"); }
@@ -2380,7 +2436,7 @@ static void handle(const struct input_event *e)
 			if (game && !comp && fn_held) break;
 			int bright = (comp || !game) ? fn_held : select_held;
 			if (bright && !overlay_open())
-				brightness(dir, game && !comp ? 10 : cfg.brightness_step);
+				brightness(dir, game && !comp ? 10 : cfg.brightness_step, comp || !game);
 			else volume(dir);
 		}
 		break;

@@ -7,7 +7,7 @@ the detail lives in `git log` and the docs named there. Updated 2026-11-18.
    Dump `wakeup_sources` and `/proc/interrupts` deltas at the next burst before guessing.
 2. **Power-button sleeps that "did not take"** (2026-11-18): woke 1-3 s later with "power key" and no kernel wakeup event,
    with the unit on the USB gadget. Retest unplugged before blaming code. Possible follow-up: hibernate after a long sleep.
-3. **Below-minimum brightness (S)**, then **a real CRT personality (S)** (see *Ideas*).
+3. **A real CRT personality (S)** (see *Ideas*). Below-minimum brightness is built; check it on hardware (RPC-TEST.md).
 4. **The flasher on real Windows:** one flash and a mid-flash cancel; 2.0.0's Windows paths are tested with mocks only.
 5. **Languages, phase 2:** Settings sub-pages and menu chrome.
 6. **Bluetooth:** designed, not built; blocked on a Classic (BR/EDR) controller to test with.
@@ -56,8 +56,8 @@ its own daemon and A/B updates, and a CPU-drawn UI that costs nothing idle. Size
 week, **L** a project.
 
 ### Picked to build
-- **Below-minimum brightness (S):** scale the picture below the backlight's lowest level with `GAMMA_LUT` (extend the
-  night light in `colorLutFill`).
+- **Below-minimum brightness (S):** built, untested on hardware. At the 2% floor a further F+volume-down steps the picture
+  scale 100/70/50/35% (`bananad` -> `/run/banana/pic-scale` -> `colorLutFill`); up undoes it first. Menu or compositor only; a bare-RetroArch game cannot change the LUT (it keeps the menu's scale until the menu returns).
 - **A real CRT personality (S):** with a CRT mask on, collapse to a line and dot on sleep (animate the plane size), degauss
   thump via the vibrator and a ~20 s colour warm-up on wake.
 - **Rumble for games without it (M):** per-game files map rcheevos memory conditions to vibrator patterns via `bananad`.

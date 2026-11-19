@@ -132,6 +132,8 @@ namespace banana
 		// the night light: 0 off, 1 warm, 2 warmer. A gamma LUT on the panel, so it covers a game too (set from the
 		// menu, which holds the master; the kernel keeps the LUT across the compositor hand-over)
 		void setWarmth(int level);
+		// the picture's scale in percent, below the backlight's lowest level: part of the same LUT (bananad's pic-scale)
+		void setPicScale(int pct);
 		// the panel's colour matrix and curve. Outside the flip path: it builds the blobs and the next commit carries
 		// them. False when this driver has no colour management or a blob could not be made.
 		bool shaderSetColor(ColorProfile c);
@@ -221,6 +223,7 @@ namespace banana
 		void applyGamma();
 		bool colorRebuild(Panel& pn);
 		int warmth = 0;
+		int picScale = 100;
 		bool makeBuf(Buf& b, uint32_t fourcc);
 		void freeBuf(Buf& b);
 		uint32_t propId(uint32_t obj, uint32_t type, const char* name, uint64_t* value = nullptr);
