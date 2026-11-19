@@ -1383,7 +1383,11 @@ namespace banana
 			}
 			if (!d.flipPending()) cleared = d.blank();
 			if (cleared) logf("stop: the primary no longer scans a presenter framebuffer");
-			else logf("stop: the primary could not be cleared; the display close releases the scanout");
+			else
+			{
+				logf("stop: the primary could not be cleared; the display close releases the scanout");
+				d.forgetPrimary();
+			}
 			im->presenter->quiesce(cleared);
 		}
 		if (im->pending) { im->bufferDrop(im->pending); im->pending = nullptr; }
@@ -1472,6 +1476,16 @@ namespace banana
 	bool Compositor::gameActive() const
 	{
 		return impl && (impl->pending || impl->inflight);
+	}
+
+	bool Compositor::recommit()
+	{
+		if (!impl) return false;
+		Impl* im = impl;
+		if (!im->lastFb || im->restoreMenu || !im->d->isOpen() || im->d->flipPending()) return false;
+		if (!im->d->presentGame(im->lastFb, im->lastW, im->lastH, im->shownLayer())) return false;
+		im->shownOverlay = im->shownLayer();
+		return true;
 	}
 
 	bool Compositor::clientOnScreen() const

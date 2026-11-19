@@ -129,6 +129,17 @@ namespace banana
 		// until restore() turns it on again.
 		bool sleepOff();
 		bool isOff() const { return off; }
+		// the CRT personality, only with a CRT mask up (crt240, aperture). crtCollapse: before sleepOff, the picture on
+		// screen squashed to a line and drawn in to a dot, one blocking commit a refresh, given up past budgetMs (bananad
+		// is waiting). setWarmup: a cold tube coming up after a wake, 0 cold .. 1000 warm (off); part of the panel's LUT.
+		bool crtMask() const { return panel.atomic && (maskMode == SHADER_MASK_CRT_240P || maskMode == SHADER_MASK_APERTURE_GRILLE); }
+		bool crtCollapse(int budgetMs);
+		void setWarmup(int level);
+		int warmupLevel() const { return warmup; }
+		bool colorPending() const { return panel.color.dirty; }	// colour blobs the next commit has yet to carry
+		// the primary's framebuffer is going away without a commit that replaced it (a compositor stop that could not
+		// blank): the CRT switch-off must not name it
+		void forgetPrimary() { lastPrimaryFb = lastSrcW = lastSrcH = 0; }
 		// the night light: 0 off, 1 warm, 2 warmer. A gamma LUT on the panel, so it covers a game too (set from the
 		// menu, which holds the master; the kernel keeps the LUT across the compositor hand-over)
 		void setWarmth(int level);
@@ -196,6 +207,7 @@ namespace banana
 			Buf mask[2];	// the CRT/LCD mask, made the first time one is set
 			int maskFront = 0, maskShown = -1;
 			Buf black;		// XRGB8888, the primary when the menu is on the overlay
+			Buf white;		// XRGB8888, the CRT switch-off's line and dot, made the first time one runs
 			int front = 0;
 			DamageSet missed[2];
 			Plane primary, overlay;
@@ -224,6 +236,10 @@ namespace banana
 		bool colorRebuild(Panel& pn);
 		int warmth = 0;
 		int picScale = 100;
+		int warmup = 1000;	// the CRT warm-up's level (1000: none)
+		// what the last flip put on the primary, for the CRT switch-off to squash
+		uint32_t lastPrimaryFb = 0, lastSrcW = 0, lastSrcH = 0;
+		bool crtStep(Panel& pn, uint32_t fb, uint32_t sx, uint32_t sy, uint32_t sw, uint32_t sh, int pw, int ph, bool test);
 		bool makeBuf(Buf& b, uint32_t fourcc);
 		void freeBuf(Buf& b);
 		uint32_t propId(uint32_t obj, uint32_t type, const char* name, uint64_t* value = nullptr);

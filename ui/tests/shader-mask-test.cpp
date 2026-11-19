@@ -200,6 +200,45 @@ static void testColor()
 	CHECK(maskPlaneAlpha(10) == 6554 && maskPlaneAlpha(50) == 32768 && maskPlaneAlpha(100) == 65535, "maskPlaneAlpha");
 }
 
+static void testCrt()
+{
+	// the warm-up: warm is the plain ramp, cold is faint with blue lowest, and entry 0 stays black throughout
+	std::vector<drm_color_lut> warm(1024), cold(1024);
+	colorLutFill(warm.data(), 1024, COLOR_PROFILE_BYPASS, 0, 100, 1000);
+	CHECK(warm[1023].red == 65535 && warm[1023].green == 65535 && warm[1023].blue == 65535, "warm-up done is the plain ramp");
+	colorLutFill(cold.data(), 1024, COLOR_PROFILE_BYPASS, 0, 100, 0);
+	CHECK(cold[0].red == 0 && cold[0].green == 0 && cold[0].blue == 0, "cold entry 0");
+	CHECK(cold[1023].red < 65535 / 2 && cold[1023].red > 65535 / 5, "cold is faint: %u", cold[1023].red);
+	CHECK(cold[1023].red > cold[1023].green && cold[1023].green > cold[1023].blue, "cold: red first, blue last");
+	// it shares the LUT with the brightness floor and the night light
+	std::vector<drm_color_lut> both(1024);
+	colorLutFill(both.data(), 1024, COLOR_PROFILE_BYPASS, 2, 50, 0);
+	CHECK(both[1023].red < cold[1023].red && both[1023].blue < both[1023].green, "warm-up with pic-scale and night light");
+	// the level: 0 at the wake, rising, 1000 at the end (and after it), never backwards
+	CHECK(warmupLevel(0, 20000) == 0, "level at 0");
+	CHECK(warmupLevel(20000, 20000) == 1000 && warmupLevel(25000, 20000) == 1000, "level at the end");
+	CHECK(warmupLevel(5000, 20000) > 500, "quick at first: %d", warmupLevel(5000, 20000));
+	for (int ms = 100, last = 0; ms <= 20000; ms += 100)
+	{
+		int l = warmupLevel(ms, 20000);
+		CHECK(l >= last, "level goes backwards at %d ms", ms);
+		last = l;
+	}
+	// the switch-off: the picture keeps its width and loses height, then a line narrows, then a dot shrinks
+	int lastH = 1080, lastW = 1240;
+	for (int i = 0; i < kCrtSteps; i++)
+	{
+		CrtStep s = crtCollapseStep(i, 1240, 1080);
+		CHECK(s.w >= 2 && s.h >= 2 && s.w <= 1240 && s.h <= 1080, "step %d out of range: %dx%d", i, s.w, s.h);
+		if (i < kCrtSquash) CHECK(s.picture && s.w == 1240 && s.h <= lastH, "squash step %d: %dx%d", i, s.w, s.h);
+		else CHECK(!s.picture && s.w <= lastW && s.h <= 3 + (i >= kCrtSquash + kCrtLine ? 3 : 0), "line step %d: %dx%d", i, s.w, s.h);
+		lastH = s.h;
+		lastW = s.picture ? 1240 : s.w;
+	}
+	CHECK(crtCollapseStep(kCrtSquash - 1, 1240, 1080).h == 4, "the squash ends as a line");
+	CHECK(crtCollapseStep(kCrtSteps - 1, 1240, 1080).w == 2, "the last step is the smallest dot");
+}
+
 int main()
 {
 	testTables();
@@ -213,6 +252,7 @@ int main()
 	testCompose();
 	testGeom();
 	testColor();
+	testCrt();
 	printf("shader-mask: %s\n", bad ? "FAILED" : "all checks passed");
 	return bad != 0;
 }

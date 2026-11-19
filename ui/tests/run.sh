@@ -213,10 +213,11 @@ for size in 640x557; do
         --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" --script "$1" 2>> "$blog" ||
         { echo "FAIL $size: banana-ui (bgm) exited $?"; fail=1; }; }
     # the Shaders group is the seventh tile; its rows save at once, and the strength slider stops at its end
-    sed -i '/^shader_/d' "$FX/data/settings.conf"
-    run_bgm "home 0; press start; press r; press r; press r; press r; press r; press r; press a; press right; press down; press right; press right; press down; press right; shot shaders"
+    sed -i '/^shader_/d; /^crt_personality/d' "$FX/data/settings.conf"
+    run_bgm "home 0; press start; press r; press r; press r; press r; press r; press r; press a; press right; press down; press right; press right; press down; press right; press down; press right; shot shaders"
     grep -q '^shader_mask = crt240' "$FX/data/settings.conf" || { echo "FAIL $size: Screen mask didn't save: $(grep '^shader_mask =' "$FX/data/settings.conf")"; fail=1; }
     grep -q '^shader_mask_intensity = 70' "$FX/data/settings.conf" || { echo "FAIL $size: Mask strength didn't save: $(grep '^shader_mask_intensity' "$FX/data/settings.conf")"; fail=1; }
+    grep -q '^crt_personality = off' "$FX/data/settings.conf" || { echo "FAIL $size: CRT power effects didn't save: $(grep '^crt_personality' "$FX/data/settings.conf")"; fail=1; }
     grep -q '^shader_color = trinitron' "$FX/data/settings.conf" || { echo "FAIL $size: Screen colour didn't save: $(grep '^shader_color' "$FX/data/settings.conf")"; fail=1; }
     run_bgm "home 0; press start; press r; press r; press r; press r; press r; press r; press a; press down; press right; press right; press right; press right; shot shaders-max"
     grep -q '^shader_mask_intensity = 100' "$FX/data/settings.conf" || { echo "FAIL $size: Mask strength didn't stop at 100: $(grep '^shader_mask_intensity' "$FX/data/settings.conf")"; fail=1; }

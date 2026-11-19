@@ -61,6 +61,7 @@ namespace banana
 			{ "night_light", "off", ENUM, NIGHTLIGHT, 0, 0 },
 			{ "shader_mask", "off", ENUM, SHADER_MASKS, 0, 0 },
 			{ "shader_mask_intensity", "50", INTEGER, nullptr, 10, 100 },
+			{ "crt_personality", "on", ENUM, ON_OFF, 0, 0 },
 			{ "shader_color", "bypass", ENUM, SHADER_COLORS, 0, 0 },
 			{ "core.gba", "gpsp", CORE, nullptr, 0, 0 },
 			{ "core.gbc", "gambatte", CORE, nullptr, 0, 0 },

@@ -431,6 +431,8 @@ namespace banana
 			menu, "shader_mask", { "Off", "CRT scanlines", "Aperture grille", "LCD grid" }, { "off", "crt240", "aperture", "lcd" });
 		add(SH, "picture", "Mask strength", "How dark the mask's lines are. Lower is gentler on the eyes and on the OLED panel.", menu, "shader_mask_intensity",
 			{ "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, { "10", "20", "30", "40", "50", "60", "70", "80", "90", "100" }, Item::PERCENT);
+		add(SH, "picture", "CRT power effects", "With a CRT mask on: the picture collapses to a dot when it sleeps, and on the wake a degauss thump and a cold tube warming up for about 20 seconds.",
+			menu, "crt_personality", { "On", "Off" }, { "on", "off" });
 		add(SH, "picture", "Screen colour", "The panel's colour, as a monitor of the time showed it: a cool Trinitron, a neutral studio PVM, or a muted handheld LCD.",
 			menu, "shader_color", { "Standard", "Trinitron", "PVM", "Handheld" }, { "bypass", "trinitron", "pvm", "handheld" });
 	}

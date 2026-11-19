@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <dirent.h>
 #include <drm_fourcc.h>
 #include <fcntl.h>
@@ -247,6 +248,12 @@ namespace banana
 		}
 		ret = drmModeAtomicCommit(fd, r, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr);
 		drmModeAtomicFree(r);
+		if (ret == 0)
+		{
+			lastPrimaryFb = maskFb() ? pn.buf[pn.front].fb : pn.black.fb;
+			lastSrcW = (uint32_t)SW;
+			lastSrcH = (uint32_t)SH;
+		}
 		if (ret) fprintf(stderr, "kms: atomic modeset failed (%s); legacy menu path\n", strerror(errno));
 		return ret == 0;
 	}
@@ -465,6 +472,125 @@ namespace banana
 		applyGamma();
 	}
 
+	void Display::setWarmup(int level)
+	{
+		level = std::min(1000, std::max(0, level));
+		if (level == warmup) return;
+		warmup = level;
+		applyGamma();
+	}
+
+	// one step of the CRT switch-off: fb on the primary, its source rectangle sx,sy,sw,sh scaled into a pw x ph
+	// rectangle at the panel's centre, and the mask alone on the overlay (a card or the pause menu would stay full size
+	// over a collapsing picture). Blocking, with no flip event: nothing in the flip path sees it.
+	bool Display::crtStep(Panel& pn, uint32_t fb, uint32_t sx, uint32_t sy, uint32_t sw, uint32_t sh, int pw, int ph, bool test)
+	{
+		AtomicBuf& r = atomicBuf;
+		r.clear();
+		const Plane& pl = pn.primary;
+		r.add(pl.id, pl.crtc_id, pn.crtc);
+		r.add(pl.id, pl.fb_id, fb);
+		r.add(pl.id, pl.src_x, (uint64_t)sx << 16);
+		r.add(pl.id, pl.src_y, (uint64_t)sy << 16);
+		r.add(pl.id, pl.src_w, (uint64_t)sw << 16);
+		r.add(pl.id, pl.src_h, (uint64_t)sh << 16);
+		r.add(pl.id, pl.crt_x, (uint64_t)((SW - pw) / 2));
+		r.add(pl.id, pl.crt_y, (uint64_t)((SH - ph) / 2));
+		r.add(pl.id, pl.crt_w, (uint64_t)pw);
+		r.add(pl.id, pl.crt_h, (uint64_t)ph);
+		const Plane& ov = pn.overlay;
+		uint32_t m = maskFb();
+		r.add(ov.id, ov.crtc_id, m ? pn.crtc : 0);
+		r.add(ov.id, ov.fb_id, m);
+		if (m)
+		{
+			r.add(ov.id, ov.src_x, 0);
+			r.add(ov.id, ov.src_y, 0);
+			r.add(ov.id, ov.src_w, (uint64_t)SW << 16);
+			r.add(ov.id, ov.src_h, (uint64_t)SH << 16);
+			r.add(ov.id, ov.crt_x, 0);
+			r.add(ov.id, ov.crt_y, 0);
+			r.add(ov.id, ov.crt_w, SW);
+			r.add(ov.id, ov.crt_h, SH);
+			if (ov.has_alpha) r.add(ov.id, ov.alpha, maskPlaneAlpha(maskPct));
+		}
+		if (r.overflow) { errno = E2BIG; return false; }
+		drm_mode_atomic req = {};
+		req.flags = test ? DRM_MODE_ATOMIC_TEST_ONLY : 0;
+		req.count_objs = (uint32_t)r.groups;
+		req.objs_ptr = (uint64_t)(uintptr_t)r.objs;
+		req.count_props_ptr = (uint64_t)(uintptr_t)r.counts;
+		req.props_ptr = (uint64_t)(uintptr_t)r.props;
+		req.prop_values_ptr = (uint64_t)(uintptr_t)r.vals;
+		return drmIoctl(fd, DRM_IOCTL_MODE_ATOMIC, &req) == 0;
+	}
+
+	// The CRT switch-off. The display's scaler has a downscale limit (and a pipe may not scale at all), so each step of
+	// the squash is tried TEST_ONLY with the whole picture, then with the source cut to 4x and 2x the destination, then
+	// cropped 1:1; the first the driver takes is shown, and a harder limit found once holds for the smaller steps. The
+	// line and the dot are the white buffer, never scaled. Leaves the planes as they are: sleepOff follows, and the
+	// modeset after the wake puts everything back full size.
+	bool Display::crtCollapse(int budgetMs)
+	{
+		if (fd < 0 || off || !crtMask() || !panel.primary.id || !panel.overlay.id || !lastPrimaryFb || !lastSrcW || !lastSrcH)
+			return false;
+		Panel& pn = panel;
+		timespec t0;
+		clock_gettime(CLOCK_MONOTONIC, &t0);
+		auto elapsedMs = [&]() {
+			timespec t;
+			clock_gettime(CLOCK_MONOTONIC, &t);
+			return (t.tv_sec - t0.tv_sec) * 1000.0 + (t.tv_nsec - t0.tv_nsec) / 1e6;
+		};
+		// a flip in flight is one refresh away; one that is not done in 50 ms means a stuck display: no switch-off then
+		for (int i = 0; pending && i < 5; i++)
+		{
+			pollfd pf = { fd, POLLIN, 0 };
+			if (poll(&pf, 1, 10) > 0 && (pf.revents & POLLIN)) handleEvents();
+		}
+		if (pending) return false;
+		if (!pn.white.map)
+		{
+			if (!makeBuf(pn.white, DRM_FORMAT_XRGB8888)) return false;
+			memset(pn.white.map, 0xff, pn.white.size);
+		}
+		bool turned = rot == 90 || rot == 270;
+		int fit = 0;	// 0 whole picture, 1 source 4x, 2 source 2x, 3 cropped 1:1
+		bool shown = false;
+		for (int i = 0; i < kCrtSteps && elapsedMs() < budgetMs; i++)
+		{
+			CrtStep st = crtCollapseStep(i, W, H);
+			int pw = std::min(SW, turned ? st.h : st.w), ph = std::min(SH, turned ? st.w : st.h);
+			bool ok = false;
+			if (!st.picture)
+				ok = crtStep(pn, pn.white.fb, 0, 0, (uint32_t)pw, (uint32_t)ph, pw, ph, false);
+			else
+				for (; fit < 4; fit++)
+				{
+					// the source keeps the panel's axes (the presenter turns the game before the plane): cut it down
+					// around its centre in proportion to the destination
+					static const int kFit[4] = { 0, 4, 2, 1 };
+					uint32_t sw = lastSrcW, sh = lastSrcH;
+					if (kFit[fit])
+					{
+						sw = std::min(lastSrcW, std::max(1u, (uint32_t)((uint64_t)pw * lastSrcW * kFit[fit] / SW)));
+						sh = std::min(lastSrcH, std::max(1u, (uint32_t)((uint64_t)ph * lastSrcH * kFit[fit] / SH)));
+					}
+					uint32_t sx = (lastSrcW - sw) / 2, sy = (lastSrcH - sh) / 2;
+					if (crtStep(pn, lastPrimaryFb, sx, sy, sw, sh, pw, ph, true))
+						ok = crtStep(pn, lastPrimaryFb, sx, sy, sw, sh, pw, ph, false);
+					if (ok) break;
+				}
+			if (!ok)
+			{
+				fprintf(stderr, "kms: CRT switch-off stopped at step %d (%s)\n", i, strerror(errno));
+				break;
+			}
+			shown = true;
+		}
+		return shown;
+	}
+
 	bool Display::shaderSetColor(ColorProfile c)
 	{
 		if (c >= COLOR_PROFILE_COUNT) return false;
@@ -487,7 +613,7 @@ namespace banana
 		c.retired[0] = c.ctm;
 		c.retired[1] = c.lut;
 		c.ctm = c.lut = 0;
-		colorLutFill(lutScratch, pn.lut_size, colorProfile, warmth, picScale);
+		colorLutFill(lutScratch, pn.lut_size, colorProfile, warmth, picScale, warmup);
 		bool ok = drmModeCreatePropertyBlob(fd, lutScratch, pn.lut_size * sizeof(drm_color_lut), &c.lut) == 0;
 		if (ok && colorProfile != COLOR_PROFILE_BYPASS && pn.crtc_ctm)
 		{
@@ -536,6 +662,8 @@ namespace banana
 		freeBuf(pn.buf[0]); freeBuf(pn.buf[1]); freeBuf(pn.black); freeBuf(pn.card[0]); freeBuf(pn.card[1]);
 		freeBuf(pn.frame[0]); freeBuf(pn.frame[1]);
 		freeBuf(pn.mask[0]); freeBuf(pn.mask[1]);
+		freeBuf(pn.white);
+		lastPrimaryFb = lastSrcW = lastSrcH = 0;
 		pn.frameOn = false;
 		if (pn.mode_blob) { drmModeDestroyPropertyBlob(fd, pn.mode_blob); pn.mode_blob = 0; }
 		for (uint32_t id : { pn.color.ctm, pn.color.lut, pn.color.retired[0], pn.color.retired[1] })
@@ -682,6 +810,9 @@ namespace banana
 			return false;
 		}
 		pn.color.dirty = false;
+		lastPrimaryFb = primaryFb;
+		lastSrcW = srcW;
+		lastSrcH = srcH;
 		for (int i = 0; i < 2; i++)
 		{
 			if (overlayFb && overlayFb == pn.mask[i].fb) pn.maskShown = i;

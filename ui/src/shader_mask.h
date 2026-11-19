@@ -149,11 +149,56 @@ namespace banana
 
 	// the panel's GAMMA_LUT: the profile's curve (only PVM has one) with the night light's gains, so both share it.
 	// Entry 0 stays 0: a black pixel must stay black.
-	inline void colorLutFill(drm_color_lut* lut, unsigned n, ColorProfile c, int warmth, int scalePct = 100)
+	// the CRT personality's warm-up (0 a cold tube .. 1000 warm, the plain picture): a cold tube is faint and short of
+	// blue; red comes up first, green a little behind it and blue last
+	inline void warmupGains(int warm, double& kr, double& kg, double& kb)
+	{
+		double w = warm >= 1000 ? 1.0 : warm <= 0 ? 0.0 : warm / 1000.0;
+		kr = 0.3 + 0.7 * w;
+		kg = kr * (0.9 + 0.1 * w);
+		kb = kr * (0.75 + 0.25 * w);
+	}
+
+	// the warm-up's level ms into a warm-up of durMs: quick at first, then settling slowly (1000 once it is over)
+	inline int warmupLevel(double ms, double durMs)
+	{
+		if (durMs <= 0 || ms >= durMs) return 1000;
+		if (ms <= 0) return 0;
+		double p = 1.0 - ms / durMs;
+		return std::min(1000, std::max(0, (int)(1000.0 * (1.0 - p * p * p))));
+	}
+
+	// the CRT personality's switch-off, one step per refresh: the picture squashed to a line, the line drawn in to a
+	// dot, the dot gone. Sizes are in the canvas's own (upright) axes; a line step is a bright rectangle, not the picture.
+	constexpr int kCrtSquash = 10, kCrtLine = 5, kCrtDot = 3, kCrtSteps = kCrtSquash + kCrtLine + kCrtDot;
+	struct CrtStep { bool picture; int w, h; };
+	inline CrtStep crtCollapseStep(int i, int W, int H)
+	{
+		if (i < kCrtSquash)
+		{
+			double s = (i + 1.0) / kCrtSquash;
+			return { true, W, std::max(4, (int)(H * (1.0 - s * s))) };
+		}
+		i -= kCrtSquash;
+		if (i < kCrtLine)
+		{
+			double s = (i + 1.0) / kCrtLine;
+			return { false, std::max(8, (int)(W * (1.0 - s * s))), 3 };
+		}
+		i -= kCrtLine;
+		static constexpr int dot[kCrtDot] = { 6, 4, 2 };
+		int d = dot[std::min(std::max(i, 0), kCrtDot - 1)];
+		return { false, d, d };
+	}
+
+	inline void colorLutFill(drm_color_lut* lut, unsigned n, ColorProfile c, int warmth, int scalePct = 100, int warm = 1000)
 	{
 		if (!lut || n == 0) return;
-		double kg, kb;
+		double kg, kb, wr, wg, wb;
 		warmthGains(warmth, kg, kb);
+		warmupGains(warm, wr, wg, wb);
+		kg *= wg;
+		kb *= wb;
 		// below the backlight's lowest level: the whole picture scaled down (bananad's /run/banana/pic-scale)
 		double ks = scalePct >= 100 ? 1.0 : scalePct < 1 ? 0.01 : scalePct / 100.0;
 		for (unsigned i = 0; i < n; i++)
@@ -161,7 +206,7 @@ namespace banana
 			double t = n > 1 ? (double)i / (n - 1) : 0.0;
 			// gamma-encoded content (2.2) shown on a 2.4 display: the PVM profile's bend
 			double v = 65535.0 * ks * (c == COLOR_PROFILE_PVM_6500K ? std::pow(t, 2.4 / 2.2) : t);
-			lut[i].red = (uint16_t)(v + 0.5);
+			lut[i].red = (uint16_t)(v * wr + 0.5);
 			lut[i].green = (uint16_t)(v * kg + 0.5);
 			lut[i].blue = (uint16_t)(v * kb + 0.5);
 			lut[i].reserved = 0;

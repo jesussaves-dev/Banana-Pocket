@@ -558,6 +558,27 @@ int main(int argc, char** argv)
 		shaderColorSet = c;
 	};
 	shaderApply(true);
+	// the CRT personality (a CRT mask up and crt_personality not off): the picture collapsing to a dot before a sleep,
+	// a degauss thump and a cold tube warming up over kCrtWarmMs after the wake
+	constexpr double kCrtWarmMs = 20000;
+	constexpr int kCrtStepMs = 100;	// a new warm-up LUT ten times a second: two kernel blobs each, outside the flip path
+	double crtWarmAt = 0, crtWarmStep = 0;	// the warm-up's start (0: none running), and its last LUT step
+	bool crtPushDue = false;	// a warm-up LUT no commit has carried yet
+	double crtPushAt = 0;		// a colour-only commit that failed is tried again from here
+	auto crtPersonality = [&]() {
+		return disp.crtMask() && getConfValue(o.data + "/settings.conf", "crt_personality",
+		                                      getConfValue("/etc/banana/settings.conf", "crt_personality", "on")) != "off";
+	};
+	// bananad's vibrator, for a pulse of ms: the length is the file's contents, and the rename makes the IN_MOVED_TO it
+	// watches for arrive with them (a plain write would show it an empty file on IN_CREATE)
+	auto vibrate = [](int ms) {
+		if (FILE* f = fopen("/run/banana/.vibrate", "w"))
+		{
+			bool ok = fprintf(f, "%d\n", ms) > 0;
+			ok = fclose(f) == 0 && ok;
+			if (!ok || rename("/run/banana/.vibrate", "/run/banana/vibrate") != 0) unlink("/run/banana/.vibrate");
+		}
+	};
 	settingsView.setPanelHeight(canvasH);
 	settingsView.searchCount = [&](const std::string& q) { return lib.countMatches(q); };
 	settingsView.setVariant(menuTheme());
@@ -1298,6 +1319,30 @@ int main(int argc, char** argv)
 			logf("the games on the card changed: %d systems", lib.systemCount());
 			dirty = true;
 		}
+		// the CRT warm-up: a new LUT about 15 times a second, pushed with a colour-only commit when nothing else flips
+		// (an idle menu, a paused game); a running game's next frame carries it anyway
+		if (crtWarmAt > 0 && disp.isOpen() && !disp.isOff())
+		{
+			double t = nowMs();
+			if (!disp.crtMask()) { crtWarmAt = 0; disp.setWarmup(1000); crtPushDue = true; }	// the mask went off: so does the warm-up
+			else if (t - crtWarmStep >= kCrtStepMs)
+			{
+				crtWarmStep = t;
+				int lv = warmupLevel(t - crtWarmAt, kCrtWarmMs);
+				disp.setWarmup(lv);
+				crtPushDue = true;
+				if (lv >= 1000) crtWarmAt = 0;
+			}
+		}
+		if (crtPushDue && !disp.colorPending()) crtPushDue = false;	// a frame carried it
+		if (crtPushDue && disp.isOpen() && !disp.isOff() && !disp.flipPending() && !drawn && !comp.gameActive() &&
+		    nowMs() >= crtPushAt)
+		{
+			// a failure is tried again a step later, not every pass: the last (warm) LUT must still reach the panel
+			bool ok = comp.clientOnScreen() ? comp.recommit() : gamePid <= 0 && disp.present(be.pixels(), DamageSet());
+			if (ok) crtPushDue = false;
+			else crtPushAt = nowMs() + kCrtStepMs;
+		}
 		if (batteryDue)
 		{
 			batteryDue = false;
@@ -1380,6 +1425,13 @@ int main(int argc, char** argv)
 			int left = (int)(plug.until - now) + 1;
 			if (timeout < 0 || left < timeout) timeout = left;
 		}
+		if ((crtWarmAt > 0 || crtPushDue) && disp.isOpen() && !disp.isOff())
+		{
+			double due = crtWarmAt > 0 ? crtWarmStep + kCrtStepMs : std::max(crtPushAt, nowMs() + 1);
+			if (crtWarmAt > 0 && crtPushDue) due = std::min(due, std::max(crtPushAt, nowMs() + 1));
+			int left = std::max(1, (int)(due - nowMs()) + 1);
+			if (timeout < 0 || left < timeout) timeout = left;
+		}
 		if (osdUntil > now)
 		{
 			int left = (int)(osdUntil - now) + 1;
@@ -1438,6 +1490,16 @@ int main(int argc, char** argv)
 					{
 						// the panel off first: the sound-state bananad waits on is written after it, so the CRTC is
 						// inactive by the time it suspends, and a wake it sends straight back to sleep stays dark
+						crtWarmAt = 0;	// a warm-up still running: the next wake starts it over
+						crtPushDue = false;
+						if (!disp.isOff() && disp.isOpen() && crtPersonality())
+						{
+							// inside bananad's wait for the answer below (it gives up at a second): the budget counts from
+							// here, and sleepOff after it has no flip left to wait out
+							double t0 = nowMs();
+							bool shown = disp.crtCollapse(450);
+							logf("SIGHUP: CRT switch-off %s in %.0f ms", shown ? "shown" : "skipped", nowMs() - t0);
+						}
 						bool off = disp.isOff() || (disp.isOpen() && disp.sleepOff());
 						logf("SIGHUP: panel %s", off ? "off" : "off failed");
 						if (FILE* pf = fopen("/run/banana/panel-state", "w")) { fputs(off ? "off" : "off failed", pf); fclose(pf); }
@@ -1452,6 +1514,10 @@ int main(int argc, char** argv)
 						// back dark. Re-modeset on the fd we hold and re-arm the compositor. Closing it to reopen
 						// would give up DRM master, and anything still holding the old file then leaves us locked
 						// out of the panel (EACCES). A full reopen is only for a panel that will not restore.
+						// a cold tube: the LUT the restore's modeset carries is already the warm-up's first
+						bool crt = crtPersonality();
+						if (crt) { crtWarmAt = crtWarmStep = nowMs(); disp.setWarmup(0); }
+						else if (disp.warmupLevel() != 1000) disp.setWarmup(1000);
 						bool restored = false;
 						for (int tries = 0; disp.isOpen() && !restored && tries < 50; tries++)
 						{
@@ -1460,6 +1526,7 @@ int main(int argc, char** argv)
 						}
 						if (restored)
 						{
+							if (crt) vibrate(140);	// the degauss thump (only a real wake gets here: phantoms stay asleep)
 							comp.resume();
 							// bananad's wake SIGCONTs the game's group: the pause menu keeps it frozen
 							if (gamePid > 0 && pause.open) { signalTree(gamePid, SIGSTOP); pause.draw(); }

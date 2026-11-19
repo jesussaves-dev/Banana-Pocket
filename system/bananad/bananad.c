@@ -630,7 +630,8 @@ static int ui_release_wait(double *ms)
  * /run/banana/panel-state, which this side set to "asked" before the signal. The sound-state wait above cannot stand
  * in for it: with nothing playing the sound device is already closed, so that wait returns before the menu has even
  * read the signal, and a menu frozen with its panel still on is the one a phantom wake lights. 1 = off (ms),
- * 0 = the menu could not, -1 = no answer in 500 ms (a menu from before this). */
+ * 0 = the menu could not, -1 = no answer in a second (a menu from before this). The second leaves room for the CRT
+ * switch-off the menu may draw first (about 300 ms); the wait ends as soon as the answer is there. */
 static int ui_panel_off_wait(double *ms)
 {
 	double t = mono();
@@ -640,7 +641,7 @@ static int ui_panel_off_wait(double *ms)
 		*ms = (mono() - t) * 1000;
 		if (!strcmp(s, "off")) return 1;
 		if (!strcmp(s, "off failed")) return 0;
-		if (mono() - t > 0.5) return -1;
+		if (mono() - t > 1.0) return -1;
 		sleep_us(10000);
 	}
 }
@@ -2707,7 +2708,15 @@ int main(int argc, char **argv)
 					p += sizeof(struct inotify_event) + e->len;
 				}
 			if (cheevos_changed) { cheevos_watch(ino); cheevos_poll(); }	/* the re-add catches the file's re-creation between games */
-			if (vibrate_req) { unlink("/run/banana/vibrate"); vibrate(cfg.vibrate_ms); }	/* a test trigger: `touch /run/banana/vibrate` */
+			if (vibrate_req) {
+				/* `touch /run/banana/vibrate` (a test: the plug-in pulse), or a length in ms written to it (the menu's
+				 * CRT degauss thump, renamed into place so the number is there by the time IN_MOVED_TO arrives) */
+				char s[16] = "";
+				read_str("/run/banana/vibrate", s, sizeof s);
+				unlink("/run/banana/vibrate");
+				int ms = atoi(s);
+				vibrate(ms > 0 && ms <= 2000 ? ms : cfg.vibrate_ms);
+			}
 			if (inputs_changed) {
 				sleep_us(200000);	/* udev/mdev sets the node's permissions */
 				open_inputs();
