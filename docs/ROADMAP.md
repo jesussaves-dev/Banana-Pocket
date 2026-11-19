@@ -15,9 +15,11 @@ in 1.0 only if a stranger would notice it missing or broken. Sizes: **S** a day 
    per re-sleep before guessing. Stopgap now: the give-up keeps the panel dark.
 2. **Sleep: power-button sleeps that "did not take"** (2026-11-18): woke 1-3 s later with "power key" and no kernel wakeup
    event, unit on the USB gadget. Retest unplugged before blaming code.
-3. **Signed releases (S-M):** sign `sha256sums` with an ed25519 key; `update` verifies against a public key baked into the
-   image before writing a slot (`update:88-117` checks hashes only today). Lands early: every image a stranger installs
-   must already carry the key, or the first signed update arrives unverified.
+3. **Signed releases: built, unshipped.** `update` verifies `sha256sums.sig` (ed25519, `tools/release-key.sh`) against
+   `/etc/banana/release.pub` and refuses unsigned packages unless `/data/banana/allow-unsigned` exists. Left: back up
+   `~/.config/banana/release-ed25519.pem`, commit the public key, build the image once (needs `openssl` in the
+   image: `LIBOPENSSL_BIN`), and apply a signed and a tampered package on hardware. The first signed release must go
+   out as a full flash.
 4. **Sessions survive a hang (M):** two alternating hidden state slots on a timer, a fsynced journal in
    `/data/banana/sessions.tsv`, and a "cut off 4 minutes ago, resume?" card at boot. Quick resume today saves only on a
    clean quit (`run-retroarch:378`).

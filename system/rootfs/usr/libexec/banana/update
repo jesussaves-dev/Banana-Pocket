@@ -2,7 +2,7 @@
 # Updates. The card has two root slots (partitions 2 and 3, banana-root-a and banana-root-b) and a kernel for each
 # in the boot partition (a/, b/); extlinux.conf's DEFAULT names the one that boots. An update package (the
 # banana-<board>-<version>.update.tar the build makes: Image, the device tree (both, for the universal board: U-Boot
-# picks one, extlinux.conf's FDTDIR), rootfs.squashfs, VERSION, board, sha256sums) is written to the slot not in use, checked against its hashes as written, and only then made the
+# picks one, extlinux.conf's FDTDIR), rootfs.squashfs, VERSION, board, sha256sums, and sha256sums.sig: its ed25519 signature) is written to the slot not in use, checked against its hashes as written, and only then made the
 # default: the running system is never touched, and a failure leaves everything as it was. Settings > System >
 # Update runs this and shows its progress (/run/banana/update-status: one line, "writing 42%", "done <version>",
 # "failed: <why>"...).
@@ -13,10 +13,11 @@
 #   update switch [a|b]             make the other slot (or the one named) the default, when it holds a system
 #   update status                   which slot is running, which is the default, what each holds
 #   update prune                    keep the two newest packages (and the running version's), delete the rest
-DISK=$(cat /run/banana/disk 2>/dev/null || echo /dev/mmcblk0)
-SLOT=$(cat /run/banana/slot 2>/dev/null || echo a)
+RUN=${BANANA_RUN:-/run/banana}				# (another directory, for testing)
+DISK=$(cat $RUN/disk 2>/dev/null || echo /dev/mmcblk0)
+SLOT=$(cat $RUN/slot 2>/dev/null || echo a)
 BOARD=$(cat /etc/banana/board 2>/dev/null)
-STATUS=/run/banana/update-status
+STATUS=$RUN/update-status
 UPDATES=${BANANA_UPDATES:-/data/banana/updates}	# (another directory, for testing)
 other() { [ "$1" = a ] && echo b || echo a; }
 partition() { [ "$1" = a ] && echo ${DISK}p2 || echo ${DISK}p3; }
@@ -71,8 +72,8 @@ apply|stage)
     D=$(default_slot)
     [ -z "$D" ] || [ "$D" = "$SLOT" ] || fail "this is a test boot of slot $SLOT (the default is $D): restart into $D first"
     # bananad must not idle-sleep through this: a 200 MB slot write and its verify, minutes of the card being written
-    echo $$ > /run/banana/awake.pid
-    trap 'rm -f /run/banana/awake.pid' EXIT INT TERM
+    echo $$ > $RUN/awake.pid
+    trap 'rm -f $RUN/awake.pid' EXIT INT TERM
     status "checking"
     DIR=$P
     if [ -f "$P" ]; then
@@ -90,6 +91,19 @@ apply|stage)
     PB=$(cat "$DIR/board"); PV=$(cat "$DIR/VERSION")
     # the package has to be this handheld's own
     [ -z "$BOARD" ] || [ "$PB" = "$BOARD" ] || fail "that is a package for the $PB, this is the $BOARD"
+    # the hashes are the release's own: sha256sums.sig is an ed25519 signature by the key baked into the image
+    # (/etc/banana/release.pub). A hand-made package (the QEMU test, a dev build) installs only when the card
+    # says so with /data/banana/allow-unsigned.
+    PUBKEY=${BANANA_PUBKEY:-/etc/banana/release.pub}
+    if [ -f "$PUBKEY" ]; then
+        if [ -f "$DIR/sha256sums.sig" ] && openssl pkeyutl -verify -rawin -pubin -inkey "$PUBKEY" -in "$DIR/sha256sums" -sigfile "$DIR/sha256sums.sig" >/dev/null 2>&1; then
+            :
+        elif [ -f "${BANANA_ALLOW_UNSIGNED:-/data/banana/allow-unsigned}" ]; then
+            echo "update: signature not verified; allow-unsigned is set" >&2
+        else
+            fail "the package is not signed by the Banana release key"
+        fi
+    fi
     # every file as the build hashed it
     while read -r h f; do
         [ -f "$DIR/$f" ] || fail "the package has no $f"
