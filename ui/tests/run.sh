@@ -175,14 +175,20 @@ for size in 640x557; do
 # here: BANANA_RA_CHECK=0)
     slog=$OUT/$size-setup.log
     rm -f "$FX/data/setup-done" "$FX/data/accounts.conf"
-    BANANA_RA_CHECK=0 BANANA_WIFI="$HERE/tests/fake-wifi.sh" FAKE_WIFI_CONF="$FX/data/wifi.conf" "$HERE/banana-ui" --headless "$OUT/$size-" --size 640x557 \
+    echo 4821 > "$OUT/web.pin"
+    BANANA_WEB_PIN="$OUT/web.pin" BANANA_RA_CHECK=0 BANANA_WIFI="$HERE/tests/fake-wifi.sh" FAKE_WIFI_CONF="$FX/data/wifi.conf" "$HERE/banana-ui" --headless "$OUT/$size-" --size 640x557 \
         --assets "$HERE/assets/rnds" --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
         --script "home 0; setup; shot setup; press down; press right; shot setup-tz; press down; shot setup-ra; press a; shot setup-name; \
-            $(key 1,0 1,1 1,2) press start; shot setup-pass; $(key 2,0 2,1) press start; shot setup-signed; press down; shot setup-boxart; press down; shot setup-games; press down; press a; shot setup-done" 2> "$slog" \
+            $(key 1,0 1,1 1,2) press start; shot setup-pass; $(key 2,0 2,1) press start; shot setup-signed; press down; shot setup-boxart; press down; shot setup-games; press x; shot setup-qr; press b; press down; press a; shot setup-done" 2> "$slog" \
         || { echo "FAIL $size: banana-ui (setup) exited $?"; fail=1; }
     grep -q "setup open" "$slog" || { echo "FAIL $size: the setup didn't open"; fail=1; }
     [ -f "$FX/data/setup-done" ] || { echo "FAIL $size: Finish didn't write setup-done"; fail=1; }
     grep -q '^ra_user=qwe$' "$FX/data/accounts.conf" && grep -q '^ra_password=as$' "$FX/data/accounts.conf" || { echo "FAIL $size: accounts.conf: $(cat "$FX/data/accounts.conf" 2>/dev/null | tr '\n' ' ')"; fail=1; }
+    # the QR page: the code must scan (with the banana over its middle) to the page's address
+    [ -s "$OUT/$size-setup-qr.png" ] || { echo "FAIL $size: no setup-qr shot"; fail=1; }
+    if command -v zbarimg >/dev/null 2>&1; then
+        zbarimg -q --raw "$OUT/$size-setup-qr.png" 2>/dev/null | grep -q '^http://' || { echo "FAIL $size: the setup's QR code doesn't scan"; fail=1; }
+    fi
     for s in setup setup-tz setup-ra setup-name setup-pass setup-signed; do
         [ -s "$OUT/$size-$s.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }
     done

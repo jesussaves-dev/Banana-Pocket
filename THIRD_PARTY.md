@@ -8,6 +8,7 @@ Banana's own code (ui/src, system/, buildroot/package, tools/) is under the MIT 
 | Inter (the layout themes' "inter" faces) | ui/assets/banana/fonts | [rsms/inter](https://github.com/rsms/inter) v4.1 | SIL OFL 1.1 (fonts/Inter-LICENSE.txt) |
 | The BananaUI banana mark (redrawn as pixel art by tools/make-pixel-banana.py) | ui/assets/banana, the logo and boot animation | [JorreFog/helios](https://github.com/JorreFog/helios) app/src/main/res/drawable-nodpi/banana_mark.png | the same author's |
 | stb_image, stb_image_write | ui/third_party | [nothings/stb](https://github.com/nothings/stb) | public domain / MIT |
+| QR Code generator library (the web page's QR code) | ui/third_party/qrcodegen.{c,h} | [nayuki/QR-Code-generator](https://github.com/nayuki/QR-Code-generator) (C) | MIT |
 | The SM4450 hardware layer: kernel patches, the Retroid Pocket Classic device trees, the kernel config, the ADSP/WPSS/ACF/QCA firmware and the audio topology | buildroot/board/retroid-pocket-classic | [ROCKNIX](https://github.com/ROCKNIX/distribution) `next`, imported 2026-10-27 | GPL-2.0 |
 | Mesa (freedreno GL + Turnip), pinned and version-bumped so the Adreno 613 is supported | the image's Mesa; buildroot/buildroot-patches (mesa3d) | [Mesa](https://gitlab.freedesktop.org/mesa/mesa) | MIT |
 | The RPC joypad's RetroArch autoconfig | system/rootfs/usr/share/libretro/autoconfig/udev/Retroid Pocket Classic Gamepad.cfg | Banana's own, from the rsinput driver's mapping | MIT |

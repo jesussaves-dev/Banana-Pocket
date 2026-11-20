@@ -5,6 +5,9 @@
 #include "json.h"
 #include "i18n.h"
 #include "theme.h"
+extern "C" {
+#include "qrcodegen.h"
+}
 #include <algorithm>
 #include <dlfcn.h>
 #include <thread>
@@ -112,6 +115,12 @@ namespace banana
 		// text on it, and a dark amber for what the accent marks elsewhere ("Connected", "Press A again")
 		Color pick, pickBand, pickLow, pickEdge, onPick, onPickAccent;
 	};
+	// the web page's PIN file (BANANA_WEB_PIN moves it, for the headless test)
+	static std::string webPinPath()
+	{
+		const char* e = getenv("BANANA_WEB_PIN");
+		return e && *e ? e : "/run/banana/web.pin";
+	}
 	// Update's row: how many update packages wait in banana/updates on the card ("" for none); looked at once every
 	// 2 s at most (the list is drawn on every change)
 	static std::string updatesWaiting()
@@ -995,6 +1004,7 @@ namespace banana
 		if (page == KEYBOARD) return pressKeyboard(k);
 		if (page == UPDATES) return pressUpdates(k);
 		if (page == SETUP) return pressSetup(k);
+		if (page == QR) { page = qrBack; message.clear(); return MOVED; }	// any key closes it
 		if (page == STATES) return pressStates(k);
 		if (gamePage)
 		{
@@ -1020,6 +1030,7 @@ namespace banana
 			Result r = pressSoundTest(k);
 			if (r != NONE) return r;
 		}
+		if (k == Key::X && items[sel].key == "web") { qrBack = LIST; return openQr(); }
 		int g = groupOf(sel), b = groupStart(g), e = groupEnd(g);
 		switch (k)
 		{
@@ -1751,10 +1762,10 @@ namespace banana
 		if (cur.key == "web")
 		{
 			// the PIN is made when the server starts (web up); it is not kept anywhere but /run
-			std::string pin = readLine("/run/banana/web.pin");
+			std::string pin = readLine(webPinPath());
 			help = ip.empty() ? tr("The card's page for games, saves and updates. Not connected to Wi-Fi now.")
 				: pin.empty() ? tr("Games, saves and updates from a browser: banana.local or the address below.")
-				: tr("Open banana.local in a browser. PIN: ") + pin;
+				: tr("Open banana.local in a browser. PIN: ") + pin + tr(" X: QR code.");
 		}
 		if (cur.kind == Item::SOUNDTEST && stArmed) help = tr("Secret! Press Start.");
 		if (cur.key == "scrape" && scraping()) help = "Fetching covers and title screens. The menu shows them as they come, and it carries on if you leave this screen.";
@@ -1787,6 +1798,7 @@ namespace banana
 		if (page == KEYBOARD) { if (genesis) renderNameEntry(); else if (snes) renderPhoneBook(); else renderKeyboard(); return; }
 		if (page == UPDATES) { renderUpdates(); return; }
 		if (page == SETUP) { renderSetup(); return; }
+		if (page == QR) { renderQr(); return; }
 		if (page == STATES) { renderStates(); return; }
 		if (genesis && page == LIST) { renderOptions(); return; }
 		if (snes && page == LIST) { renderWorkshop(); return; }
@@ -3117,11 +3129,89 @@ namespace banana
 				setupDone();
 				return CLOSED;
 			}
+		case Key::X:
+			if (wsel != 4) return NONE;
+			qrBack = SETUP;
+			return openQr();
 		case Key::B: case Key::START:
 			setupDone();		// skipped: Settings > System > First-time setup brings it back
 			return CLOSED;
 		default: return NONE;
 		}
+	}
+
+	// ---- the web page's QR code ------------------------------------------------------------------------------
+	// A phone's camera opens the page: http://<ip> when the address is known (mDNS fails on some phones), else
+	// banana.local. Error correction H leaves room for a pixel banana in the middle (9x9 modules, under 10% of a
+	// version 3 code). The modules are encoded once, here; drawing only fills squares.
+	Settings::Result Settings::openQr()
+	{
+		if (readLine(webPinPath()).empty())
+		{
+			// the setup has no row for it: X switches the web page on, and the PIN is there a moment later
+			Item* w = nullptr;
+			for (auto& it : items) if (it.key == "web") w = &it;
+			if (qrBack != SETUP || !w || w->at == 1) { message = tr("Switch the web page on first."); return NONE; }
+			w->at = 1;
+			save(*w);
+			spawn("/usr/libexec/banana/web", "up");
+			message = tr("Web page starting. Press X again.");
+			return MOVED;
+		}
+		qrPin = readLine(webPinPath());
+		qrUrl = "http://" + (ip.empty() ? std::string("banana.local") : ip);
+		static uint8_t tmp[qrcodegen_BUFFER_LEN_FOR_VERSION(8)], buf[qrcodegen_BUFFER_LEN_FOR_VERSION(8)];
+		if (!qrcodegen_encodeText(qrUrl.c_str(), tmp, buf, qrcodegen_Ecc_HIGH, 1, 8, qrcodegen_Mask_AUTO, true)) return NONE;
+		qrN = qrcodegen_getSize(buf);
+		qrMods.assign((size_t)qrN * qrN, 0);
+		for (int y = 0; y < qrN; y++)
+			for (int x = 0; x < qrN; x++)
+				qrMods[(size_t)y * qrN + x] = qrcodegen_getModule(buf, x, y);
+		// the banana: K outline, Y flesh, anything else is the white it sits on
+		static const char* const banana[7] = { "......K", ".....KY", "....KYY", "...KYYK", ".KKYYK.", "KYYYK..", ".KKK..." };
+		int o = (qrN - 7) / 2;
+		for (int y = -1; y < 8; y++)
+			for (int x = -1; x < 8; x++)
+			{
+				char c = (y >= 0 && y < 7 && x >= 0 && x < 7) ? banana[y][x] : '.';
+				qrMods[(size_t)(o + y) * qrN + (o + x)] = c == 'K' ? 1 : c == 'Y' ? 2 : 0;
+			}
+		page = QR;
+		message.clear();
+		return MOVED;
+	}
+
+	void Settings::renderQr()
+	{
+		SPal p = pal(light);
+		be->beginScreen();
+		box("screen", false, 0, 0, 640, 480);
+		box("bubble", false, 18, 14, 604, 54);
+		text(tr("Web page"), true, 28, 0, 0, p.ink, false, 0, true);
+		text(tr("Web page"), true, 28, 22, 24, p.ink);
+		// be->fill takes device pixels (the panel is scaled), text and boxes logical ones: whole device pixels per module,
+		// the square centred in the left half (18..338) and between the title and the footer (80..420)
+		int quiet = 3, side = qrN + 2 * quiet;
+		int k = std::max(1, (int)std::floor(X(330) / side));
+		float S = side * k;
+		float x0 = std::round(X(178) - S / 2), y0 = std::round(X(250) - S / 2);
+		be->fill(x0, y0, S, S, Color(1, 1, 1, 1));
+		Color dark(0, 0, 0, 1), yellow(0.98f, 0.82f, 0.1f, 1);
+		for (int y = 0; y < qrN; y++)
+			for (int x = 0; x < qrN; x++)
+			{
+				unsigned char m = qrMods[(size_t)y * qrN + x];
+				if (m) be->fill(x0 + (x + quiet) * k, y0 + (y + quiet) * k, (float)k, (float)k, m == 2 ? yellow : dark);
+			}
+		float tx = 356;
+		text(tr("Scan with a phone"), true, 20, tx, 90, p.ink);
+		text(fit(qrUrl, true, 18, 266), true, 18, tx, 130, p.muted);
+		text(tr("PIN"), true, 18, tx, 190, p.muted);
+		text(qrPin, true, 44, tx, 214, p.ink);
+		float bw = faceWidth("B", tr("Back"));
+		face("B", tr("Back"), 18, bw);
+		footer(tr("The camera opens the page. Same Wi-Fi as the handheld; type the PIN there."), p.muted);
+		be->endScreen();
 	}
 
 	void Settings::renderSetup()
@@ -3141,7 +3231,7 @@ namespace banana
 			"" };
 		std::string gamesHelp = std::string("Games go in roms/<system> on the BANANA partition") +
 			(ip.empty() ? ", or over Wi-Fi with File sharing in the settings." : ", or at \\\\" + ip + "\\banana (Windows) or smb://" + ip + " with File sharing on.") +
-			(bios.empty() ? "" : " BIOS files go in bios/.");
+			(bios.empty() ? "" : " BIOS files go in bios/.") + " X: QR code for the web page.";
 		static const char* helps[SETUP_STEPS] = {
 			"Achievements, the clock and art need your home network. Press A to pick one and type its password.",
 			"The clock in the status bar, and the games' own clocks. Left and right change it.",

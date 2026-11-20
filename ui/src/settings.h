@@ -214,7 +214,14 @@ namespace banana
 		std::string about, wifiInfo, ip;
 
 		// the Wi-Fi pages: the networks around, and the keyboard for a password (settings-wifi.cpp)
-		enum Page { LIST, NETWORKS, KEYBOARD, UPDATES, SETUP, STATES } page = LIST;
+		enum Page { LIST, NETWORKS, KEYBOARD, UPDATES, SETUP, STATES, QR } page = LIST;
+		// the web page's QR code (settings.cpp): encoded once when it opens, drawn from the module bitmap
+		Page qrBack = LIST;
+		std::vector<unsigned char> qrMods;
+		int qrN = 0;
+		std::string qrUrl, qrPin;
+		Result openQr();
+		void renderQr();
 		// a game's own options: the LIST machinery, but a flat list (Emulator, Shader, Save states) for one game,
 		// opened from the library and closed back to the menu (there is no group grid behind it)
 		bool gamePage = false;

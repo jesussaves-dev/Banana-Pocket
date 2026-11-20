@@ -207,6 +207,12 @@
   "Web page": "Página web",
   "The card's page for games, saves and updates. Not connected to Wi-Fi now.": "La página de la tarjeta para juegos, partidas y actualizaciones. Sin Wi-Fi ahora.",
   "Games, saves and updates from a browser: banana.local or the address below.": "Juegos, partidas y actualizaciones desde un navegador: banana.local o la dirección de abajo.",
-  "Open banana.local in a browser. PIN: ": "Abre banana.local en un navegador. PIN: "
+  "Open banana.local in a browser. PIN: ": "Abre banana.local en un navegador. PIN: ",
+  " X: QR code.": " X: código QR.",
+  "Scan with a phone": "Escanea con el móvil",
+  "PIN": "PIN",
+  "The camera opens the page. Same Wi-Fi as the handheld; type the PIN there.": "La cámara abre la página. Misma Wi-Fi que la consola; escribe allí el PIN.",
+  "Switch the web page on first.": "Activa antes la página web.",
+  "Web page starting. Press X again.": "La página web arranca. Pulsa X otra vez."
 }
 }

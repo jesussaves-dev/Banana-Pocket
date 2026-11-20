@@ -26,8 +26,8 @@ WAYLAND_PROTOCOLS ?= $(shell d=$$($(PKG_CONFIG) --variable=pkgdatadir wayland-pr
 WLDIR = build/wayland
 WL_C = $(WLDIR)/xdg-shell-protocol.c $(WLDIR)/linux-dmabuf-unstable-v1-protocol.c $(WLDIR)/wayland-drm-protocol.c $(WLDIR)/viewporter-protocol.c
 WL_H = $(WLDIR)/xdg-shell-server-protocol.h $(WLDIR)/linux-dmabuf-unstable-v1-server-protocol.h $(WLDIR)/wayland-drm-server-protocol.h $(WLDIR)/viewporter-server-protocol.h
-WL_O = $(WL_C:.c=.o)
-override CXXFLAGS += -I$(WLDIR)
+WL_O = $(WL_C:.c=.o) $(WLDIR)/qrcodegen.o
+override CXXFLAGS += -I$(WLDIR) -Ithird_party
 
 $(WLDIR)/xdg-shell-protocol.c: $(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml
 	@mkdir -p $(WLDIR)
@@ -58,6 +58,11 @@ $(WLDIR)/wayland-drm-server-protocol.h: src/wayland/wayland-drm.xml
 # interface tables get internal linkage, and a separate CC would be the host's in the Buildroot package build)
 $(WLDIR)/%.o: $(WLDIR)/%.c
 	$(CXX) -x c $(shell $(PKG_CONFIG) --cflags wayland-server) -O2 -std=c11 -Wall -c $< -o $@
+
+# Nayuki's QR encoder (C, MIT) for the web page's QR code
+$(WLDIR)/qrcodegen.o: third_party/qrcodegen.c third_party/qrcodegen.h
+	@mkdir -p $(WLDIR)
+	$(CXX) -x c -O2 -std=c11 -Wall -c $< -o $@
 
 banana-ui: $(SRC) $(WL_O) $(WL_H) $(wildcard src/*.h src/wayland/*.xml)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $(SRC) $(WL_O) $(LDLIBS)

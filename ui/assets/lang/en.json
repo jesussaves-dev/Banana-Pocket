@@ -216,6 +216,12 @@
   "Web page": "Web page",
   "The card's page for games, saves and updates. Not connected to Wi-Fi now.": "The card's page for games, saves and updates. Not connected to Wi-Fi now.",
   "Games, saves and updates from a browser: banana.local or the address below.": "Games, saves and updates from a browser: banana.local or the address below.",
-  "Open banana.local in a browser. PIN: ": "Open banana.local in a browser. PIN: "
+  "Open banana.local in a browser. PIN: ": "Open banana.local in a browser. PIN: ",
+  " X: QR code.": " X: QR code.",
+  "Scan with a phone": "Scan with a phone",
+  "PIN": "PIN",
+  "The camera opens the page. Same Wi-Fi as the handheld; type the PIN there.": "The camera opens the page. Same Wi-Fi as the handheld; type the PIN there.",
+  "Switch the web page on first.": "Switch the web page on first.",
+  "Web page starting. Press X again.": "Web page starting. Press X again."
 }
 }
