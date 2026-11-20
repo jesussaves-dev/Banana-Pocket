@@ -312,6 +312,17 @@ echo 50 > /sys/class/power_supply/battery/capacity
 
 setsid sleep 600 & GAME=$!; sleep 0.1; echo $GAME > /run/banana/game.pid
 
+echo "2f. a running game keeps a resume marker, so a hang resumes it"
+rm -f /data/banana/resume /run/banana/shutting-down; : > /run/test/ra-cmds
+echo /data/roms/gba/Test.gba > /run/banana/game.path
+mkdir -p /data/retroarch; echo 'savestate_auto_save = "true"' > /data/retroarch/retroarch.cfg
+start "session_secs = 1"
+for i in $(seq 40); do [ -s /data/banana/resume ] && break; sleep 0.1; done
+grep -qx /data/roms/gba/Test.gba /data/banana/resume 2>/dev/null && ok "the marker names the running game" || bad "no marker while the game ran"
+grep -qx SAVE_STATE_AUTO /run/test/ra-cmds && ok "its state was saved with it" || bad "no state was requested"
+stop
+rm -f /data/banana/resume /data/retroarch/retroarch.cfg /run/banana/game.path
+
 echo "3. an RTC wake with enough battery goes back to sleep"
 echo 60 > /sys/class/power_supply/battery/capacity
 start "sleep_check_hours = 0.002"
@@ -422,7 +433,7 @@ stop
 
 echo "11. Quick resume on: the game writes its .auto state before it is stopped; a frozen game is not asked"
 mkdir -p /data/retroarch
-echo 'savestate_auto_save = "true"' > /data/retroarch/retroarch.cfg
+mkdir -p /data/retroarch; echo 'savestate_auto_save = "true"' > /data/retroarch/retroarch.cfg
 echo Charging > /sys/class/power_supply/battery/status
 echo 50 > /sys/class/power_supply/battery/capacity
 kill -CONT $GAME 2>/dev/null || true
@@ -432,7 +443,7 @@ start
 power
 asleep && ok "suspended" || bad "no suspend"
 grep -q '^SAVE_STATE_AUTO$' /run/test/ra-cmds && ok "the game was asked for its state" || bad "SAVE_STATE_AUTO not sent"
-grep -q 'state: saved before the sleep in .* ms (ok)' /data/banana/logs/sleep.log && ok "logged the answer" || bad "no saved-state line"
+grep -q 'state: saved in .* ms (ok)' /data/banana/logs/sleep.log && ok "logged the answer" || bad "no saved-state line"
 wake; sleep 0.2
 grep -q 'audio: the server is not ready' /data/banana/logs/sleep.log && bad "the wake waited out sound-ready" || ok "the wake found the server ready"
 grep -q '^AUDIO_REINIT$' /run/test/ra-cmds && ok "the game's audio was reinitialised" || bad "no AUDIO_REINIT"

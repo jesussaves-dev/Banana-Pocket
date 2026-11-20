@@ -73,7 +73,8 @@ static struct {
 	int autosleep_set;		/* autosleep_minutes was written down somewhere: it is asked for, not defaulted */
 	int hud;			/* the bridge: text inside a game, and the unplug pause */
 	char lang[8];			/* the bridge's language, from settings.conf (the menu's own choice) */
-} cfg = { "auto", 5, 8, 10, 2000, 3, "deep", 4, 5, 15, 2, 30, 600, 0, "", 0, 1, "en" };
+	int session_secs;		/* a running game's state and resume marker are refreshed this often (0: 180) */
+} cfg = { "auto", 5, 8, 10, 2000, 3, "deep", 4, 5, 15, 2, 30, 600, 0, "", 0, 1, "en", 0 };
 
 /* a suspend step named in sleep_skip: only ever set by hand (banana/bananad.conf), to bisect a sleep that comes straight
  * back on the handheld without rebuilding bananad */
@@ -148,6 +149,7 @@ static void load_conf(const char *path, int asked)
 		else if (!strcmp(k, "mem_sleep")) snprintf(cfg.mem_sleep, sizeof cfg.mem_sleep, "%s", v);
 		else if (!strcmp(k, "sleep_check_hours")) cfg.sleep_check_hours = atof(v);
 		else if (!strcmp(k, "sleep_poweroff_percent")) cfg.sleep_poweroff_pct = atoi(v);
+		else if (!strcmp(k, "session_secs")) cfg.session_secs = atoi(v);
 		else if (!strcmp(k, "sleep_floor_percent")) cfg.sleep_floor_pct = atoi(v);
 		else if (!strcmp(k, "dim_minutes")) cfg.dim_min = atof(v);
 		else if (!strcmp(k, "dim_percent")) cfg.dim_pct = atoi(v);
@@ -776,9 +778,9 @@ static int msc_rw(void)
  * frozen by the pause menu is asked over the stdin FIFO (SAVE_STATE_AUTO, patch 0015) and answers in
  * /run/banana/autosave; bounded, so a wedged game costs a second and a half of the sleep, never the sleep. Only with
  * Quick resume on (the same key that makes RetroArch write it at quit). */
-static void sleep_save_state(pid_t game)
+static int sleep_save_state(pid_t game)
 {
-	if (!game || skip("state")) return;
+	if (!game || skip("state")) return 0;
 	char buf[64] = "";
 	FILE *f = fopen("/data/retroarch/retroarch.cfg", "r");
 	int on = 0;
@@ -788,33 +790,53 @@ static void sleep_save_state(pid_t game)
 			if (!strncmp(line, "savestate_auto_save ", 20)) on = strstr(line, "\"true\"") != NULL;
 		fclose(f);
 	}
-	if (!on) return;
+	if (!on) return 0;
 	char path[48];
 	snprintf(path, sizeof path, "/proc/%d/stat", (int)game);
 	f = fopen(path, "r");
-	if (!f) return;
+	if (!f) return 0;
 	char st[256] = "";
 	if (fgets(st, sizeof st, f)) {
 		char *rp = strrchr(st, ')');
-		if (rp && rp[1] == ' ' && rp[2] == 'T') { fclose(f); return; }	/* the pause menu froze it: it cannot answer */
+		if (rp && rp[1] == ' ' && rp[2] == 'T') { fclose(f); return 0; }	/* the pause menu froze it: it cannot answer */
 	}
 	fclose(f);
 	unlink("/run/banana/autosave");
 	double t = mono();
-	if (!ra_cmd("SAVE_STATE_AUTO")) return;
+	if (!ra_cmd("SAVE_STATE_AUTO")) return 0;
 	for (;;) {
 		f = fopen("/run/banana/autosave", "r");
 		if (f) {
 			if (fgets(buf, sizeof buf, f) && buf[0]) {
 				fclose(f);
-				sleep_log("state: saved before the sleep in %.0f ms (%s)", (mono() - t) * 1000, strtok(buf, "\n"));
-				return;
+				int ok = !strncmp(buf, "ok", 2);
+				sleep_log("state: saved in %.0f ms (%s)", (mono() - t) * 1000, strtok(buf, "\n"));
+				return ok;
 			}
 			fclose(f);
 		}
-		if (mono() - t > 1.5) { sleep_log("state: no answer from the game after 1500 ms: sleeping anyway"); return; }
+		if (mono() - t > 1.5) { sleep_log("state: no answer from the game after 1500 ms: sleeping anyway"); return 0; }
 		sleep_us(20000);
 	}
+}
+
+/* Sessions that survive a hang: while a RetroArch game runs, every 180 s (session_secs) its automatic state is written
+ * and /data/banana/resume names the ROM (the menu's "resume?" card at the next boot, the state loaded by Quick
+ * resume). The menu clears the marker when the game quits to it, so only a hang, a crash of the whole handheld or a
+ * pulled battery leaves it behind. Written whole and renamed, so a cut during the write leaves the old one. */
+static void session_tick(void)
+{
+	char rom[PATH_MAX] = "";
+	pid_t game = pid_of("/run/banana/game.pid");
+	read_str("/run/banana/game.path", rom, sizeof rom);
+	if (!game || !rom[0] || access("/run/banana/shutting-down", F_OK) == 0) return;
+	if (!sleep_save_state(game)) return;	/* no state, no point promising a resume */
+	FILE *f = fopen("/data/banana/resume.tmp", "w");
+	if (!f) return;
+	int ok = fprintf(f, "%s\n", rom) > 0;
+	ok = fflush(f) == 0 && fsync(fileno(f)) == 0 && ok;
+	ok = fclose(f) == 0 && ok;
+	if (!ok || rename("/data/banana/resume.tmp", "/data/banana/resume") < 0) unlink("/data/banana/resume.tmp");
 }
 
 /* ---- standby: the SoC awake behind a dark panel ------------------------------------------------------------------- */
@@ -2772,7 +2794,7 @@ int main(int argc, char **argv)
 	vibrator_load();	/* so the plug-in's pulse has a motor to use (the module is not loaded at boot) */
 	power_update();
 	last_input = mono();
-	double next_battery = 0;
+	double next_battery = 0, next_session = 0;
 	int low_count = 0;
 	say("running: auto-sleep %d min, %s%s", cfg.autosleep_min, cfg.mem_sleep,
 	    rtc_wake_possible() ? "" : ", no RTC wake alarm (only power/charger wakes it)");
@@ -2792,6 +2814,7 @@ int main(int argc, char **argv)
 		 * at again every 5 s, so the idle sleep comes once it is over */
 		int awake = pid_of("/run/banana/awake.pid") != 0;
 		if (awake && wait > 5) wait = 5;
+		if (game && next_session - tnow < wait) wait = next_session - tnow;	/* the session's save (below) */
 		/* (only deadlines still ahead: one already passed was acted on after the last poll, or is held back by what
 		 * the action checks (the charger, no backlight) and a uevent or an input event brings it back; counted
 		 * here it spun this loop every 20 ms, on the charger for as long as the menu sat idle) */
@@ -2880,6 +2903,8 @@ int main(int argc, char **argv)
 		    !pid_of("/run/banana/awake.pid"))
 			suspend_now("idle");
 
+		if (!game) next_session = now + (cfg.session_secs > 0 ? cfg.session_secs : 180);
+		else if (now >= next_session) { next_session = now + (cfg.session_secs > 0 ? cfg.session_secs : 180); session_tick(); }
 		usb_housekeeping(now);	/* log the Type-C roles; re-bind a gadget a role flip cleared */
 		if (now >= next_battery) {
 			next_battery = now + 60;

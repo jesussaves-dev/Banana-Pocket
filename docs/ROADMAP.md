@@ -32,9 +32,10 @@ goes into 1.0.1, not into a delay.
    `/data/banana/allow-unsigned` exists. Done: public key committed, `openssl` in the image, key backed up (NAS,
    2026-11-20), and on the handheld a tampered `sha256sums` and a missing `.sig` are refused before any slot write.
    Left: the first signed release must go out as a full flash; then apply a signed package for real.
-4. **Sessions survive a hang (M):** two alternating hidden state slots on a timer, a fsynced journal in
-   `/data/banana/sessions.tsv`, and a "cut off 4 minutes ago, resume?" card at boot. Quick resume today saves only on a
-   clean quit (`run-retroarch:378`).
+4. **Sessions survive a hang (M):** done in software, untested on hardware. While a RetroArch game runs, `bananad` asks
+   for its automatic state every 180 s (`session_secs`) and rewrites `/data/banana/resume` (fsync + rename); the
+   menu's existing "resume?" card and Quick resume's auto-load pick it up after a hang or a pulled battery, and a clean
+   quit clears it. Left: alternating state slots and a "cut off N minutes ago" line on the card.
 5. **Recovery screen without Android (M):** hold a button at power-on: boot the other slot, reset settings, fsck `/data`,
    transfer mode.
 6. **Fresh-card welcome (S):** where ROMs go, the share and `banana.local` address with a QR code, missing BIOS files.
