@@ -52,6 +52,14 @@ namespace rnds
 		bool fav = false;
 	};
 
+	// the game page's facts, read when a page opens (not for every game of the list)
+	struct Ach { std::string title, desc, badge; int points = 0; bool won = false; };
+	struct GamePage
+	{
+		std::string desc, dev, pub, players, genre, year;
+		std::vector<Ach> achs;		// the last full set RetroArch dumped for the game (empty: none yet)
+	};
+
 	class Source
 	{
 	public:
@@ -60,6 +68,7 @@ namespace rnds
 		virtual SysInfo system(int i) = 0;
 		virtual int gameCount() = 0;			// the library's list (the current system)
 		virtual GameInfo game(int i) = 0;
+		virtual GamePage page(int /*i*/) { return GamePage(); }
 		virtual std::string clockText() = 0;	// "01:01 PM" / "13:01"
 		virtual std::string dateText() = 0;		// "10/02"
 		virtual float battery() = 0;			// 0..1, < 0 unknown

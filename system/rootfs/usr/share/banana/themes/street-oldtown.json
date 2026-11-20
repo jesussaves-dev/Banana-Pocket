@@ -232,6 +232,54 @@
         { "type": "list", "source": "hints", "direction": "row", "x": 8, "y": 254, "w": 294, "h": 13, "gap": 6, "flow": true, "scrollMode": "none",
           "justify": "between", "item": { "use": "pill" } }
       ]
+    },
+
+    // X on a game: its page, the shop's back-room card. Left/Right the neighbouring game, Up/Down the achievements.
+    "game": {
+      "top": [
+        // the street behind (held still), and the card on a paper sheet over it
+        { "type": "image", "src": "{art}/{phase}/sky.png", "fit": "pixel", "x": 0, "y": 0, "w": 310, "h": 184 },
+        { "type": "image", "src": "{art}/{phase}/far.png", "fit": "pixel", "x": 0, "y": 0, "w": 640, "h": 184 },
+        { "type": "rect", "x": 0, "y": 178, "w": 310, "h": 1, "fill": "=paper" },
+        { "type": "image", "src": "{art}/{phase}/band0.png", "fit": "pixel", "x": 0, "y": 179, "w": 392, "h": 7 },
+        { "type": "image", "src": "{art}/{phase}/band1.png", "fit": "pixel", "x": 0, "y": 186, "w": 396, "h": 10 },
+        { "type": "image", "src": "{art}/{phase}/band2.png", "fit": "pixel", "x": 0, "y": 196, "w": 384, "h": 13 },
+        { "type": "image", "src": "{art}/{phase}/band3.png", "fit": "pixel", "x": 0, "y": 209, "w": 390, "h": 17 },
+        { "type": "image", "src": "{art}/hud.png", "fit": "pixel", "x": 0, "y": 224, "w": 310, "h": 46 },
+        { "type": "rect", "x": 6, "y": 24, "w": 298, "h": 198, "fill": "=paper", "border": 1, "borderColor": "=ink" },
+        { "type": "image", "src": "{sys.icon}", "fit": "pixel", "x": 60, "y": 3, "w": 16, "h": 16 },
+        { "type": "text", "size": 12, "x": 80, "y": 5, "w": 146, "text": "{sys.name}", "color": "=gold", "shadow": { "x": 1, "y": 1, "color": "=hudLo" } },
+        { "type": "image", "src": "{game.art}", "fallback": "{sys.icon}", "x": 12, "y": 32, "w": 82, "h": 104,
+          "fit": "=boxLook == 'original' ? 'contain' : 'ditherContain'" },
+
+        // the card: the name, then what is known of it
+        { "type": "text", "size": 12, "x": 104, "y": 30, "w": 200, "text": "{game.title}", "color": "=ink", "wrap": true, "maxLines": 2 },
+        { "type": "text", "size": 12, "x": 104, "y": 58, "w": 200, "text": "{game.sub}", "color": "=dk" },
+        { "type": "text", "size": 12, "x": 104, "y": 72, "w": 200, "text": "{page.developer}", "color": "=ink", "visible": "=page.developer != ''" },
+        { "type": "text", "size": 12, "x": 104, "y": 86, "w": 200, "text": "{page.publisher}", "color": "=ink", "visible": "=page.publisher != ''" },
+        { "type": "text", "size": 12, "x": 104, "y": 100, "w": 200, "text": "{page.players}P", "color": "=ink", "visible": "=page.players != ''" },
+        { "type": "text", "size": 12, "x": 104, "y": 112, "w": 200, "text": "{game.plays} plays  {game.time}", "color": "=dk" },
+        { "type": "text", "size": 12, "x": 104, "y": 125, "w": 200, "text": "Last {game.last}", "color": "=dk", "visible": "=game.plays != '0'" },
+        { "type": "image", "src": "fav.png", "fit": "pixel", "right": 8, "y": 30, "w": 8, "h": 8, "visible": "=game.fav" },
+
+        { "type": "text", "size": 12, "x": 12, "y": 140, "w": 286, "text": "{page.desc}", "color": "=ink", "wrap": true, "maxLines": 2,
+          "visible": "=page.desc != ''" },
+
+        // the achievements: the whole set when RetroArch has dumped one, won first
+        { "type": "text", "size": 12, "x": 12, "y": 168, "w": 286, "text": "{page.achWon} / {page.achCount} achievements", "color": "=ink",
+          "visible": "=page.achCount > 0" },
+        { "type": "text", "size": 12, "x": 12, "y": 168, "w": 286, "text": "No achievements yet", "color": "=dk", "visible": "=page.achCount == 0" },
+        { "type": "list", "source": "achievements", "direction": "column", "x": 12, "y": 181, "w": 286, "h": 40, "itemH": 14, "gap": 1,
+          "scrollMode": "edge", "clip": true,
+          "item": { "type": "group", "w": 286, "h": 14, "children": [
+            { "type": "image", "src": "{item.badge}", "fit": "contain", "x": 0, "y": 1, "w": 12, "h": 12, "visible": "=item.badge != ''" },
+            { "type": "text", "size": 12, "x": 16, "y": 1, "w": 236, "text": "{item.title}", "color": "=item.won ? ink : dk" },
+            { "type": "text", "size": 12, "right": 0, "y": 1, "w": 30, "align": "right", "text": "{item.points}", "color": "=sel ? ink : dk" }
+          ] } },
+
+        { "type": "list", "source": "hints", "direction": "row", "x": 8, "y": 254, "w": 294, "h": 13, "gap": 6, "flow": true, "scrollMode": "none",
+          "justify": "between", "item": { "use": "pill" } }
+      ]
     }
   }
 }

@@ -10,13 +10,18 @@ rarity, title, description, badge path. It goes to a temporary file and is
 renamed into place, so a reader never sees half a set. Like the rest of 0013,
 a failure writes nothing and the emulator carries on.
 ---
+
+Only the game's core set is listed -- the one the website counts and the card's
+"<unlocked> <total>" is taken over -- not its extra subsets, and not the
+placeholder RetroAchievements gives an unsupported ROM.
+
 --- a/cheevos/cheevos.c
 +++ b/cheevos/cheevos.c
-@@ -351,6 +351,76 @@
+@@ -394,6 +394,76 @@
     fclose(f);
  }
  
-+/* the whole set, for the game page: one line per achievement, tab-separated:
++/* the whole core set, for the game page: one line per achievement, tab-separated:
 + *   id <TAB> unlocked (0/1) <TAB> points <TAB> rarity <TAB> title <TAB> description <TAB> badge
 + * where badge is the full path of the unlocked badge PNG (the locked picture is the same name with "_lock" before the
 + * ".png"). Written to a temporary file and renamed, so the menu never reads half a set. Called as the game loads and at
@@ -58,13 +63,13 @@ a failure writes nothing and the emulator carries on.
 +   {
 +      const rc_client_achievement_bucket_t* bucket = &list->buckets[b];
 +
-+      /* the unsupported ones can't be won here, so they are not part of the set the game page counts */
-+      if (bucket->bucket_type == RC_CLIENT_ACHIEVEMENT_BUCKET_UNSUPPORTED)
-+         continue;
-+
 +      for (i = 0; i < bucket->num_achievements; i++)
 +      {
 +         const rc_client_achievement_t* a = bucket->achievements[i];
++
++         /* the same ones the card counts: the core set, none of the unsupported, none of RA's placeholders */
++         if (!banana_cheevos_wanted(list, bucket, a))
++            continue;
 +
 +         banana_cheevos_clean(title, sizeof(title), a->title);
 +         banana_cheevos_clean(description, sizeof(description), a->description);
@@ -89,15 +94,15 @@ a failure writes nothing and the emulator carries on.
  /* one unlock: the progress above, then the line the menu's toast is built from */
  static void banana_cheevos_awarded(const rc_client_achievement_t* cheevo)
  {
-@@ -363,6 +433,7 @@
+@@ -407,6 +477,7 @@
        return;
  
     banana_cheevos_progress();
 +   banana_cheevos_set();
  
-    rc_client_get_user_game_summary(rcheevos_locals.client, &summary);
+    banana_cheevos_count(&unlocked, &total);
  
-@@ -1528,6 +1599,7 @@
+@@ -1572,6 +1643,7 @@
     rcheevos_show_game_placard();
     /* Banana: the game's progress as it starts, so the menu's card is right for a play that unlocks nothing */
     banana_cheevos_progress();

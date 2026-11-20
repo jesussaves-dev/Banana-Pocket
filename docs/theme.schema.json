@@ -108,11 +108,12 @@
     "behavior": { "$ref": "#/$defs/behavior" },
     "screens": {
       "type": "object",
-      "description": "The menu's screens. Each is { \"top\": [...], \"bottom\": [...] } (an array of elements, or a single element). \"launch\" is optional: the library's screens are used if it is missing. \"all\" is drawn over every view (a status bar).",
+      "description": "The menu's screens. Each is { \"top\": [...], \"bottom\": [...] } (an array of elements, or a single element). \"launch\" is optional: the library's screens are used if it is missing. \"game\" is the game page X opens (page.* fields, an \"achievements\" list); a theme without it keeps X as the game's options. \"all\" is drawn over every view (a status bar).",
       "properties": {
         "home": { "$ref": "#/$defs/screen" },
         "library": { "$ref": "#/$defs/screen" },
         "launch": { "$ref": "#/$defs/screen" },
+        "game": { "$ref": "#/$defs/screen" },
         "all": { "$ref": "#/$defs/screen" }
       },
       "additionalProperties": false
@@ -369,7 +370,7 @@
         "source": {
           "description": "A list's data.",
           "anyOf": [
-            { "enum": ["systems", "games", "hints", "range"] },
+            { "enum": ["systems", "games", "achievements", "hints", "range"] },
             { "type": "string", "pattern": "^\\s*(=|\\{)", "description": "An =expression or {template} that yields one of the values above." }
           ]
         },

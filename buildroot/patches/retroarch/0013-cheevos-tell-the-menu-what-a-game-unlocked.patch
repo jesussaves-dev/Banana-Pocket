@@ -24,6 +24,12 @@ fall back to the handheld's usual /run/banana ones). Both files are only ever
 written here. A missing file, a full card or an unwritable /run writes nothing,
 and the game carries on: nothing about this may change the emulator's own
 behaviour.
+
+The counts are taken over the game's own set -- the achievements the website
+counts -- so RetroAchievements' placeholder for an unsupported ROM (id 101000000
+and up) is not an unlock and not part of the total, and a game's extra subsets
+are not added to it.
+
 --- a/cheevos/cheevos.c
 +++ b/cheevos/cheevos.c
 @@ -16,6 +16,8 @@
@@ -35,7 +41,7 @@ behaviour.
  
  #include <file/file_path.h>
  #include <string/stdstring.h>
-@@ -287,6 +289,103 @@
+@@ -287,6 +289,147 @@
     }
  }
  
@@ -84,20 +90,63 @@ behaviour.
 +   out[i] = '\0';
 +}
 +
-+/* the game's progress, as the menu's card shows it ("<unlocked>/<total>") */
++/* What the menu counts: the game's own (core) set. RetroAchievements gives a game it can't identify, or an ROM it
++ * hasn't tested, a placeholder achievement with an id from 101000000 up ("Unsupported Game Version"): it is not
++ * something to win, so it is neither listed nor counted. A game with subsets lists them too, but the website's count
++ * (and the card's) is the core set. The list is built subset by subset with the core set first, so its subset id is
++ * the first bucket's; a single-set game's buckets all say subset 0. */
++#define BANANA_CHEEVOS_SYSTEM_ID 101000000u
++
++static bool banana_cheevos_wanted(const rc_client_achievement_list_t* list,
++      const rc_client_achievement_bucket_t* bucket, const rc_client_achievement_t* a)
++{
++   if (bucket->bucket_type == RC_CLIENT_ACHIEVEMENT_BUCKET_UNSUPPORTED)
++      return false;
++   if (bucket->subset_id != list->buckets[0].subset_id)
++      return false;
++   return a->id < BANANA_CHEEVOS_SYSTEM_ID;
++}
++
++/* the game's progress, as the menu's card shows it ("<unlocked>/<total>"), counted over the same achievements the
++ * game page lists so that the two always agree */
++static bool banana_cheevos_count(uint32_t* unlocked, uint32_t* total)
++{
++   rc_client_achievement_list_t* list;
++   uint32_t b, i;
++
++   *unlocked = *total = 0;
++   if (!rcheevos_locals.client)
++      return false;
++
++   list = rc_client_create_achievement_list(rcheevos_locals.client,
++         RC_CLIENT_ACHIEVEMENT_CATEGORY_CORE,
++         RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_LOCK_STATE);
++   if (!list)
++      return false;
++   for (b = 0; b < list->num_buckets; b++)
++      for (i = 0; i < list->buckets[b].num_achievements; i++)
++      {
++         const rc_client_achievement_t* a = list->buckets[b].achievements[i];
++         if (!banana_cheevos_wanted(list, &list->buckets[b], a))
++            continue;
++         (*total)++;
++         if (a->unlocked)
++            (*unlocked)++;
++      }
++   rc_client_destroy_achievement_list(list);
++   return true;
++}
++
 +static void banana_cheevos_progress(void)
 +{
-+   rc_client_user_game_summary_t summary;
++   uint32_t unlocked, total;
 +   FILE* f;
 +
-+   if (!rcheevos_locals.client)
++   if (!banana_cheevos_count(&unlocked, &total))
 +      return;
-+
-+   rc_client_get_user_game_summary(rcheevos_locals.client, &summary);
 +   if (!(f = fopen(banana_cheevos_path("BANANA_RA_PROGRESS", BANANA_PROGRESS_FILE), "w")))
 +      return;
-+   fprintf(f, "%d %d\n", (int)summary.num_unlocked_achievements,
-+         (int)summary.num_core_achievements);
++   fprintf(f, "%u %u\n", (unsigned)unlocked, (unsigned)total);
 +   fclose(f);
 +}
 +
@@ -105,16 +154,17 @@ behaviour.
 +static void banana_cheevos_awarded(const rc_client_achievement_t* cheevo)
 +{
 +   settings_t* settings = config_get_ptr();
-+   rc_client_user_game_summary_t summary;
++   uint32_t unlocked, total;
 +   char title[256], description[512], badge[PATH_MAX_LENGTH];
 +   FILE* f;
 +
-+   if (!cheevo || !rcheevos_locals.client || !settings)
++   /* the placeholder is awarded the moment it loads and is not an unlock */
++   if (!cheevo || !rcheevos_locals.client || !settings || cheevo->id >= BANANA_CHEEVOS_SYSTEM_ID)
 +      return;
 +
 +   banana_cheevos_progress();
 +
-+   rc_client_get_user_game_summary(rcheevos_locals.client, &summary);
++   banana_cheevos_count(&unlocked, &total);
 +
 +   banana_cheevos_clean(title, sizeof(title), cheevo->title);
 +   banana_cheevos_clean(description, sizeof(description), cheevo->description);
@@ -128,7 +178,7 @@ behaviour.
 +   if (!(f = fopen(banana_cheevos_path("BANANA_RA_CHEEVOS", BANANA_CHEEVOS_FILE), "a")))
 +      return;
 +   fprintf(f, "%d\t%d\t%s\t%s\t%u\t%.2f\t%s\n",
-+         (int)summary.num_unlocked_achievements, (int)summary.num_core_achievements,
++         (int)unlocked, (int)total,
 +         title, description, (unsigned)cheevo->points,
 +         rc_client_get_hardcore_enabled(rcheevos_locals.client)
 +               ? (double)cheevo->rarity_hardcore : (double)cheevo->rarity,
@@ -139,7 +189,7 @@ behaviour.
  static void rcheevos_award_achievement(const rc_client_achievement_t* cheevo)
  {
     const settings_t* settings = config_get_ptr();
-@@ -568,6 +667,9 @@
+@@ -568,6 +711,9 @@
        break;
  #endif
     case RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED:
@@ -149,7 +199,7 @@ behaviour.
        rcheevos_award_achievement(event->achievement);
        break;
     case RC_CLIENT_EVENT_LEADERBOARD_STARTED:
-@@ -1424,6 +1526,8 @@
+@@ -1424,6 +1570,8 @@
  static void rcheevos_finalize_game_load_on_ui_thread(void)
  {
     rcheevos_show_game_placard();

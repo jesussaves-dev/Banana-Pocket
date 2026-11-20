@@ -55,6 +55,7 @@ script.
     "home":    { "top": [ ...elements... ], "bottom": [ ... ] },
     "library": { "top": [ ... ], "bottom": [ ... ] },
     "launch":  { "top": [ ... ], "bottom": [ ... ] },   // optional: the library's screens are used if it is missing
+    "game":    { "top": [ ... ] },   // optional: the game page X opens; without it X opens the game's options
     "all":     { "top": [ ... ] }                       // drawn over every view (a status bar)
   }
 }
@@ -119,7 +120,7 @@ Colours are `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, `rgb(...)`, `rgba(...)`, `t
 
 | name | |
 |---|---|
-| `view` | `"home"`, `"library"` or `"launch"` |
+| `view` | `"home"`, `"library"`, `"game"` or `"launch"` |
 | `W`, `H`, `screen` | the screen's size in units (640 wide, as tall as the panel allows), and its index: 0 for the screen (the engine's `top`); 1 is the second `bottom` screen, unused on this handheld |
 | `time` | ms since the menu started. Using it redraws continuously at `behavior.fps`, so use it only for things that really move all the time |
 | `phase` | the time of day for a street-style theme's art: `"dawn"` (5-8), `"day"` (8-17), `"dusk"` (17-20) or `"night"`, from the local hour, read when the clock's minute turns. `BANANA_PHASE` pins it (tests, previews) |
@@ -135,7 +136,8 @@ Colours are `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, `rgb(...)`, `rgba(...)`, `t
 | `empty`, `empty.title`, `empty.hint` | a library with no games, and what to say about it |
 | `systems.count`, `games.count` | |
 | `sys.*` | the selected system (`newBlock`: the first of its maker's run on the shelf): `id name maker newBlock color icon games played time achA achB achLabel achProgress fav app hasResume resumeTitle resumeEyebrow resumeArt resumeBox resumeCart resumeLabel index` |
-| `game.*` | the selected game (library and launch): `title sub plays last time art box cart label icon achA achB achLabel achProgress fav index systemId systemName` |
+| `page.*` | the open game page (view `game`): `desc developer publisher players genre year achCount achWon`; a list `source: "achievements"` gives `item.title desc badge points won` (won first) |
+| `game.*` | the selected game (library, game and launch): `title sub plays last time art box cart label icon achA achB achLabel achProgress fav index systemId systemName` |
 | `item.*`, `i`, `n`, `sel`, `rel`, `pos`, `first`, `last`, `ix`, `iy` | inside a list item: its own system's or game's fields (as above; `key label` for hints), its index, the count, whether it is selected, its distance from the selection (`rel` whole, `pos` eased), and where the list put it |
 | your `vars`, a component's `with` | |
 

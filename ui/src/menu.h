@@ -9,7 +9,7 @@ namespace banana
 	class Menu
 	{
 	public:
-		enum View { HOME, LIBRARY, LAUNCH };
+		enum View { HOME, LIBRARY, LAUNCH, GAME };
 		enum Button { LEFT, RIGHT, UP, DOWN, A, B, X, Y, L, R };
 		virtual ~Menu() {}
 		virtual void setHome(int sys) = 0;
@@ -19,6 +19,8 @@ namespace banana
 		virtual int systemIndex() const = 0;
 		virtual int gameIndex() const = 0;
 		virtual bool press(Button b) = 0;
+		// X on a game: its page (the theme's "game" screen) over the library; false when the theme has none
+		virtual bool openPage() { return false; }
 		virtual void jumpTo(int game) = 0;	// the library's cursor straight to a game (the shoulder-button letter jump)
 		virtual bool touch(float x, float y, bool down) = 0;
 		virtual bool touchMove(float x, float y) = 0;

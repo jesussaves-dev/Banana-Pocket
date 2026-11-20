@@ -948,10 +948,19 @@ int main(int argc, char** argv)
 			dirty = true;
 			return;
 		}
-		if (ev.type == InputEvent::PRESS && ev.key == Key::X && ui->view() == Menu::LIBRARY)
+		if (ev.type == InputEvent::PRESS && ev.key == Key::X && (ui->view() == Menu::LIBRARY || ui->view() == Menu::GAME))
 		{
-			// X on a game: its own options (the core and shader it runs with), over the library
+			// X on a game: its page when the theme has one; X on the page, or on a game of a theme without one: its own
+			// options (the core and shader it runs with), over the library
 			std::lock_guard<std::mutex> l(worker.uiLock);
+			if (ui->view() == Menu::LIBRARY && ui->openPage())
+			{
+				logf("press x: game page open");
+				rep.key = Key::NONE;
+				sound.play("select");
+				dirty = true;
+				return;
+			}
 			int g = ui->gameIndex();
 			const SystemDef& sd = lib.systemOf(g);
 			std::string rel = lib.gameAt(g).rel;

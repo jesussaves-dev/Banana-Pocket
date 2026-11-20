@@ -396,6 +396,32 @@ for size in 640x557; do
         [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ] || { echo "FAIL $size: $f is blank"; fail=1; }
     done
     for s in home lib; do golden "street-$s" "$OUT/$size-street-$s.png"; done
+    # X on a game: the street's game page (a theme with a "game" screen): the gamelist's facts and the achievement set
+    # the last run left (<data>/cheevos/<system>/<rel>.tsv). Up/Down the achievements, X on the page the options (the
+    # old X), B closes the options and then the page; a theme without the screen keeps X as the options (xgame above).
+    pglog=$OUT/$size-street-page.log
+    mkdir -p "$FX/data/cheevos/ngp"
+    printf '1\t1\t10\t40\tFirst Peel\tPeel a banana\t/nonexistent.png\n2\t0\t25\t5\tGolden Skin\tFinish with every banana\t/nonexistent.png\n3\t1\t5\t60\tSlip Up\tSlip once\t\n' \
+        > "$FX/data/cheevos/ngp/Banana Kart.ngp.tsv"
+    cat > "$FX/roms/ngp/gamelist.xml" <<'XML'
+<gameList><game><path>./Banana Kart.ngp</path><name>Banana Kart</name><desc>A kart race on a peel-slick course, built to show the page.</desc><developer>Peel Works</developer><publisher>Crate Games</publisher><players>1-2</players></game></gameList>
+XML
+    sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/street.json|" "$FX/data/settings.conf"
+    BANANA_PHASE=dusk "$HERE/banana-ui" --headless "$OUT/$size-street-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+        --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "lib 0 0; press x; wait 600; shot page; press down; wait 300; shot page2; press x; wait 300; press b; press b; wait 1" \
+        2> "$pglog" || { echo "FAIL $size: banana-ui (street page) exited $?"; fail=1; }
+    sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    rm -rf "$FX/data/cheevos" "$FX/roms/ngp/gamelist.xml"
+    grep -q "press x: game page open" "$pglog" || { echo "FAIL $size: X did not open the street's game page"; fail=1; }
+    grep -q "press x: game options open" "$pglog" || { echo "FAIL $size: X on the page did not open the options"; fail=1; }
+    grep -q "press b: used, view 1 " "$pglog" || { echo "FAIL $size: B on the page did not go back to the library: $(grep 'press b' "$pglog")"; fail=1; }
+    for s in page page2; do
+        f=$OUT/$size-street-$s.png
+        [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
+        [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ] || { echo "FAIL $size: $f is blank"; fail=1; }
+    done
+    golden "street-page" "$OUT/$size-street-page.png"
     # halfway through the launch the street's mosaic has the picture in square blocks (8 to 16 units, 32 to 64 px
     # here): the shot equals itself sampled down to one pixel a block and back up, for one of those block sizes
     f=$OUT/$size-street-launch.png; mos=0

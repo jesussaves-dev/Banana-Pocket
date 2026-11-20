@@ -1014,6 +1014,48 @@ namespace banana
 		return r;
 	}
 
+	// The game page's facts: the gamelist/DAT fields, and the achievement set RetroArch dumped on the game's last run
+	// (patch 0016; main.cpp keeps the copy at <data>/cheevos/<system>/<rel>.tsv): id, unlocked, points, rarity, title,
+	// description, badge path (the locked picture is the same name with _lock before .png)
+	rnds::GamePage Library::page(int i)
+	{
+		rnds::GamePage r;
+		if (i < 0 || i >= gameCount()) return r;
+		const Game& g = shelves[lib].games[i];
+		r.desc = g.desc; r.dev = g.dev; r.pub = g.pub; r.players = g.players; r.genre = g.genre; r.year = g.year;
+		std::ifstream f(dataDir + "/cheevos/" + systemOf(i).id + "/" + g.rel + ".tsv");
+		for (std::string line; std::getline(f, line);)
+		{
+			std::vector<std::string> fld;
+			for (size_t a = 0, b; ; a = b + 1)
+			{
+				b = line.find('\t', a);
+				fld.push_back(line.substr(a, b == std::string::npos ? std::string::npos : b - a));
+				if (b == std::string::npos) break;
+			}
+			if (fld.size() < 5 || fld[4].empty()) continue;
+			rnds::Ach a;
+			a.won = fld[1] == "1";
+			a.points = atoi(fld[2].c_str());
+			a.title = fld[4];
+			if (fld.size() > 5) a.desc = fld[5];
+			if (fld.size() > 6 && !fld[6].empty())
+			{
+				a.badge = fld[6];
+				if (!a.won && a.badge.size() > 4 && a.badge.compare(a.badge.size() - 4, 4, ".png") == 0)
+				{
+					std::string lock = a.badge.substr(0, a.badge.size() - 4) + "_lock.png";
+					if (access(lock.c_str(), R_OK) == 0) a.badge = lock;
+				}
+				if (access(a.badge.c_str(), R_OK) != 0) a.badge.clear();
+			}
+			r.achs.push_back(a);
+		}
+		// won first, then by points (the hard ones lead), as the page's list reads
+		std::stable_sort(r.achs.begin(), r.achs.end(), [](const rnds::Ach& x, const rnds::Ach& y) { return x.won != y.won ? x.won : x.points > y.points; });
+		return r;
+	}
+
 	std::string Library::clockText()
 	{
 		time_t now = time(nullptr);

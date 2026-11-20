@@ -109,6 +109,7 @@ namespace banana
 		rnds::SysInfo system(int i) override;
 		int gameCount() override;
 		rnds::GameInfo game(int i) override;
+		rnds::GamePage page(int i) override;
 		std::string clockText() override;
 		std::string dateText() override;
 		float battery() override;

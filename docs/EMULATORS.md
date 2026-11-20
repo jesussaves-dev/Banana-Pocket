@@ -128,7 +128,7 @@ files from where RetroArch already has the information, both in the runtime dire
   `description`, `points`, `rarity`, and the full path of the badge PNG. The menu's toast is built from these lines and
   the badge is drawn in the tile. It is written before `rcheevos_award_achievement()`, so turning RetroArch's own
   in-game widget off (`cheevos_visibility_unlock`) does not turn the menu's toast off with it.
-* `BANANA_RA_CHEEVOS_SET` (default `/run/banana/cheevos-set`, patch `0016`), the game's whole core set, locked and won,
+* `BANANA_RA_CHEEVOS_SET` (default `/run/banana/cheevos-set`, patch `0016`), the game's whole core set, locked and won (not its extra subsets, and not RetroAchievements' "Unsupported Game Version" placeholder, id ≥ 101000000, which is also never counted or toasted),
   one tab-separated line per achievement: `id`, `unlocked` (0/1), `points`, `rarity`, `title`, `description`, and the
   full path of the unlocked badge PNG (the locked picture is the same name with `_lock` before `.png`). It is written
   as the game loads and at each unlock, to a temporary file renamed into place. After a game the menu copies it to

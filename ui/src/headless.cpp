@@ -215,7 +215,12 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 			if (it == keys.end()) { logf("unknown button %s", b.c_str()); return 2; }
 			if (low.hide(nowMs())) logf("press %s: notice hidden", b.c_str());
 			if (!settings.isOpen() && it->second == Key::SELECT) { settings.openSearch(lib.searchQuery()); logf("press select: search open"); continue; }
-			if (!settings.isOpen() && it->second == Key::X && ui.view() == Menu::LIBRARY)
+			if (!settings.isOpen() && it->second == Key::X && ui.view() == Menu::LIBRARY && ui.openPage())
+			{
+				logf("press x: game page open");
+				continue;
+			}
+			if (!settings.isOpen() && it->second == Key::X && (ui.view() == Menu::LIBRARY || ui.view() == Menu::GAME))
 			{
 				// X on a game: its own options (the core and shader it runs with), over the library
 				int g = ui.gameIndex();

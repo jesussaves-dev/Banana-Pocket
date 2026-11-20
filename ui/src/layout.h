@@ -35,6 +35,7 @@ namespace banana
 		int systemIndex() const override { return mSys; }
 		int gameIndex() const override { return mGame; }
 		bool press(Button b) override;
+		bool openPage() override;
 		void jumpTo(int game) override;
 		bool touch(float x, float y, bool down) override;
 		bool touchMove(float x, float y) override;

@@ -89,6 +89,9 @@ namespace banana
 		// data
 		std::vector<rnds::SysInfo> systems;
 		std::vector<rnds::GameInfo> games;
+		rnds::GamePage pg;				// the open game page's facts (view "game")
+		int pageCur = 0;				// the page's achievement list cursor
+		void loadPage() { pg = m->src->page(m->mGame); pageCur = 0; }
 		std::string clock, date;
 		std::string phase = "day";		// the street's time of day: dawn, day, dusk, night (dayPhase())
 		long clockMinute = -1;			// the wall minute clock/date were built for (see update(): once a minute, not a pass)
@@ -350,6 +353,9 @@ namespace banana
 					if (v.second->isObj()) for (auto& b : v.second->obj) input[v.first][b.first] = b.second->isStr() ? b.second->s : "none";
 			hintSets["home"] = { { "A", "Open" }, { "Y", "Favorite" } };
 			hintSets["library"] = { { "A", "Play" }, { "B", "Back" }, { "Y", "Favorite" } };
+			input["game"] = { { "left", "prev" }, { "right", "next" }, { "l", "prev" }, { "r", "next" }, { "up", "up" }, { "down", "down" },
+				{ "a", "launch" }, { "b", "close" }, { "y", "fav" } };
+			hintSets["game"] = { { "A", "Play" }, { "B", "Back" }, { "X", "Options" }, { "Y", "Favorite" } };
 			if (const JVal* h = doc->get("hints"))
 				for (auto& v : h->obj)
 				{
@@ -381,7 +387,7 @@ namespace banana
 		}
 		int count() const { return m->mView == Menu::HOME ? (int)systems.size() : (int)games.size(); }
 		int cursor() const { return m->mView == Menu::HOME ? m->mSys : m->mGame; }
-		std::string viewName() const { return m->mView == Menu::HOME ? "home" : m->mView == Menu::LIBRARY ? "library" : "launch"; }
+		std::string viewName() const { return m->mView == Menu::HOME ? "home" : m->mView == Menu::LIBRARY ? "library" : m->mView == Menu::GAME ? "game" : "launch"; }
 
 		bool sysField(const rnds::SysInfo& si, int index, const std::string& f, EV& out) const
 		{
@@ -488,6 +494,19 @@ namespace banana
 			if (n == "empty") { out = EV(m->mView != Menu::HOME && games.empty() ? 1.0 : 0.0); return true; }
 			if (n == "empty.title") { out = EV(m->src->emptyTitle()); return true; }
 			if (n == "empty.hint") { out = EV(m->src->emptyHint()); return true; }
+			if (pre("page.", rest))
+			{
+				if (rest == "desc") out = EV(pg.desc);
+				else if (rest == "developer") out = EV(pg.dev);
+				else if (rest == "publisher") out = EV(pg.pub);
+				else if (rest == "players") out = EV(pg.players);
+				else if (rest == "genre") out = EV(pg.genre);
+				else if (rest == "year") out = EV(pg.year);
+				else if (rest == "achCount") out = EV((double)pg.achs.size());
+				else if (rest == "achWon") { int w = 0; for (auto& a : pg.achs) w += a.won; out = EV((double)w); }
+				else out = EV("");
+				return true;
+			}
 			if (pre("sys.", rest)) { if (m->mSys < (int)systems.size()) { if (sysField(systems[m->mSys], m->mSys, rest, out)) return true; } out = EV(""); return true; }
 			if (pre("game.", rest))
 			{
@@ -1131,7 +1150,8 @@ namespace banana
 			else if (source == "games") { n = (int)games.size(); cur = m->mView == Menu::HOME ? -1 : m->mGame; }
 			else if (source == "hints") { hl = hintsNow(); n = (int)hl.size(); }
 			else if (source == "range") n = (int)num(c, "count", 0);
-			else { err("list source \"" + source + "\": systems, games, hints or range"); return; }
+			else if (source == "achievements") { n = (int)pg.achs.size(); cur = pageCur; }
+			else { err("list source \"" + source + "\": systems, games, achievements, hints or range"); return; }
 			std::string dirn = str(c, "direction", "free");
 			float itemW = (float)num(c, "itemW", dirn == "column" ? w : 100), itemH = (float)num(c, "itemH", dirn == "row" ? h : 40);
 			float gap = (float)num(c, "gap", 0);
@@ -1205,6 +1225,12 @@ namespace banana
 				is.set("last", EV(i == n - 1 ? 1.0 : 0.0));
 				if (source == "hints") { is.set("item.key", EV(hl[i].first)); is.set("item.label", EV(hl[i].second)); }
 				else if (source == "systems") { const rnds::SysInfo* si = &systems[i]; int idx = i; is.resolve = [this, si, idx](const std::string& k, EV& o) { return k.compare(0, 5, "item.") == 0 && sysField(*si, idx, k.substr(5), o); }; }
+				else if (source == "achievements")
+				{
+					const rnds::Ach& a = pg.achs[i];
+					is.set("item.title", EV(a.title)); is.set("item.desc", EV(a.desc)); is.set("item.badge", EV(a.badge));
+					is.set("item.points", EV((double)a.points)); is.set("item.won", EV(a.won ? 1.0 : 0.0));
+				}
 				else if (source == "games") { const rnds::GameInfo* gi = &games[i]; int idx = i; is.resolve = [this, gi, idx](const std::string& k, EV& o) { return k.compare(0, 5, "item.") == 0 && gameField(*gi, idx, k.substr(5), o); }; }
 			};
 			// "flow": each item as wide (row) or high (column) as it is, one after another (hints of different lengths)
@@ -1270,7 +1296,7 @@ namespace banana
 
 		std::vector<std::pair<std::string, std::string>> hintsNow()
 		{
-			std::string v = m->mView == Menu::HOME ? "home" : "library";
+			std::string v = m->mView == Menu::HOME ? "home" : m->mView == Menu::GAME ? "game" : "library";
 			auto r = hintSets[v];
 			if (extraHints)
 				for (auto& h : m->src->hints(m->mView != Menu::HOME, m->mSys, m->mGame))
@@ -1530,7 +1556,7 @@ namespace banana
 	bool LayoutMenu::press(Button b)
 	{
 		if (d->launchAt >= 0) return false;
-		std::string v = mView == Menu::HOME ? "home" : "library";
+		std::string v = mView == Menu::HOME ? "home" : mView == Menu::GAME ? "game" : "library";
 		auto& map = d->input[v];
 		auto it = map.find(buttonName(b));
 		if (it == map.end()) return false;
@@ -1547,7 +1573,7 @@ namespace banana
 			d->moveDir = to > c ? 1 : -1;
 			if (d->wrap && std::abs(to - c) > n / 2) d->moveDir = -d->moveDir;
 			if (mView == Menu::HOME) { mSys = to; src->selectSystem(to); }
-			else { mGame = to; src->selectGame(to); }
+			else { mGame = to; src->selectGame(to); if (mView == Menu::GAME) d->loadPage(); }
 			// (a wrap's jump: the eased scroll goes the short way, as if it came from beside)
 			if (d->wrap && std::abs(to - c) > n / 2) d->scroll += to > c ? n : -n;
 			d->movedAt = d->now;
@@ -1563,6 +1589,19 @@ namespace banana
 		};
 		int k = arg.empty() ? 1 : std::max(1, atoi(arg.c_str()));
 		if (act == "none") return false;
+		if (mView == Menu::GAME)
+		{
+			// the page: the achievement list under Up/Down, L/R and Left/Right the neighbouring game, B back to the list
+			int na = (int)d->pg.achs.size();
+			if (act == "up" || act == "down")
+			{
+				int to = std::min(std::max(0, d->pageCur + (act == "down" ? 1 : -1)), std::max(0, na - 1));
+				if (to == d->pageCur) return false;
+				d->pageCur = to;
+				return true;
+			}
+			if (act == "close") { mView = Menu::LIBRARY; d->enteredAt = d->now; return true; }
+		}
 		if (act == "prev") return move(c - k);
 		if (act == "next") return move(c + k);
 		if (act == "first") return move(0);
@@ -1604,6 +1643,7 @@ namespace banana
 			return false;
 		}
 		if (act == "open" || act == "launch") { if (n == 0) return false; launch(c); return true; }
+		if (mView == Menu::GAME && act != "fav") return false;
 		if (act == "back")
 		{
 			src->backToHome();
@@ -1629,6 +1669,17 @@ namespace banana
 			return true;
 		}
 		return false;
+	}
+
+	bool LayoutMenu::openPage()
+	{
+		if (mView != Menu::LIBRARY || d->launchAt >= 0 || src->gameCount() <= 0) return false;
+		auto it = d->screens.find("game.top");
+		if (it == d->screens.end() || it->second.empty()) return false;
+		mView = Menu::GAME;
+		d->loadPage();
+		d->enteredAt = d->now;
+		return true;
 	}
 
 	bool LayoutMenu::touch(float x, float y, bool down)
