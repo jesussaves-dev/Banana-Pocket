@@ -751,6 +751,7 @@ namespace banana
 					if (e->d_name[0] == '.') continue;
 					std::string b = std::string("/sys/class/backlight/") + e->d_name;
 					int max = atoi(readLine(b + "/max_brightness").c_str());
+					if (max <= 0) continue;	// unreadable: writing 1 would black out the panel
 					std::ofstream(b + "/brightness") << std::max(1, max * pm / 1000) << "\n";
 				}
 				closedir(d);
