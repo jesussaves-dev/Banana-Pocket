@@ -499,6 +499,28 @@ namespace banana
 		be->endScreen();
 	}
 
+	// ---- the web page's QR code on the ledger (Genesis draws it in the arcade's colours) ------------------------
+	void Settings::renderQrLedger()
+	{
+		const bool g = genesis;
+		be->beginScreen();
+		if (g) sFill(0, 0, 310, 270, Color(0, 0, 0, 1));
+		else { sFill(0, 0, 310, 270, sDim); sImg("workshop.png", 0, 0); sImg("ledger.png", LX, LY); }
+		qrDraw(u * 82, u * 108, u * 148);
+		const Color ink = g ? gInk : sInk, dim = g ? gDim : sDim;
+		const std::string title = tr("Web page");
+		if (g) { std::string t = title; for (auto& c : t) c = (char)toupper((unsigned char)c); gText(sFit(t, 290), 9, 5, gLabel); }
+		else { sText(title, 10, 6, ink); sText(title, 9, 5, sGold); }
+		const float tx = 164, tw = 140;
+		sWrap(tr("Scan with a phone"), tx, LY + 5, tw, 2, ink);
+		sText(sFit(qrUrl, tw), tx, LY + 36, dim);
+		sText(tr("PIN"), tx, LY + 60, dim);
+		if (g) gText(qrPin, tx, LY + 74, gLabel); else sText(qrPin, tx, LY + 74, ink);
+		sWrap(tr("The camera opens the page. Same Wi-Fi as the handheld; type the PIN there."), tx, LY + 100, tw, 6, dim);
+		if (g) gChip("B", tr("Back"), 8, 254); else sChip("B", tr("Back"), 8, 254);
+		be->endScreen();
+	}
+
 	// ---- touch on the SNES pages ----------------------------------------------------------------------------------
 	Settings::Result Settings::snesTouch(float cx, float cy)
 	{

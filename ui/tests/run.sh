@@ -189,6 +189,7 @@ for size in 640x557; do
     if command -v zbarimg >/dev/null 2>&1; then
         zbarimg -q --raw "$OUT/$size-setup-qr.png" 2>/dev/null | grep -q '^http://' || { echo "FAIL $size: the setup's QR code doesn't scan"; fail=1; }
     fi
+    golden "setup-qr" "$OUT/$size-setup-qr.png"
     for s in setup setup-tz setup-ra setup-name setup-pass setup-signed; do
         [ -s "$OUT/$size-$s.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }
     done
@@ -434,18 +435,19 @@ for size in 640x557; do
     # again to open it, its Network row (300,142), again to open the networks; then the first-time setup, and over the
     # street the volume's pill and the charger's notice (`level`, `plug`: test only)
     sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/street.json|" "$FX/data/settings.conf"
-    BANANA_PHASE=dusk BANANA_RA_CHECK=0 BANANA_WIFI="$HERE/tests/fake-wifi.sh" FAKE_WIFI_CONF="$FX/data/wifi.conf" "$HERE/banana-ui" --headless "$OUT/$size-street-" \
+    BANANA_WEB_PIN="$OUT/web.pin" BANANA_PHASE=dusk BANANA_RA_CHECK=0 BANANA_WIFI="$HERE/tests/fake-wifi.sh" FAKE_WIFI_CONF="$FX/data/wifi.conf" "$HERE/banana-ui" --headless "$OUT/$size-street-" \
         --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
         --script "home 0; wait 600; press start; wait 200; touch 124 248; touch 124 248; touch 300 142; touch 300 142; wait 2500; shot ledger-wifi; \
-            press b; press b; press b; setup; wait 200; shot ledger-setup; press b; wait 300; level Volume 60; shot pill; plug 80 battery; plug 81 charging; shot plug" \
+            press b; press b; press b; setup; wait 200; shot ledger-setup; press down; press down; press down; press down; press x; wait 200; shot ledger-qr; press b; press b; wait 300; level Volume 60; shot pill; plug 80 battery; plug 81 charging; shot plug" \
         2>> "$stlog" || { echo "FAIL $size: banana-ui (ledger) exited $?"; fail=1; }
     sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
     grep -q "shot pill (.*overlay level)" "$stlog" || { echo "FAIL $size: the volume pill was not the overlay"; fail=1; }
     grep -q "shot plug (.*overlay plug)" "$stlog" || { echo "FAIL $size: the charger's notice was not the overlay"; fail=1; }
     grep -q "plug: notice Charging" "$stlog" || { echo "FAIL $size: the charger's notice"; fail=1; }
-    for s in ledger-wifi ledger-setup pill plug; do
+    for s in ledger-wifi ledger-setup ledger-qr pill plug; do
         f=$OUT/$size-street-$s.png
         [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
+        if [ "$s" = ledger-qr ] && command -v zbarimg >/dev/null 2>&1; then zbarimg -q --raw "$f" 2>/dev/null | grep -q '^http://' || { echo "FAIL $size: the workshop's QR code doesn't scan"; fail=1; }; fi
         golden "street-$s" "$f"
     done
     # the toasts in the SNES style (toast.png): an achievement's badge cut to 24 x 24 in 15-bit colour, and a plain
@@ -551,10 +553,10 @@ for size in 640x557; do
     sed -i '/^night_light *=/d' "$FX/data/settings.conf"
     for run in "home 0; wait 600; press start; wait 300; shot options; press a; press down; press down; press down; press down; press down; press right; wait 300; shot options2" \
         "home 0; wait 600; search; wait 200; press a; press right; press a; press x; press down; press a; touch 173 200; wait 100; shot name; press b; press start; wait 300; pause ticket 1" \
-        "home 0; wait 600; press start; wait 200; touch 124 248; touch 124 248; wait 300; shot network; press b; press b; setup; wait 200; shot ledger-setup; press b; wait 300; level Volume 60; shot pill; plug 80 battery; plug 81 charging; shot plug" \
+        "home 0; wait 600; press start; wait 200; touch 124 248; touch 124 248; wait 300; shot network; press b; press b; setup; wait 200; shot ledger-setup; press down; press down; press down; press down; press x; wait 200; shot ledger-qr; press b; press b; wait 300; level Volume 60; shot pill; plug 80 battery; plug 81 charging; shot plug" \
         "home 0; wait 600; toast 1|Trophy won|By finding the sword|$FX/roms/ngp/media/box/Peel Quest.png; wait 16; shot toast; wait 1"; do
         sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/blast.json|" "$FX/data/settings.conf"
-        BANANA_RA_CHECK=0 BANANA_WIFI="$HERE/tests/fake-wifi.sh" FAKE_WIFI_CONF="$FX/data/wifi.conf" "$HERE/banana-ui" --headless "$OUT/$size-blast-" \
+        BANANA_WEB_PIN="$OUT/web.pin" BANANA_RA_CHECK=0 BANANA_WIFI="$HERE/tests/fake-wifi.sh" FAKE_WIFI_CONF="$FX/data/wifi.conf" "$HERE/banana-ui" --headless "$OUT/$size-blast-" \
             --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" --systems "$HERE/tests/systems.conf" --roms "$FX/roms" \
             --data "$FX/data" --script "$run" 2>> "$bllog" || { echo "FAIL $size: banana-ui (blast settings) exited $?"; fail=1; }
         sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
@@ -564,9 +566,10 @@ for size in 640x557; do
     grep -q 'search "qwS":' "$bllog" || { echo "FAIL $size: blast's name entry: $(grep 'search' "$bllog" | tail -2)"; fail=1; }
     grep -q 'pause ticket: card 0,0 1240x1080' "$bllog" || { echo "FAIL $size: blast's pause card: $(grep 'pause ticket' "$bllog")"; fail=1; }
     grep -q "plug: notice Charging" "$bllog" || { echo "FAIL $size: blast's charger notice"; fail=1; }
-    for s in options options2 name ticket network ledger-setup pill plug toast; do
+    for s in options options2 name ticket network ledger-setup ledger-qr pill plug toast; do
         f=$OUT/$size-blast-$s.png
         [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
+        if [ "$s" = ledger-qr ] && command -v zbarimg >/dev/null 2>&1; then zbarimg -q --raw "$f" 2>/dev/null | grep -q '^http://' || { echo "FAIL $size: blast's QR code doesn't scan"; fail=1; }; fi
         nb=$(off9 "$f")
         [ "$nb" = 0 ] || { echo "FAIL $size: blast's $s has $nb colours off the 9-bit grid"; fail=1; }
         golden "blast-$s" "$f"

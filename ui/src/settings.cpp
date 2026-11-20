@@ -2839,7 +2839,7 @@ namespace banana
 			if (wizard) page = SETUP;
 			return CHANGED;
 		case ENTRY_RA_USER:
-			if (pw.empty()) { message = "The account's name, as on retroachievements.org."; return MOVED; }
+			if (pw.empty()) { message = tr("The account's name, as on retroachievements.org."); return MOVED; }
 			setConfValue(data + "/accounts.conf", "ra_user", pw, "=");
 			startEntry(ENTRY_RA_PASS, "RetroAchievements password for", pw, entryBack);
 			return CHANGED;
@@ -3123,7 +3123,7 @@ namespace banana
 				{
 					tzAsked = true;
 					wsel = 1;
-					message = "The time zone is still UTC, so the clock shows " + clockNow() + ". Left and right pick yours; Finish again to keep UTC.";
+					message = tr("The time zone is still UTC, so the clock shows ") + clockNow() + tr(". Left and right pick yours; Finish again to keep UTC.");
 					return MOVED;
 				}
 				setupDone();
@@ -3181,8 +3181,27 @@ namespace banana
 		return MOVED;
 	}
 
+	// the code on its white square, centred at (cx, cy) device px inside a box of `room` px, whole px per module
+	void Settings::qrDraw(float cx, float cy, float room)
+	{
+		using rnds::Color;
+		int quiet = 3, side = qrN + 2 * quiet;
+		int k = std::max(1, (int)std::floor(room / side));
+		float S = side * k;
+		float x0 = std::round(cx - S / 2), y0 = std::round(cy - S / 2);
+		be->fill(x0, y0, S, S, Color(1, 1, 1, 1));
+		Color dark(0, 0, 0, 1), yellow = genesis ? Color(1, 219 / 255.0f, 36 / 255.0f, 1) : Color(0.98f, 0.82f, 0.1f, 1);	// (on the 9-bit grid)
+		for (int y = 0; y < qrN; y++)
+			for (int x = 0; x < qrN; x++)
+			{
+				unsigned char m = qrMods[(size_t)y * qrN + x];
+				if (m) be->fill(x0 + (x + quiet) * k, y0 + (y + quiet) * k, (float)k, (float)k, m == 2 ? yellow : dark);
+			}
+	}
+
 	void Settings::renderQr()
 	{
+		if (snes) { renderQrLedger(); return; }
 		SPal p = pal(light);
 		be->beginScreen();
 		box("screen", false, 0, 0, 640, 480);
@@ -3191,18 +3210,7 @@ namespace banana
 		text(tr("Web page"), true, 28, 22, 24, p.ink);
 		// be->fill takes device pixels (the panel is scaled), text and boxes logical ones: whole device pixels per module,
 		// the square centred in the left half (18..338) and between the title and the footer (80..420)
-		int quiet = 3, side = qrN + 2 * quiet;
-		int k = std::max(1, (int)std::floor(X(330) / side));
-		float S = side * k;
-		float x0 = std::round(X(178) - S / 2), y0 = std::round(X(250) - S / 2);
-		be->fill(x0, y0, S, S, Color(1, 1, 1, 1));
-		Color dark(0, 0, 0, 1), yellow(0.98f, 0.82f, 0.1f, 1);
-		for (int y = 0; y < qrN; y++)
-			for (int x = 0; x < qrN; x++)
-			{
-				unsigned char m = qrMods[(size_t)y * qrN + x];
-				if (m) be->fill(x0 + (x + quiet) * k, y0 + (y + quiet) * k, (float)k, (float)k, m == 2 ? yellow : dark);
-			}
+		qrDraw(X(178), X(250), X(330));
 		float tx = 356;
 		text(tr("Scan with a phone"), true, 20, tx, 90, p.ink);
 		text(fit(qrUrl, true, 18, 266), true, 18, tx, 130, p.muted);
@@ -3223,15 +3231,15 @@ namespace banana
 		static const char* names[SETUP_STEPS] = { "Wi-Fi", "Time zone", "RetroAchievements", "Box art", "Your games", "Finish" };
 		std::string bios = missingBios();
 		std::string status[SETUP_STEPS] = {
-			wstat.connected ? "Connected to " + wstat.ssid : wifiOn() ? "Not connected" : "Off",
+			wstat.connected ? tr("Connected to ") + wstat.ssid : wifiOn() ? tr("Not connected") : tr("Off"),
 			tz ? tz->names[tz->at] + " (" + clockNow() + ")" : "",	// (the time it gives, so a wrong zone shows)
-			ra.empty() ? "Not signed in" : ra,
+			ra.empty() ? tr("Not signed in") : ra,
 			scrapeShort(),
-			bios.empty() ? tr("roms/ on the card") : "BIOS missing: " + bios,
+			bios.empty() ? tr("roms/ on the card") : tr("BIOS missing: ") + bios,
 			"" };
-		std::string gamesHelp = std::string("Games go in roms/<system> on the BANANA partition") +
-			(ip.empty() ? ", or over Wi-Fi with File sharing in the settings." : ", or at \\\\" + ip + "\\banana (Windows) or smb://" + ip + " with File sharing on.") +
-			(bios.empty() ? "" : " BIOS files go in bios/.") + " X: QR code for the web page.";
+		std::string gamesHelp = tr("Games go in roms/<system> on the BANANA partition") +
+			(ip.empty() ? tr(", or over Wi-Fi with File sharing in the settings.") : tr(", or at ") + "\\\\" + ip + "\\banana" + tr(" (Windows) or smb://") + ip + tr(" with File sharing on.")) +
+			(bios.empty() ? "" : tr(" BIOS files go in bios/.")) + tr(" X: QR code for the web page.");
 		static const char* helps[SETUP_STEPS] = {
 			"Achievements, the clock and art need your home network. Press A to pick one and type its password.",
 			"The clock in the status bar, and the games' own clocks. Left and right change it.",
@@ -3239,7 +3247,7 @@ namespace banana
 			"Box art from libretro's free collections, no account. Press A to start (Wi-Fi first); it runs while you finish setup.",
 			"",
 			"Everything here is in the settings too (Start in the menu), and this setup is under System > First-time setup. Press A to finish." };
-		std::string help = message.empty() ? (wsel == 4 ? gamesHelp : helps[wsel]) : message;
+		std::string help = message.empty() ? (wsel == 4 ? gamesHelp : tr(helps[wsel])) : message;
 		const char* act = wsel == 5 ? "Finish" : wsel == 4 ? "Next" : wsel == 1 ? "Next zone" : wsel == 3 ? (scraping() ? "Running" : "Start") : "Open";
 		if (snes)
 		{
@@ -3252,7 +3260,7 @@ namespace banana
 				row.arrows = r == 1;
 				rows.push_back(row);
 			}
-			renderLedger(tr("Welcome to Banana Pocket"), std::to_string(wsel + 1) + " / " + std::to_string(SETUP_STEPS), tr("First-time setup"), rows, wsel, "", tr(help),
+			renderLedger(tr("Welcome to Banana Pocket"), std::to_string(wsel + 1) + " / " + std::to_string(SETUP_STEPS), tr("First-time setup"), rows, wsel, "", help,
 				!message.empty(), { { "B", tr("Skip") } }, { "A", tr(act) });
 			return;
 		}
@@ -3320,10 +3328,10 @@ namespace banana
 		// power (the library's own read of the charger, the same one the burn-in guard uses)
 		if (src && !src->charging())
 		{
-			message = "Plug in the charger (or the USB cable) first: a scrape runs a long time and must not flatten the battery.";
+			message = tr("Plug in the charger (or the USB cable) first: a scrape runs a long time and must not flatten the battery.");
 			return;
 		}
-		if (!wifiOn()) { message = "Wi-Fi is off: switch it on in Network first."; return; }
+		if (!wifiOn()) { message = tr("Wi-Fi is off: switch it on in Network first."); return; }
 		std::ofstream("/run/banana/scrape.status") << "running 0 0 |starting\n";
 		scrapeLine.clear();
 		scrapeNext = 0;

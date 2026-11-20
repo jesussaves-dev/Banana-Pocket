@@ -222,6 +222,8 @@ namespace banana
 		std::string qrUrl, qrPin;
 		Result openQr();
 		void renderQr();
+		void renderQrLedger();		// the workshop's and the arcade's (settings_snes.cpp, settings_genesis.cpp)
+		void qrDraw(float cx, float cy, float room);
 		// a game's own options: the LIST machinery, but a flat list (Emulator, Shader, Save states) for one game,
 		// opened from the library and closed back to the menu (there is no group grid behind it)
 		bool gamePage = false;
