@@ -146,7 +146,7 @@ hotspot for Wi-Fi unless someone asks.*
 - **System shaders, two loose ends:** with a mask or colour active the first commits after a wake can fail `EBUSY` (at most
   5 frames, ~83 ms, not visible; cause unfound); and one `[dpu error] enc35 timeout pending` in ~60 wakes, after a failed
   `deep` suspend (`-95`, predates the shaders).
-- **Agent DX:** `make agent-check` and `make agent-map`; keep the `AGENTS.md` Source Map fresh when core files move.
+- **Agent DX:** `make agent-map`; keep the `AGENTS.md` Source Map fresh when core files move.
 
 ## Baseline
 QEMU `virt` boot/update/test (`tools/qemu-boot.sh`), A/B OTA, first-time setup, `ksmbd`, `dropbear`, `ath10k_snoc`. Nintendo

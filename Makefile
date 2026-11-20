@@ -153,22 +153,6 @@ check-local-build:
 	if [ -n "$$newer" ]; then echo "stale image: $$newer is newer than the image's banana-ui -- run make retroid-pocket-classic"; exit 1; fi; \
 	echo "the image's banana-ui is newer than every source"
 
-# Quiet health check for agent sessions: syntax + host compile + the fast suite. <=6 lines on success,
-# tail of the failing log otherwise, so a session spends no tokens reading build noise.
-agent-check:
-	@for f in system/rootfs/etc/init.d/* system/rootfs/usr/bin/* system/rootfs/usr/libexec/banana/* \
-	          system/rootfs/etc/banana/sleep.d/* system/tests/*.sh system/bananad/tests/*.sh \
-	          buildroot/board/retroid-pocket-classic/*.sh tools/*.sh; do \
-	    [ -f "$$f" ] || continue; \
-	    head -c 2 "$$f" 2>/dev/null | grep -q '#!' || continue; \
-	    sh -n "$$f" || { echo "FAIL sh -n $$f"; exit 1; }; done; echo "sh: OK"
-	@$(MAKE) -s -C ui host >/dev/null 2>/tmp/agent-ui.log || { echo "FAIL ui build"; tail -n 5 /tmp/agent-ui.log; exit 1; }; echo "ui: OK"
-	@if [ -f /usr/include/alsa/asoundlib.h ]; then \
-	    gcc -std=c11 -Wall -Wextra -Werror -fsyntax-only system/bananad/bananad.c || exit 1; echo "bananad: OK"; \
-	 else echo "bananad: skipped (no host alsa)"; fi
-	@out=$$(tools/check-docs.py) && echo "docs: OK" || { echo "FAIL docs"; echo "$$out" | head -n 10; exit 1; }
-	@ui/tests/run.sh >/tmp/agent-test.log 2>&1 && echo "tests: OK" || { echo "FAIL tests"; tail -n 20 /tmp/agent-test.log; exit 1; }
-
 # Regenerate the Source Map block in AGENTS.md: file:line: symbol for the core files. Line numbers drift
 # after edits; paste the fresh ranges over the snapshot in AGENTS.md.
 agent-map:
@@ -181,4 +165,4 @@ clean:
 	rm -rf $(OUT)
 	$(MAKE) -C ui clean
 
-.PHONY: $(BOARDS) ui test check-kver probe sound-test bench local-rebuild check-local-build agent-check agent-map clean
+.PHONY: $(BOARDS) ui test check-kver probe sound-test bench local-rebuild check-local-build agent-map clean
