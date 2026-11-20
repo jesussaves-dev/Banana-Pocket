@@ -38,10 +38,6 @@ goes into 1.0.1, not into a delay.
 5. **Recovery screen without Android (M):** hold a button at power-on: boot the other slot, reset settings, fsck `/data`,
    transfer mode.
 6. **Fresh-card welcome (S):** where ROMs go, the share and `banana.local` address with a QR code, missing BIOS files.
-7. **Rename to Banana Pocket (S):** the public name. Change every user-visible string (boot splash, About screen, update
-   package name, site, installer, flasher, release notes) through `tr()`; `banana-rpc` and `retroid-pocket-classic`
-   stay as internal IDs. The README credits Jorre by name and his BananaLinux, which this code derives from. Check the kernel
-   `-Bananix` string and `check-kver` before touching it.
 
 ### Headline features
 - **`banana.local` (M):** a web page on the handheld: drop in ROMs and BIOS, download saves and a backup, read logs,
