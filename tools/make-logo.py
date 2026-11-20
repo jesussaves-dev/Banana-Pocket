@@ -58,4 +58,6 @@ logo(font, bananas, 134, 20, 2, 20, 6).save(out + "/logo@1x.png")
 logo(font, bananas, 214, 32, 3, 32, 9).save(out + "/logo@1.6x.png")
 if len(sys.argv) > 4:
     # for the boot animation (src/splash.cpp): the word as a mask, one font pixel per image pixel; banana-ui scales it
-    text_layer(font, 1, "BANANA").save(f"{sys.argv[4]}/word.png")
+    # (BANANA, and POCKET that settles under it)
+    for name, word in (("word", "BANANA"), ("pocket", "POCKET")):
+        text_layer(font, 1, word).save(f"{sys.argv[4]}/{name}.png")

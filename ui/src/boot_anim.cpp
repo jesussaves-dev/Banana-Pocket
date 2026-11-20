@@ -18,11 +18,11 @@ static Splash gSplash;
 void forgetSplash() { gSplash = Splash(); }
 
 // plays until the intro is over and the menu is ready (with the animation off: only the wait for the menu)
-// The boot click's race: the splash fires it ~1 s after the panel opens, and the sound path (the card, WirePlumber's
+// The boot click's race: the splash fires it when the wordmark seats (~1.8 s after the panel opens), and the sound path (the card, WirePlumber's
 // probe, the first stream starting the DSP) comes up at about the same moment -- a little later and the click was
 // kept and played late, after the landing it belongs to. So the splash waits for the sound instead: it holds before
-// the bunch starts to fall until a playback frontend is RUNNING (PipeWire has the DSP pulling audio, the amp locks
-// within ~50 ms), then the fall's ~1 s leads into a click that plays the moment it is asked. Read-only: /proc/asound.
+// the letters start to fly in until a playback frontend is RUNNING (PipeWire has the DSP pulling audio, the amp locks
+// within ~50 ms), then the flight leads into a click that plays the moment it is asked. Read-only: /proc/asound.
 static bool audioFlowing()
 {
 	std::ifstream cards("/proc/asound/cards");
@@ -102,8 +102,12 @@ void playSplash(Display& disp, SoftBackend& be, const Options& o, const std::str
 		if (gSplash.finished(t, r)) break;
 		gSplash.draw(be.canvas(), t, r);
 		showFrame(disp, be, sig);
-		int wait = gSplash.nextFrame(nowMs() - t0 - offset, ready);
-		if (wait > 16) sleepUs(std::min(wait, 50) * 1000);	// waiting on the library: look again now and then
+		if (gSplash.nextFrame(nowMs() - t0 - offset, ready) < 0)
+		{
+			// the seated wordmark is on screen and nothing changes: block until the loader publishes the menu
+			std::unique_lock<std::mutex> l(readyM);
+			readyCv.wait(l, [&] { return ready.load(); });
+		}
 	}
 }
 

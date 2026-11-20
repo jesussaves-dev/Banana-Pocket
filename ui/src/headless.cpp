@@ -305,13 +305,16 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 		}
 		else if (op == "splash")
 		{
-			// splash <name> <ms> [ready]: the boot animation at that time
+			// splash <name> <ms> [ready]: the boot animation at that time; ready 1: the menu was ready from the start,
+			// 2: ready is first seen at this frame (the fade then runs from here)
 			std::string name; double t = 0; int ready = 0;
 			cs >> name >> t >> ready;
 			static Splash sp;
 			static bool loaded = false;
 			if (!loaded && !(loaded = sp.load(o.splash, o.banana + "/banana-32.png", variant, o.w, o.h))) { logf("no splash assets in %s", o.splash.c_str()); return 1; }
 			double s0 = nowMs();
+			sp.rewind();
+			if (ready == 1) sp.draw(be.canvas(), 0, true);
 			sp.draw(be.canvas(), t, ready != 0);
 			double s1 = nowMs();
 			if (!save(o.headless + name + ".png")) return 1;

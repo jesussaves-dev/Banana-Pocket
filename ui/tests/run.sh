@@ -79,7 +79,7 @@ for size in 640x557; do
     "$HERE/banana-ui" --headless "$OUT/$size-" --size $size --assets "$HERE/assets/rnds" \
         --splash "$HERE/assets/splash" --banana "$HERE/assets/banana" \
         --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
-        --script "boot; splash boot-fly 900; splash boot-seat 1900 1; splash boot-shine 2700 1; splash boot-hold 3760 0; splash boot-fade 3760 1; splash boot-last 3733 1; home 0; sysinfo 0; apps; wait 2400; shot home; bench 120; press a; wait 2400; shot lib; press down; wait 2400; shot lib2; bench 120; press a; wait 3000; shot ready; press b; press b; battery 50; battery 19; shot battery-low; press left; battery 18; battery 4; wait 2400; shot battery-empty; battery 4 charging; battery 19" \
+        --script "boot; splash boot-fly 900; splash boot-seat 1900 1; splash boot-shine 2700 1; splash boot-hold 3760 0; splash boot-fade 3760 1; splash boot-last 3733 1; splash boot-late 3900 2; home 0; sysinfo 0; apps; wait 2400; shot home; bench 120; press a; wait 2400; shot lib; press down; wait 2400; shot lib2; bench 120; press a; wait 3000; shot ready; press b; press b; battery 50; battery 19; shot battery-low; press left; battery 18; battery 4; wait 2400; shot battery-empty; battery 4 charging; battery 19" \
         2> "$log" || { echo "FAIL $size: banana-ui exited $?"; fail=1; continue; }
     check() { grep -q "$1" "$log" || { echo "FAIL $size: no '$1'"; fail=1; }; }
     check "press a: used, view 1"          # home -> the library
@@ -119,6 +119,10 @@ for size in 640x557; do
     f=$OUT/$size-boot-last.png
     [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; }
     [ "$(convert "$f" -format '%[fx:minima>0.999]' info:)" = 1 ] || { echo "FAIL $size: the last frame before the hand-over is not white"; fail=1; }
+    # ready only after the intro's end: the fade starts there (the first faded frame is not already white)
+    f=$OUT/$size-boot-late.png
+    [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; }
+    [ "$(convert "$f" -format '%[fx:minima>0.999]' info:)" = 0 ] || { echo "FAIL $size: a late ready jumped straight to white"; fail=1; }
     for s in home lib lib2 ready battery-low battery-empty; do
         f=$OUT/$size-$s.png
         [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
