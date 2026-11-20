@@ -563,20 +563,6 @@ namespace banana
 			std::ifstream f("/proc/device-tree/model");
 			std::getline(f, model, '\0');
 		}
-		int battery = -1;
-		if (DIR* d = opendir("/sys/class/power_supply"))
-		{
-			while (dirent* e = readdir(d))
-			{
-				std::string b = std::string("/sys/class/power_supply/") + e->d_name;
-				if (readLine(b + "/type") == "Battery") { battery = atoi(readLine(b + "/capacity").c_str()); break; }
-			}
-			closedir(d);
-		}
-		struct statvfs vf;
-		char space[64] = "";
-		if (statvfs("/data", &vf) == 0)
-			snprintf(space, sizeof space, "%.1f GB free of %.1f GB", vf.f_bavail * (double)vf.f_frsize / 1e9, vf.f_blocks * (double)vf.f_frsize / 1e9);
 		// Wi-Fi: the address, if there is one
 		wifiInfo = "Off";
 		ip.clear();
@@ -598,10 +584,9 @@ namespace banana
 			}
 			if (fd >= 0) ::close(fd);
 		}
+		// two lines of the strip (~34 characters each): version and slot, then the model. Battery is in the status bar.
 		std::ostringstream a;
-		a << "Banana Pocket " << (version.empty() ? "dev" : version) << (slot.empty() ? "" : " (slot " + slot + ")") << " on the " << (model.empty() ? "handheld" : model) << ". ";
-		if (battery >= 0) a << "Battery " << battery << "%. ";
-		if (space[0]) a << "Card: " << space << ".";
+		a << "Banana Pocket " << (version.empty() ? "dev" : version) << (slot.empty() ? "" : " (slot " + slot + ")") << ", " << (model.empty() ? "handheld" : model) << ".";
 		about = a.str();
 	}
 
