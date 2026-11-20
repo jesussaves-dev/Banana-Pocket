@@ -49,6 +49,7 @@ namespace banana
 			{ "wifi", "on", ENUM, ON_OFF, 0, 0 },
 			{ "sd2_roms", "on", ENUM, ON_OFF, 0, 0 },
 			{ "share", "off", ENUM, ON_OFF, 0, 0 },
+			{ "web", "off", ENUM, ON_OFF, 0, 0 },
 			{ "ssh", "off", ENUM, ON_OFF, 0, 0 },
 			{ "adb", "off", ENUM, ON_OFF, 0, 0 },
 			{ "usb_mass_storage", "off", ENUM, MSC, 0, 0 },

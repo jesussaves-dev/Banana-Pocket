@@ -381,6 +381,7 @@ namespace banana
 		add(W, "phone", "Wi-Fi", "", menu, "wifi", { "On", "Off" }, { "on", "off" });
 		add(W, "phone", "Network", "The networks around: press A to join one, typing the password on the keyboard or by touch. 802.1X needs banana/wifi.conf.", "", "network", {}, {}, Item::PAGE);
 		add(W, "phone", "File sharing", "", menu, "share", { "Off", "On" }, { "off", "on" });
+		add(W, "phone", "Web page", "", menu, "web", { "Off", "On" }, { "off", "on" });
 		const char* S = "System";
 		{
 			std::vector<std::string> names, tzs;
@@ -826,6 +827,7 @@ namespace banana
 		if (it.key == "adb") spawn("/usr/libexec/banana/adb", v == "on" ? "up" : "down");
 		if (it.key == "usb_mass_storage") spawn("/usr/libexec/banana/usb-msc", v.empty() ? "off" : v.c_str());
 		if (it.key == "share") spawn("/usr/libexec/banana/share", v == "on" ? "up" : "down");
+		if (it.key == "web") spawn("/usr/libexec/banana/web", v == "on" ? "up" : "down");
 		if (it.key == "sd2_roms") spawn("/usr/libexec/banana/sd2", "scan");
 	}
 
@@ -960,6 +962,7 @@ namespace banana
 			spawn("/usr/libexec/banana/adb", rs["adb"] == "on" ? "up" : "down");
 			spawn("/usr/libexec/banana/usb-msc", "off");
 			spawn("/usr/libexec/banana/share", rs["share"] == "on" ? "up" : "down");
+			spawn("/usr/libexec/banana/web", rs["web"] == "on" ? "up" : "down");
 			spawn("/usr/libexec/banana/sd2", "scan");
 			poke("bananad");
 		}
@@ -1744,6 +1747,14 @@ namespace banana
 			help = "The card at \\\\" + at + "\\banana (Windows) or smb://" + at +
 				"/banana (Mac). No password: leave it off on networks you don't trust.";
 			if (ip.empty()) help = "The card on the network. Not connected to Wi-Fi now.";
+		}
+		if (cur.key == "web")
+		{
+			// the PIN is made when the server starts (web up); it is not kept anywhere but /run
+			std::string pin = readLine("/run/banana/web.pin");
+			help = ip.empty() ? tr("The card's page for games, saves and updates. Not connected to Wi-Fi now.")
+				: pin.empty() ? tr("Games, saves and updates from a browser: banana.local or the address below.")
+				: tr("Open banana.local in a browser. PIN: ") + pin;
 		}
 		if (cur.kind == Item::SOUNDTEST && stArmed) help = tr("Secret! Press Start.");
 		if (cur.key == "scrape" && scraping()) help = "Fetching covers and title screens. The menu shows them as they come, and it carries on if you leave this screen.";

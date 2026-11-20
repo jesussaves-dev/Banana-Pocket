@@ -62,6 +62,7 @@
 ## 6. Network & Services
 - **Wi-Fi:** `wpa_supplicant` + `wpa_cli` scan thread (`/data/banana/wifi.conf`, WPA3 `key_mgmt=SAE`). `udhcpc` triggered via `wpa_cli` action on connect. Disconnected scan backoff: 5m.
 - **SMB3:** `ksmbd` + `ksmbd.mountd` (`/` + `/<ip>/banana` -> `/data`, `guest=root`, no DOS/ext attrs, default off).
+- **Web page (`banana.local`):** `libexec/banana/web up|down` runs `banana-web.py` (Python stdlib, port 80, default off; Settings > Network > Web page). A 6-digit PIN made at start (`/run/banana/web.pin`, shown in the row's help) gates it behind a session cookie (5 tries/min/IP, cross-origin POSTs refused). Games/BIOS in (to `roms/<system>`, `bios`), saves+states zip, `backup create` files, logs, update `.tar` upload + `update apply`. Secret names (`wifi.conf`, `accounts.conf`, `ra.token`, SSH keys) are never listed or written. The page's CSS comes from the active theme (base, accent, `colors`, style, font). The same process answers mDNS A queries for `banana.local` (no avahi). Test: `system/tests/web-test.sh`.
 - **SSH:** `dropbear` (key-only, default off; copies `/data/banana/ssh/authorized_keys` -> `/run/banana/ssh` `0600`).
 
 ## 7. Perf Profiles, Testing & CI

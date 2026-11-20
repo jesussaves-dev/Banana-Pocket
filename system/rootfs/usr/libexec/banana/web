@@ -1,0 +1,19 @@
+#!/bin/sh
+# The web page (banana.local): games and BIOS in, saves, backups and logs out, updates applied, from a browser. A
+# Python server (banana-web.py) with its own mDNS answer, behind a PIN it makes at start (/run/banana/web.pin, shown
+# in Settings > Network > Web page). Off until switched on there.
+#   web up | down
+PID=/run/banana/web.pid
+case $1 in
+up)
+    [ -f $PID ] && kill -0 "$(cat $PID)" 2>/dev/null && exit 0
+    /usr/bin/python3 /usr/libexec/banana/banana-web.py >/run/banana/web.log 2>&1 &
+    echo $! > $PID
+    ;;
+down)
+    [ -f $PID ] && kill "$(cat $PID)" 2>/dev/null
+    rm -f $PID /run/banana/web.pin
+    ;;
+*) echo "usage: web up|down" >&2; exit 1 ;;
+esac
+exit 0

@@ -203,6 +203,10 @@
   "Starting transfer mode...": "Iniciando el modo de transferencia...",
   "Restarts into the other system slot, the version that ran before the last update. Press A twice.": "Reinicia en el otro sistema, la versión anterior a la última actualización. Pulsa A dos veces.",
   "Checks and repairs the games partition, then returns to the menu. Press A twice.": "Revisa y repara la partición de juegos y vuelve al menú. Pulsa A dos veces.",
-  "Hands the card to the computer over USB-C until you eject it. Press A twice.": "Entrega la tarjeta al ordenador por USB-C hasta que la expulses. Pulsa A dos veces."
+  "Hands the card to the computer over USB-C until you eject it. Press A twice.": "Entrega la tarjeta al ordenador por USB-C hasta que la expulses. Pulsa A dos veces.",
+  "Web page": "Página web",
+  "The card's page for games, saves and updates. Not connected to Wi-Fi now.": "La página de la tarjeta para juegos, partidas y actualizaciones. Sin Wi-Fi ahora.",
+  "Games, saves and updates from a browser: banana.local or the address below.": "Juegos, partidas y actualizaciones desde un navegador: banana.local o la dirección de abajo.",
+  "Open banana.local in a browser. PIN: ": "Abre banana.local en un navegador. PIN: "
 }
 }

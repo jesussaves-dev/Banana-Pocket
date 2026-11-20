@@ -212,6 +212,10 @@
   "Starting transfer mode...": "Starting transfer mode...",
   "Restarts into the other system slot, the version that ran before the last update. Press A twice.": "Restarts into the other system slot, the version that ran before the last update. Press A twice.",
   "Checks and repairs the games partition, then returns to the menu. Press A twice.": "Checks and repairs the games partition, then returns to the menu. Press A twice.",
-  "Hands the card to the computer over USB-C until you eject it. Press A twice.": "Hands the card to the computer over USB-C until you eject it. Press A twice."
+  "Hands the card to the computer over USB-C until you eject it. Press A twice.": "Hands the card to the computer over USB-C until you eject it. Press A twice.",
+  "Web page": "Web page",
+  "The card's page for games, saves and updates. Not connected to Wi-Fi now.": "The card's page for games, saves and updates. Not connected to Wi-Fi now.",
+  "Games, saves and updates from a browser: banana.local or the address below.": "Games, saves and updates from a browser: banana.local or the address below.",
+  "Open banana.local in a browser. PIN: ": "Open banana.local in a browser. PIN: "
 }
 }

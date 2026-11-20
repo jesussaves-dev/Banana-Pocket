@@ -150,6 +150,7 @@ banana-perf ui
     /usr/libexec/banana/usb-gadget
     # file sharing, when switched on in the settings
     grep -q '^ *share *= *on' /data/banana/settings.conf 2>/dev/null && /usr/libexec/banana/share up
+    grep -q '^ *web *= *on' /data/banana/settings.conf 2>/dev/null && /usr/libexec/banana/web up
     grep -q '^ *ssh *= *on' /data/banana/settings.conf 2>/dev/null && /usr/libexec/banana/ssh up
 ) &
 # the boot, to read on a computer (logs/boot.txt, logs/dmesg.txt), once it has settled; rcK writes it again at shutdown

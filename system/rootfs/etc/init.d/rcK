@@ -13,6 +13,7 @@ done
 # Network shares first: ksmbd/sshd hold /data open, so the transfer-mode handover has to be able to unmount it.
 # (This runs before usb-msc off, which mounts /data again -- and takes it back off if a computer had it.)
 /usr/libexec/banana/share down 2>/dev/null     # a computer's open files on the card
+/usr/libexec/banana/web down 2>/dev/null
 /usr/libexec/banana/ssh down 2>/dev/null
 # In transfer mode /data is the computer's: do NOT mount it here -- that is a write to a filesystem the host may
 # still have open. The kmsg reboot finds the flag and unbinds the gadget, so the computer gets a clean removal and
