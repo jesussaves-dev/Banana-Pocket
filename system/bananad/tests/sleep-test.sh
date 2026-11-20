@@ -281,6 +281,35 @@ grep -q 'reboot 0x4321fedc' /run/test/reboot 2>/dev/null && ok "forced RB_POWER_
 stop
 POWEROFF=0
 echo 200 > /sys/class/backlight/backlight0/brightness; echo 200 > /sys/class/backlight/backlight1/brightness
+echo "2e. low battery and no RTC alarm: dark but awake, parked at the minimum clocks until the next press"
+mount -t tmpfs none /sys/devices/system/cpu
+for p in 0:300000:1800000 6:500000:2400000; do
+    n=${p%%:*}; r=${p#*:}; lo=${r%%:*}; hi=${r#*:}
+    d=/sys/devices/system/cpu/cpufreq/policy$n; mkdir -p $d
+    echo $lo > $d/cpuinfo_min_freq; echo $lo > $d/scaling_min_freq; echo $hi > $d/scaling_max_freq; echo schedutil > $d/scaling_governor
+done
+for i in 1 2 3 4 5 6 7; do mkdir -p /sys/devices/system/cpu/cpu$i; echo 1 > /sys/devices/system/cpu/cpu$i/online; done
+mkdir -p /sys/class/devfreq/3d00000.gpu; echo simple_ondemand > /sys/class/devfreq/3d00000.gpu/governor
+rm -f /run/banana/game.pid /sys/class/rtc/rtc0/wakealarm
+echo 3 > /sys/class/power_supply/battery/capacity
+start "sleep_floor_percent = 5"
+power
+sleep 1
+grep -q 'dark, but watching the battery' /data/banana/logs/sleep.log && ok "refused to sleep, panel dark" || bad "no low-battery refusal"
+C=/sys/devices/system/cpu
+[ "$(cat $C/cpufreq/policy0/scaling_max_freq)" = 300000 ] && [ "$(cat $C/cpufreq/policy6/scaling_max_freq)" = 500000 ] && [ "$(cat $C/cpufreq/policy6/scaling_min_freq)" = 500000 ] && ok "both policies at their minimum" || bad "policies: $(cat $C/cpufreq/policy0/scaling_max_freq) $(cat $C/cpufreq/policy6/scaling_max_freq)"
+[ "$(cat $C/cpu1/online)$(cat $C/cpu7/online)" = 00 ] && ok "cpu1-7 offline" || bad "cpus still online"
+[ "$(cat /sys/class/devfreq/3d00000.gpu/governor)" = powersave ] && ok "GPU at its lowest step" || bad "gpu governor $(cat /sys/class/devfreq/3d00000.gpu/governor)"
+ev $EV_KEY 304 1; ev $EV_KEY 304 0; sleep 0.5
+[ "$(cat $C/cpufreq/policy0/scaling_max_freq)" = 1800000 ] && [ "$(cat $C/cpufreq/policy6/scaling_max_freq)" = 2400000 ] && [ "$(cat $C/cpufreq/policy6/scaling_min_freq)" = 500000 ] && ok "clocks restored at the press" || bad "clocks: $(cat $C/cpufreq/policy0/scaling_max_freq) $(cat $C/cpufreq/policy6/scaling_max_freq)"
+[ "$(cat $C/cpu1/online)$(cat $C/cpu7/online)" = 11 ] && ok "cores back online" || bad "cores still offline"
+[ "$(cat /sys/class/devfreq/3d00000.gpu/governor)" = simple_ondemand ] && [ "$(cat $C/cpufreq/policy0/scaling_governor)" = schedutil ] && ok "governors restored" || bad "governors not restored"
+stop
+umount /sys/devices/system/cpu
+rm -rf /sys/class/devfreq
+: > /sys/class/rtc/rtc0/wakealarm
+echo 50 > /sys/class/power_supply/battery/capacity
+
 setsid sleep 600 & GAME=$!; sleep 0.1; echo $GAME > /run/banana/game.pid
 
 echo "3. an RTC wake with enough battery goes back to sleep"
