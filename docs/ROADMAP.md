@@ -11,10 +11,13 @@ in 1.0 only if a stranger would notice it missing or broken. Sizes: **S** a day 
 
 ### Must-haves (in order)
 1. **Sleep: the 12.7 s phantom burst.** Three wakes exactly 12.7 s apart at an unchanged battery %, then `bananad` gives up
-   and wakes fully (2026-11-16 14:34). Not the gauge. At the next burst, dump `wakeup_sources` and `/proc/interrupts` deltas
-   per re-sleep before guessing. Stopgap now: the give-up keeps the panel dark.
-2. **Sleep: power-button sleeps that "did not take"** (2026-11-18): woke 1-3 s later with "power key" and no kernel wakeup
-   event, unit on the USB gadget. Retest unplugged before blaming code.
+   and wakes fully (2026-11-16 14:34). Not the gauge. Not seen again through 2026-11-19 (overnight 9.9 h, 12 mA, five
+   slow phantoms that re-slept: `ipcc_0`/`glink-smem` +40-49, no power key, the battmgr ping). At the next burst, dump
+   `wakeup_sources` and `/proc/interrupts` deltas per re-sleep before guessing. Stopgap: the give-up keeps the panel dark.
+2. **Sleep: power-button sleeps that "did not take"** (17 in `sleep.log`, last 2026-11-18 22:01): woke 0-4 s later with
+   "power key" and no kernel wakeup event. Not only the USB gadget (three at 14:40 were unplugged), and 5 sleeps since
+   23:16 took, so the sample proves nothing. Next: about 20 quick sleep/wake presses, unplugged and on USB, after the
+   signed flash.
 3. **Signed releases: built, unshipped.** `update` verifies `sha256sums.sig` (ed25519, `tools/release-key.sh`) against
    `/etc/banana/release.pub` and refuses unsigned packages unless `/data/banana/allow-unsigned` exists. Left: back up
    `~/.config/banana/release-ed25519.pem`, commit the public key, build the image once (needs `openssl` in the
