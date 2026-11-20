@@ -1324,7 +1324,8 @@ int main(int argc, char** argv)
 		if (crtWarmAt > 0 && disp.isOpen() && !disp.isOff())
 		{
 			double t = nowMs();
-			if (!disp.crtMask()) { crtWarmAt = 0; disp.setWarmup(1000); crtPushDue = true; }	// the mask went off: so does the warm-up
+			// the mask went off, or a game is up (a game is never run on a cold tube): so does the warm-up
+			if (!disp.crtMask() || gamePid > 0) { crtWarmAt = 0; disp.setWarmup(1000); crtPushDue = true; }
 			else if (t - crtWarmStep >= kCrtStepMs)
 			{
 				crtWarmStep = t;
@@ -1516,7 +1517,9 @@ int main(int argc, char** argv)
 						// out of the panel (EACCES). A full reopen is only for a panel that will not restore.
 						// a cold tube: the LUT the restore's modeset carries is already the warm-up's first
 						bool crt = crtPersonality();
-						if (crt) { crtWarmAt = crtWarmStep = nowMs(); disp.setWarmup(0); }
+						// a game the sleep left resident wakes on a warm tube: its picture is never faint or re-tinted ten
+						// times a second for 20 s (the thump and the switch-off stay)
+						if (crt && gamePid <= 0) { crtWarmAt = crtWarmStep = nowMs(); disp.setWarmup(0); }
 						else if (disp.warmupLevel() != 1000) disp.setWarmup(1000);
 						bool restored = false;
 						for (int tries = 0; disp.isOpen() && !restored && tries < 50; tries++)
