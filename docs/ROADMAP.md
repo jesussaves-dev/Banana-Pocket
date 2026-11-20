@@ -1,10 +1,18 @@
-# BananaOS Roadmap (RPC / SM4450)
+# Banana Pocket Roadmap (RPC / SM4450)
 Refs: `docs/ARCHITECTURE.md` (how it works, and why), `docs/RPC-TEST.md` (hardware checklist). Shipped work lives in `git log` and the
-release notes, not here. Updated 2026-11-18 (rewritten around 1.0; the old *Done* list is in git history).
+release notes, not here. Updated 2026-11-20 (rewritten around 1.0; the old *Done* list is in git history; goal grill added the rename, the
+battery rule and the ship rule).
 
-## BananaOS 1.0
+## Banana Pocket 1.0
 **The promise: a stranger can install it, it never loses their progress, and sleep works like a console.** An item is
 in 1.0 only if a stranger would notice it missing or broken. Sizes: **S** a day or two, **M** about a week, **L** a project.
+
+**Audience:** non-technical Retroid Pocket Classic owners; 1.0 is RPC-only. **Trust rule:** never lose progress,
+settings, saves, or battery that can be saved. Battery is a bug class, not a number: a wake, burst or drain with a
+known fixable cause blocks 1.0; the hardware floor does not, and there is no mA target.
+
+**Ship rule:** 1.0 ships when every gate is green and one sleep soak on hardware passes. A battery win found after that
+goes into 1.0.1, not into a delay.
 
 **Rule from now on:** every new user-facing string goes in through `tr()` with `es`/`de` entries in the same change
 (`tools/check-lang.py` enforces keys), so the Languages phase 2 debt stops growing.
@@ -29,6 +37,10 @@ in 1.0 only if a stranger would notice it missing or broken. Sizes: **S** a day 
 5. **Recovery screen without Android (M):** hold a button at power-on: boot the other slot, reset settings, fsck `/data`,
    transfer mode.
 6. **Fresh-card welcome (S):** where ROMs go, the share and `banana.local` address with a QR code, missing BIOS files.
+7. **Rename to Banana Pocket (S):** the public name. Change every user-visible string (boot splash, About screen, update
+   package name, site, installer, flasher, release notes) through `tr()`; `banana-rpc` and `retroid-pocket-classic`
+   stay as internal IDs. The README credits Jorre's BananaLinux, which this code derives from. Check the kernel
+   `-Bananix` string and `check-kver` before touching it.
 
 ### Headline features
 - **`banana.local` (M):** a web page on the handheld: drop in ROMs and BIOS, download saves and a backup, read logs,
@@ -42,8 +54,9 @@ in 1.0 only if a stranger would notice it missing or broken. Sizes: **S** a day 
 - **Flasher 2.0.0 on real Windows:** one full flash and one mid-flash cancel (Windows paths are tested with mocks only).
 - **Sleep means paused:** done, checked on hardware 2026-11-19 (patch `0015`, `SAVE_STATE_AUTO`, answer in
   `/run/banana/autosave`): sleep with a game open and Quick resume on wrote the `.auto` state in 40 ms before the freeze.
-- **Sleep soak:** 20 sleep/wake cycles with a game open plus one overnight, with no stuck wake, no lost audio, no
-  `enc35 timeout`. Drain is accepted at the ~18 mA baseline (0.8.0 overnight, ~12 days standby); it is not a gate.
+- **Sleep soak (the last gate):** 20 sleep/wake cycles with a game open plus one overnight, with no stuck wake, no lost
+  audio, no `enc35 timeout`. Drain is accepted at the ~18 mA baseline (0.8.0 overnight, ~12 days standby); it is not a
+  gate, but any avoidable waste the soak shows is.
 - **Recovery and welcome** on a freshly flashed card, from the website's install path end to end.
 
 ## After 1.0
