@@ -3052,11 +3052,11 @@ namespace banana
 			scrapeShort(),
 			"" };
 		static const char* helps[5] = {
-			"Your home network: the games' achievements, the clock and the art need it. A picks it from the networks around; the password goes in on the keyboard.",
+			"Your home network: the games' achievements, the clock and the art need it. Press A to pick it from the networks around; the password goes in on the keyboard.",
 			"The clock in the status bar, and the games' own clocks. Left and right change it.",
-			"Your retroachievements.org account: RetroArch unlocks achievements with it. A types the name, then the password. Leave it if you have none.",
-			"Covers, title screens, genres and years for the games on the card, from libretro's free collections: no account. A starts it (Wi-Fi first); it keeps going while you finish the setup, and the menu shows the art as it comes. Settings > System > Box art runs it again for new games.",
-			"Everything here is in the settings too (Start in the menu), and this setup is under System > First-time setup. A finishes." };
+			"Your retroachievements.org account: RetroArch unlocks achievements with it. Press A to type the name, then the password. Leave it if you have none.",
+			"Covers, title screens, genres and years for the games on the card, from libretro's free collections: no account. Press A to start it (Wi-Fi first); it keeps going while you finish the setup, and the menu shows the art as it comes. Settings > System > Box art runs it again for new games.",
+			"Everything here is in the settings too (Start in the menu), and this setup is under System > First-time setup. Press A to finish." };
 		std::string help = message.empty() ? helps[wsel] : message;
 		const char* act = wsel == 4 ? "Finish" : wsel == 1 ? "Next zone" : wsel == 3 ? (scraping() ? "Running" : "Start") : "Open";
 		if (snes)
