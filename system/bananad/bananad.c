@@ -828,6 +828,7 @@ static struct { char dir[160]; char gov[32]; int min, max; } sb_pol[SB_POL];
 static int sb_npol, sb_on;
 static char sb_online[SB_CPU];
 static char sb_gpu[160], sb_gpu_gov[32];
+static int sb_gpu_max;
 
 static void standby_enter(void)
 {
@@ -869,6 +870,14 @@ static void standby_enter(void)
 		snprintf(g, sizeof g, "%s/governor", sb_gpu);
 		read_str(g, sb_gpu_gov, sizeof sb_gpu_gov);
 		write_file(g, "powersave");
+		/* "powersave" written over "powersave" re-evaluates nothing: the GPU can sit at its top step under it.
+		 * Cap the ceiling at the floor so it really drops. */
+		char m[200], lo[24];
+		snprintf(m, sizeof m, "%s/max_freq", sb_gpu);
+		sb_gpu_max = read_int(m, -1);
+		snprintf(g, sizeof g, "%s/min_freq", sb_gpu);
+		read_str(g, lo, sizeof lo);
+		if (sb_gpu_max > 0 && lo[0]) write_file(m, lo);
 		break;
 	}
 	if (dv) closedir(dv);
@@ -907,6 +916,12 @@ static void standby_exit(void)
 		char g[200];
 		snprintf(g, sizeof g, "%s/governor", sb_gpu);
 		write_file(g, sb_gpu_gov);
+		if (sb_gpu_max > 0) {
+			char m[200], n[24];
+			snprintf(m, sizeof m, "%s/max_freq", sb_gpu);
+			snprintf(n, sizeof n, "%d", sb_gpu_max);
+			write_file(m, n);
+		}
 	}
 	sleep_log("standby: clocks and cores back");
 }
