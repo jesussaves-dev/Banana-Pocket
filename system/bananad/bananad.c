@@ -817,6 +817,100 @@ static void sleep_save_state(pid_t game)
 	}
 }
 
+/* ---- standby: the SoC awake behind a dark panel ------------------------------------------------------------------- */
+/* Two paths leave the SoC running with nothing to show: the low-battery refusal to sleep (it stays up so the 60 s poll
+ * can shut down) and a suspend that failed. Park it while the panel is dark: both cpufreq policies at their minimum
+ * (always together), the GPU on its lowest devfreq step, cpu1-7 offline. The values are read first and put back at
+ * the next key press, so nothing depends on which clock profile was active. */
+#define SB_POL 4
+#define SB_CPU 8
+static struct { char dir[96]; char gov[32]; int min, max; } sb_pol[SB_POL];
+static int sb_npol, sb_on;
+static char sb_online[SB_CPU];
+static char sb_gpu[160], sb_gpu_gov[32];
+
+static void standby_enter(void)
+{
+	if (sb_on) return;
+	sb_on = 1;
+	sb_npol = 0;
+	DIR *d = opendir("/sys/devices/system/cpu/cpufreq");
+	struct dirent *e;
+	while (d && (e = readdir(d)) && sb_npol < SB_POL) {
+		if (strncmp(e->d_name, "policy", 6)) continue;
+		char p[160], v[200];
+		snprintf(p, sizeof p, "/sys/devices/system/cpu/cpufreq/%.40s", e->d_name);
+		snprintf(sb_pol[sb_npol].dir, sizeof sb_pol[0].dir, "%s", p);
+		snprintf(v, sizeof v, "%s/cpuinfo_min_freq", p);
+		int lo = read_int(v, -1);
+		snprintf(v, sizeof v, "%s/scaling_min_freq", p);
+		sb_pol[sb_npol].min = read_int(v, -1);
+		snprintf(v, sizeof v, "%s/scaling_max_freq", p);
+		sb_pol[sb_npol].max = read_int(v, -1);
+		snprintf(v, sizeof v, "%s/scaling_governor", p);
+		read_str(v, sb_pol[sb_npol].gov, sizeof sb_pol[0].gov);
+		if (lo <= 0 || sb_pol[sb_npol].min <= 0 || sb_pol[sb_npol].max <= 0) continue;
+		char lov[16];
+		snprintf(lov, sizeof lov, "%d", lo);
+		snprintf(v, sizeof v, "%s/scaling_max_freq", p);
+		write_file(v, lov);	/* the cap first, so the floor never sits above it */
+		snprintf(v, sizeof v, "%s/scaling_min_freq", p);
+		write_file(v, lov);
+		sb_npol++;
+	}
+	if (d) closedir(d);
+	sb_gpu[0] = 0;
+	DIR *dv = opendir("/sys/class/devfreq");
+	while (dv && (e = readdir(dv))) {
+		size_t n = strlen(e->d_name);
+		if (n < 4 || strcmp(e->d_name + n - 4, ".gpu")) continue;
+		char g[200];
+		snprintf(sb_gpu, sizeof sb_gpu, "/sys/class/devfreq/%.100s", e->d_name);
+		snprintf(g, sizeof g, "%s/governor", sb_gpu);
+		read_str(g, sb_gpu_gov, sizeof sb_gpu_gov);
+		write_file(g, "powersave");
+		break;
+	}
+	if (dv) closedir(dv);
+	for (int i = 1; i < SB_CPU; i++) {
+		char p[96];
+		snprintf(p, sizeof p, "/sys/devices/system/cpu/cpu%d/online", i);
+		sb_online[i] = read_int(p, -1) == 1;
+		if (sb_online[i]) write_file(p, "0");
+	}
+	sleep_log("standby: clocks at the minimum and cpu1-7 offline while the panel is dark");
+}
+
+static void standby_exit(void)
+{
+	if (!sb_on) return;
+	sb_on = 0;
+	for (int i = 1; i < SB_CPU; i++) {
+		char p[96];
+		snprintf(p, sizeof p, "/sys/devices/system/cpu/cpu%d/online", i);
+		if (sb_online[i]) write_file(p, "1");
+	}
+	/* the policy of a cluster whose cores all went offline is made again with the kernel's defaults: write every
+	 * saved value back after the cores are up */
+	for (int i = 0; i < sb_npol; i++) {
+		char v[200], n[16];
+		snprintf(v, sizeof v, "%s/scaling_max_freq", sb_pol[i].dir);
+		snprintf(n, sizeof n, "%d", sb_pol[i].max);
+		write_file(v, n);
+		snprintf(v, sizeof v, "%s/scaling_min_freq", sb_pol[i].dir);
+		snprintf(n, sizeof n, "%d", sb_pol[i].min);
+		write_file(v, n);
+		snprintf(v, sizeof v, "%s/scaling_governor", sb_pol[i].dir);
+		if (sb_pol[i].gov[0]) write_file(v, sb_pol[i].gov);
+	}
+	if (sb_gpu[0] && sb_gpu_gov[0]) {
+		char g[200];
+		snprintf(g, sizeof g, "%s/governor", sb_gpu);
+		write_file(g, sb_gpu_gov);
+	}
+	sleep_log("standby: clocks and cores back");
+}
+
 static void suspend_now(const char *why)
 {
 	double t0 = mono();
@@ -832,6 +926,7 @@ static void suspend_now(const char *why)
 		    battery_discharging_pct());
 		backlights_power(0);
 		panel_blanked = 1;
+		if (!pid_of("/run/banana/game.pid")) standby_enter();	/* a game left running keeps its clocks */
 		last_input = mono();
 		return;
 	}
@@ -944,6 +1039,7 @@ static void suspend_now(const char *why)
 			 * leave the handheld with no network until the next sleep succeeds */
 			hooks("post", 1);
 			panel_blanked = 1;
+			if (!game) standby_enter();
 			sleep_log("could not suspend after %d tries: the panel is dark until the next press", failures);
 			last_input = mono();
 			return;
@@ -2407,7 +2503,7 @@ static void resync_keys(int fd)
 static void handle(const struct input_event *e)
 {
 	double now = mono();
-	if (e->type == EV_KEY) { last_input = now; undim(); if (panel_blanked) { panel_blanked = 0; backlights_power(1); pid_t u = ui_pid(); if (u > 0 && (!pid_of("/run/banana/game.pid") || compositor_on())) kill(u, SIGUSR1); } }
+	if (e->type == EV_KEY) { last_input = now; undim(); if (panel_blanked) { panel_blanked = 0; standby_exit(); backlights_power(1); pid_t u = ui_pid(); if (u > 0 && (!pid_of("/run/banana/game.pid") || compositor_on())) kill(u, SIGUSR1); } }
 	if (e->type == EV_SW && e->code == SW_HEADPHONE_INSERT) {
 		if (headphones != e->value) {
 			/* unplugged while a game runs: it would blast the speaker, so pause it; plugging back in does not
