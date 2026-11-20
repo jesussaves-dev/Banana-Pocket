@@ -17,7 +17,7 @@ def load(path):
 def main(argv):
     root = next((a for a in argv[1:] if not a.startswith("-")), os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     langdir = os.path.join(root, "ui", "assets", "lang")
-    src = "".join(open(p, encoding="utf-8").read() for p in glob.glob(os.path.join(root, "ui", "src", "*.cpp")))
+    src = "".join(open(p, encoding="utf-8").read() for p in glob.glob(os.path.join(root, "ui", "src", "*.cpp")) + glob.glob(os.path.join(root, "ui", "src", "*.h")))
     files = sorted(glob.glob(os.path.join(langdir, "*.json")))
     if not files:
         print("check-lang: no catalogs in %s" % langdir)

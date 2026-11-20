@@ -399,14 +399,14 @@ struct LowBattery
 		std::string off = std::to_string(shutdownAt) + "%";
 		if (step == 5)
 		{
-			title = "Battery nearly empty: " + std::to_string(percent) + "%";
-			body = "Save your game now. At " + off + " Banana Pocket closes it and shuts down.";
+			title = tr("Battery nearly empty") + ": " + std::to_string(percent) + "%";
+			body = tr("Save your game now. Banana Pocket closes it and shuts down at ") + off + ".";
 		}
 		else
 		{
-			title = "Battery low: " + std::to_string(percent) + "%";
-			body = step == 10 ? "Plug in the charger soon. At " + off + " Banana Pocket closes the game and shuts down."
-				: "Time to find the charger.";
+			title = tr("Battery low") + ": " + std::to_string(percent) + "%";
+			body = step == 10 ? tr("Plug in the charger soon. Banana Pocket closes the game and shuts down at ") + off + "."
+				: tr("Time to find the charger.");
 		}
 		return true;
 	}

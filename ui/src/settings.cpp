@@ -341,7 +341,7 @@ namespace banana
 			{ "0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, { "0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100" }, Item::VOLUME);
 		add(D, "picture", "Night light", "Warmer colours at night: a panel-level tint over the menu and the games; Warmer cuts more blue.", menu, "night_light", { "Off", "Warm", "Warmer" }, { "off", "warm", "warmer" });
 		add(D, "music", "Menu sounds", "The menu's clicks, and the click as the boot logo lands.", menu, "sounds", { "On", "Off" }, { "on", "off" });
-		add(D, "music", "Background Music", "An ambient loop under the menu, mixed low so the clicks stay clear. The SNES style plays its own; a bgm.wav (or music/bgm.wav) on the card plays instead. Off stops it at once.", menu, "bgm", { "On", "Off" }, { "on", "off" });
+		add(D, "music", "Background Music", "An ambient loop under the menu, mixed low. A bgm.wav (or music/bgm.wav) on the card plays instead. Off stops it.", menu, "bgm", { "On", "Off" }, { "on", "off" });
 		if (genesis)	// the era's Options screens had one
 			add(D, "music", "Sound Test", "Plays the theme's sounds by number. Left and right pick one, L and R by ten, A plays it.", "", "",
 				{}, {}, Item::SOUNDTEST);
@@ -354,11 +354,11 @@ namespace banana
 			{ "Never", "5 minutes", "10 minutes", "15 minutes", "30 minutes" }, { "0", "5", "10", "15", "30" });
 		add(P, "moon", "Dim when idle", "In the menu, the panel goes down to a third after this long with no button pressed, and back at the first press. Never while a game is running.", power, "dim_minutes",
 			{ "Never", "1 minute", "2 minutes", "5 minutes" }, { "0", "1", "2", "5" });
-		add(P, "music", "Fast wake audio", "Keep the sound server running through a sleep: a game has sound the instant it wakes, at about 12 mA more while asleep. Off stops the server for the sleep; the game's audio comes back a second or two after a wake.", power, "wake_audio_fast", { "On", "Off" }, { "on", "off" });
+		add(P, "music", "Fast wake audio", "Keeps sound ready through a sleep, so a game has audio the instant it wakes, for about 12 mA more while asleep.", power, "wake_audio_fast", { "On", "Off" }, { "on", "off" });
 		const char* O = "RetroArch";
-		add(O, "gamepad", "RetroAchievements", "Softcore: achievements unlock with save states, rewind and cheats still there. Hardcore: those are locked for the game, and the unlocks count as hardcore on retroachievements.org. RetroArch's own menu changes the same setting.",
+		add(O, "gamepad", "RetroAchievements", "Softcore keeps save states, rewind and cheats. Hardcore locks them, and unlocks count as hardcore on retroachievements.org.",
 			"/data/retroarch/retroarch.cfg", "cheevos_hardcore_mode_enable", { "Softcore", "Hardcore" }, { "false", "true" });
-		add(O, "gamepad", "Quick resume", "On: quitting keeps where you are, and the game goes on from there next time (RetroArch's automatic save state; not in Hardcore). Off: a game starts from its title.", "/data/retroarch/retroarch.cfg", "savestate_auto_save", { "Off", "On" }, { "false", "true" });
+		add(O, "gamepad", "Quick resume", "On: quitting keeps where you are and the game resumes there next time (not in Hardcore). Off: a game starts from its title.", "/data/retroarch/retroarch.cfg", "savestate_auto_save", { "Off", "On" }, { "false", "true" });
 		if (access("/usr/lib/libretro/mgba_libretro.so", F_OK) == 0)
 			add(O, "gamepad", "Game Boy Advance", "The emulator for GBA games. gpSP: the fastest. mGBA: the most accurate, and the one RetroAchievements accepts for hardcore.", menu, "core.gba", { "gpSP", "mGBA" }, { "gpsp", "mgba" });
 		if (access("/usr/lib/libretro/swanstation_libretro.so", F_OK) == 0)
@@ -379,7 +379,7 @@ namespace banana
 			add(O, "gamepad", "Nintendo 64", "The emulator for N64 games. Mupen64Plus-Next: the usual choice, with its own GLideN64. ParaLLEl N64: the alternative.", menu, "core.n64", { "Mupen64Plus-Next", "ParaLLEl N64" }, { "mupen64plus_next", "parallel_n64" });
 		const char* W = "Network";
 		add(W, "phone", "Wi-Fi", "", menu, "wifi", { "On", "Off" }, { "on", "off" });
-		add(W, "phone", "Network", "The networks around: A on one joins it, with a password typed on the keyboard here (or by touch). An old WEP network takes its key the same way; a company (802.1X) network still needs banana/wifi.conf by hand.", "", "network", {}, {}, Item::PAGE);
+		add(W, "phone", "Network", "The networks around: press A to join one, typing the password on the keyboard or by touch. 802.1X needs banana/wifi.conf.", "", "network", {}, {}, Item::PAGE);
 		add(W, "phone", "File sharing", "", menu, "share", { "Off", "On" }, { "off", "on" });
 		const char* S = "System";
 		{
@@ -388,12 +388,12 @@ namespace banana
 			add(S, "gear", "Time zone", "The clock's time zone, summer time included, for the menu and the games. The time itself comes from Wi-Fi or the handheld's own clock.",
 				menu, "timezone", names, tzs);
 		}
-		add(S, "gear", "Update", "A new version of Banana Pocket, written to the other slot and run from the next restart; this one stays as it is until then. Over Wi-Fi, \"Check for updates\" downloads the newest release from GitHub; a package on the card in banana/updates (File sharing can copy one) works too.", "", "update", {}, {}, Item::PAGE);
-		add(S, "gear", "Back up settings", "Settings, accounts, the saves/states trees and RetroArch's controller remaps in one file in banana/backups on the card (File sharing can copy it off). Games and box art stay out of it. Press A twice.", "", "backup", { "" }, { "" }, Item::ACTION);
+		add(S, "gear", "Update", "Writes a new version to the other slot, used from the next restart. Gets the latest release over Wi-Fi, or banana/updates.", "", "update", {}, {}, Item::PAGE);
+		add(S, "gear", "Back up settings", "Settings, accounts, saves, states and controller remaps in one file in banana/backups. Games and art stay out. Press A twice.", "", "backup", { "" }, { "" }, Item::ACTION);
 		add(S, "gear", "Restore settings", "Unpacks the newest backup over the card's settings, saves and states, then restarts the menu so they are read. Press A twice.", "", "restore", { "" }, { "" }, Item::ACTION);
-		add(S, "picture", "Box art", "Covers, title screens, genres and years for your games, from libretro's free collections (no account, Wi-Fi needed). It keeps going in the background; games that already have art are skipped, so running it again only fetches what is new. Starts only on the charger (or the USB cable), so a long scrape cannot flatten the battery.",
+		add(S, "picture", "Box art", "Covers, titles, genres and years from libretro's free collections (Wi-Fi). Skips games that have art. Runs only on the charger.",
 			"", "scrape", {}, {}, Item::PAGE);
-		add(S, "picture", "Box art from", "libretro: libretro's collections. libretro + Twilight: TwilightBoxart (boxart.kirovair.com) for the covers libretro has none of. Twilight first: TwilightBoxart's covers where it has them. TwilightBoxart is asked one game a second.",
+		add(S, "picture", "Box art from", "libretro: its own collections. + Twilight: TwilightBoxart fills the gaps. Twilight first: TwilightBoxart's covers, then libretro's.",
 			menu, "boxart_source", { "libretro", "libretro + Twilight", "Twilight first" }, { "libretro", "both", "twilight" });
 		add(S, "gear", "Previous version", "Restarts into the other slot: the version that ran before the last update. Press A twice.", "", "switch", { "" }, { "" }, Item::ACTION);
 		add(S, "gear", "SSH", "", menu, "ssh", { "Off", "On" }, { "off", "on" });
@@ -403,10 +403,10 @@ namespace banana
 		if (access("/run/banana/sd2/slot", F_OK) == 0)	// a second card slot (bananad's sd2 script)
 		add(S, "gear", "Second SD card", "Games on the card in the second slot (its roms folder, with the same system folders as this card) show up in the library with the others while it's in. exFAT or FAT32.", menu, "sd2_roms", { "Show its games", "Off" }, { "on", "off" });
 		add(S, "picture", "On-screen info while playing",
-			"While a game runs, a change of volume or brightness and a low battery show as a line inside the game, achievements appear as they unlock, and pulling the headphones pauses it. Off: the screen is the game's alone; the menu's own cards are unchanged.",
+			"In a game, volume, brightness, low battery and achievements show as a line; pulling the headphones pauses. Off: just the game.",
 			power, "hud", { "On", "Off" }, { "1", "0" });
 		add(S, "gear", "First-time setup", "The steps from the first boot again: Wi-Fi, the time zone and the RetroAchievements account.", "", "setup", {}, {}, Item::PAGE);
-		add(S, "gear", "Reset system settings", "Puts the menu, display, sound, power and network settings back to their defaults (banana/settings.conf and bananad's sleep rows; your games and card are untouched). Press A twice.",
+		add(S, "gear", "Reset system settings", "Puts menu, display, sound, power and network settings back to default. Games and card are untouched. Press A twice.",
 			"", "reset_system", { "" }, { "" }, Item::ACTION);
 		add(S, "gear", "Reset emulator settings", "Puts the emulator choices back to their defaults: the core.<system> picks. Your menu and card settings stay. Press A twice.",
 			"", "reset_emulator", { "" }, { "" }, Item::ACTION);
@@ -414,7 +414,7 @@ namespace banana
 		add(S, "gear", "Restart", "Restarts the handheld. Press A twice.", "", "reboot", { "" }, { "" }, Item::ACTION);
 		add(S, "gear", "Shut down", "Turns the handheld off. Press A twice. (Or hold the power button.)", "", "poweroff", { "" }, { "" }, Item::ACTION);
 		const char* F = "Frames";
-		add(F, "picture", "Screen bezels", "A frame around the game, on RetroArch systems and ports. Game Boy, Game Boy Color and Game Boy Advance have their console's own by default; the rest have none until you pick one here, in a game's options, or from the pause menu. Off turns them all off.",
+		add(F, "picture", "Screen bezels", "A frame around the game. Game Boy systems default to their own; choose others here, or in a game's options. Off removes all.",
 			menu, "bezels", { "On", "Off" }, { "on", "off" });
 		add(F, "picture", "Frame brightness", "How bright a frame is next to the game. The panel is OLED and a frame stays still for hours, so lower is kinder to it.",
 			menu, "frame_brightness", { "100%", "85%", "70%", "50%" }, { "100", "85", "70", "50" });
@@ -427,11 +427,11 @@ namespace banana
 			add(F, "picture", s.second.c_str(), "The frame for this system. A game's own options can choose differently.", menu, ("frame." + s.first).c_str(), names, values);
 		}
 		const char* SH = "Shaders";
-		add(SH, "picture", "Screen mask", "A CRT or LCD pattern over the menu and the games, drawn by the display itself. The panel is OLED and a mask stays still for hours, so leave it off when you don't want it.",
+		add(SH, "picture", "Screen mask", "A CRT or LCD pattern over the menu and games. The panel is OLED and a mask stays put for hours, so leave it off if unsure.",
 			menu, "shader_mask", { "Off", "CRT scanlines", "Aperture grille", "LCD grid" }, { "off", "crt240", "aperture", "lcd" });
 		add(SH, "picture", "Mask strength", "How dark the mask's lines are. Lower is gentler on the eyes and on the OLED panel.", menu, "shader_mask_intensity",
 			{ "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, { "10", "20", "30", "40", "50", "60", "70", "80", "90", "100" }, Item::PERCENT);
-		add(SH, "picture", "CRT power effects", "With a CRT mask on: the picture collapses to a dot when it sleeps, and on the wake a degauss thump and a cold tube warming up for about 20 seconds.",
+		add(SH, "picture", "CRT power effects", "With a CRT mask on: the picture collapses to a dot on sleep, and wakes with a degauss thump and a 20 s warm-up.",
 			menu, "crt_personality", { "On", "Off" }, { "on", "off" });
 		add(SH, "picture", "Screen colour", "The panel's colour, as a monitor of the time showed it: a cool Trinitron, a neutral studio PVM, or a muted handheld LCD.",
 			menu, "shader_color", { "Standard", "Trinitron", "PVM", "Handheld" }, { "bypass", "trinitron", "pvm", "handheld" });
@@ -487,7 +487,7 @@ namespace banana
 				std::string nm = themeValue(cur, "name");
 				if (!nm.empty() && std::find(it.values.begin(), it.values.end(), cur) == it.values.end()) { it.names.push_back(nm); it.values.push_back(cur); }
 			}
-			it.help = "The look of the menu, drawn from a theme's .json: the Pocket layout and its colour variations. Your own go in banana/themes on the card (banana/themes/README.txt says how).";
+			it.help = "The menu's look, from a theme's .json: the Pocket layout and colour variations. Your own go in banana/themes (see its README.txt).";
 			std::string v = getConfValue(it.file, it.key, "dark");
 			if (v == "dark" || v == "light" || v == "carts")
 			{
@@ -1676,26 +1676,21 @@ namespace banana
 		if (cur.kind == Item::INFO) help = about;
 		if (cur.key == "wifi") help = "Wi-Fi: " + wifiInfo + ". Network, below, joins one; networks can also be written in banana/wifi.conf on a computer (see banana/README.txt).";
 		if (cur.key == "ssh")
-			help = "For working on Banana Pocket itself: ssh root@" + (ip.empty() ? std::string("<address>") : ip) +
-				", with the public keys in banana/ssh/authorized_keys on the card (no passwords). Files: scp -O (dropbear has no SFTP), or File sharing.";
+			help = "For developers: ssh root@" + (ip.empty() ? std::string("<address>") : ip) +
+				", keys in banana/ssh/authorized_keys on the card (no passwords). Files: scp -O or File sharing.";
 		if (cur.key == "adb")
-			help = "adb over the network, its own switch (not SSH's): a computer runs adb connect " +
-				(ip.empty() ? std::string("<address>") : ip) + ":5555. This adbd has no host key, so anyone on the "
-				"network can get a root shell while it is on -- leave it off on networks you don't trust. Over the USB "
-				"cable adb always works.";
+			help = "adb over the network (adb connect " + (ip.empty() ? std::string("<address>") : ip) +
+				":5555). Anyone on the network gets a root shell while it is on: leave it off when unsure.";
 		if (cur.key == "switch" && !message.empty()) help = message;
 		if (cur.key == "usb_mass_storage")
-			help = "The card's games and saves as a USB disk on the computer over the cable. Read-only lets the "
-				"computer copy them off (the menu keeps running). Read-write is a transfer mode: the menu stops and "
-				"the card is the computer's, so files can be copied onto it; eject the disk when done and the menu "
-				"comes back.";
+			help = "The card as a USB disk. Read-only: copy files off while the menu runs. Read-write: the menu stops, "
+				"so files can be copied on.";
 		if (cur.key == "share")
 		{
 			std::string at = ip.empty() ? "<address>" : ip;
-			help = "The card on the network: \\\\" + at + "\\banana in Windows' File Explorer, smb://" + at +
-				"/banana on a Mac (Finder, Go, Connect to Server). Anyone on the network can open it with no password: "
-				"leave it off on networks you don't trust.";
-			if (ip.empty()) help += " (Not connected to Wi-Fi now.)";
+			help = "The card at \\\\" + at + "\\banana (Windows) or smb://" + at +
+				"/banana (Mac). No password: leave it off on networks you don't trust.";
+			if (ip.empty()) help = "The card on the network. Not connected to Wi-Fi now.";
 		}
 		if (cur.kind == Item::SOUNDTEST && stArmed) help = tr("Secret! Press Start.");
 		if (cur.key == "scrape" && scraping()) help = "Fetching covers and title screens. The menu shows them as they come, and it carries on if you leave this screen.";
@@ -2225,7 +2220,7 @@ namespace banana
 		std::string help = message;
 		if (help.empty())
 			help = !wifiEnabled ? "Wi-Fi is switched off. X switches it on and searches."
-				: "A joins the network chosen, with its password typed on the keyboard (or by touch). X searches again, Y forgets a saved network, and L/R move a saved one up or down the list wpa_supplicant tries. Passwords are kept in banana/wifi.conf on the card.";
+				: "Press A to join, typing the password. X searches again, Y forgets a saved network, L/R reorder saved ones.";
 		if (snes)
 		{
 			std::vector<SRow> rows;
@@ -2293,9 +2288,9 @@ namespace banana
 	{
 		SPal p = pal(light);
 		std::string help = !message.empty() ? message
-			: entry == ENTRY_SEARCH ? "A types the key, B deletes, X capitals, Y a space, START searches: the games found open as a shelf of their own, first on the shelf. Part of a name is enough; an empty search takes the shelf away."
-			: entry == ENTRY_WIFI ? "A types the key, B deletes, X capitals, L symbols, Y a space, START joins. Or tap the keys. The password is kept in banana/wifi.conf on the card."
-			: "A types the key, B deletes, X capitals, L symbols, Y a space, START when it is typed. Or tap the keys. Accounts are kept in banana/accounts.conf on the card.";
+			: entry == ENTRY_SEARCH ? "Press A to type a key, B to delete, X for capitals, Y for a space, START to search. The games found open as a shelf of their own; part of a name is enough."
+			: entry == ENTRY_WIFI ? "Press A to type a key, B to delete, X for capitals, L symbols, Y a space, START to join. Or tap the keys. The password is kept in banana/wifi.conf."
+			: "Press A to type a key, B to delete, X for capitals, L symbols, Y a space, START when done. Or tap the keys. Accounts are kept in banana/accounts.conf.";
 		// the field on the keys' screen and the help below
 		be->beginScreen();
 		box("screen", false, 0, 0, 640, 480);
@@ -2674,7 +2669,7 @@ namespace banana
 		std::string help = !message.empty() ? message
 			: states.empty()
 				? "No save states for this game yet. RetroArch writes one when a game quits (Quick resume) and when you save to a slot in-game; they are in banana/states on the card."
-				: "A on a state deletes it (press A again to confirm); Y keeps a copy of it beside the others as a backup. RetroArch loads the game's own state when it starts again (Quick resume).";
+				: "Press A to delete a state (twice to confirm), Y to keep a backup copy. Quick resume loads the game's own state.";
 		if (snes)
 		{
 			std::vector<SRow> rows;
@@ -3052,10 +3047,10 @@ namespace banana
 			scrapeShort(),
 			"" };
 		static const char* helps[5] = {
-			"Your home network: the games' achievements, the clock and the art need it. Press A to pick it from the networks around; the password goes in on the keyboard.",
+			"Achievements, the clock and art need your home network. Press A to pick one and type its password.",
 			"The clock in the status bar, and the games' own clocks. Left and right change it.",
-			"Your retroachievements.org account: RetroArch unlocks achievements with it. Press A to type the name, then the password. Leave it if you have none.",
-			"Covers, title screens, genres and years for the games on the card, from libretro's free collections: no account. Press A to start it (Wi-Fi first); it keeps going while you finish the setup, and the menu shows the art as it comes. Settings > System > Box art runs it again for new games.",
+			"Your retroachievements.org account, for RetroArch's achievements. Press A to type it; skip if you have none.",
+			"Box art from libretro's free collections, no account. Press A to start (Wi-Fi first); it runs while you finish setup.",
 			"Everything here is in the settings too (Start in the menu), and this setup is under System > First-time setup. Press A to finish." };
 		std::string help = message.empty() ? helps[wsel] : message;
 		const char* act = wsel == 4 ? "Finish" : wsel == 1 ? "Next zone" : wsel == 3 ? (scraping() ? "Running" : "Start") : "Open";
