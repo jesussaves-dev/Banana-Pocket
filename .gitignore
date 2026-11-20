@@ -39,3 +39,6 @@ __pycache__/
 
 # Phase 2 dmabuf test harness: generated protocol code and binaries
 /ui/build/
+
+# Local research material, not part of the repo
+/linuxresearch/
