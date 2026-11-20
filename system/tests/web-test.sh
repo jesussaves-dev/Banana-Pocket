@@ -22,6 +22,8 @@ check "locked out before login" "$(cc -o /dev/null -w "%{http_code}" -X POST --d
 check "login" "$(cc -o /dev/null -w "%{http_code}" -d pin=$PIN $U/login)" 303
 check "home" "$(cc $U/ | grep -c Games)" 1
 check "theme accent" "$(cc $U/style.css | grep -c -- '--accent:#52c5ef')" 1
+check "logo served" "$(cc -o /dev/null -w "%{http_code}" $U/img/banana.png)" 200
+check "status json" "$(cc $U/status | python3 -I -c "import json,sys;d=json.load(sys.stdin);print(sorted(d)[:3])")" "['battery', 'charging', 'free']"
 check "font served" "$(cc -o /dev/null -w "%{http_code}" $U/font/BananaPixel.ttf)" 200
 check "rom upload" "$(cc -X POST --data-binary @$HERE/Makefile "$U/upload/roms/gba?name=t.gba")" ok
 [ -f $T/data/roms/gba/t.gba ] || { echo "FAIL: rom not in roms/gba"; fail=1; }

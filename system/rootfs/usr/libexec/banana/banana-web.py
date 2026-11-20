@@ -164,20 +164,38 @@ def css():
     pixel = t["style"] in ("snes", "blast") or t["font"] in ("banana", "banana-blast")
     return f"""@font-face{{font-family:bb;src:url(/font/{body})}}@font-face{{font-family:bt;src:url(/font/{title})}}
 :root{{--bg:{t['bg']};--panel:{t['panel']};--band:{t['band']};--ink:{t['ink']};--muted:{t['muted']};--edge:{t['edge']};
---accent:{t['accent']};--onpick:{t['onpick']};--r:{'0' if pixel else '12px'};--bw:{'3px' if pixel else '1px'}}}
-*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:{'16px' if pixel else '15px/1.5'} bb,system-ui,sans-serif}}
-{'body{image-rendering:pixelated}' if pixel else ''}
-header{{background:var(--band);border-bottom:var(--bw) solid var(--accent);padding:14px 16px}}
-h1,h2{{font-family:bt,bb,system-ui,sans-serif;margin:0}}h1{{font-size:22px;color:var(--accent)}}h2{{font-size:18px;margin:0 0 10px}}
-header small{{color:var(--muted)}}main{{max-width:760px;margin:0 auto;padding:16px;display:grid;gap:16px}}
-section{{background:var(--panel);border:var(--bw) solid var(--edge);border-radius:var(--r);padding:14px}}
+--accent:{t['accent']};--onpick:{t['onpick']};--r:{'0' if pixel else '14px'};--bw:{'3px' if pixel else '1px'};
+--shadow:{'4px 4px 0 var(--edge)' if pixel else '0 2px 14px rgba(0,0,0,.18)'}}}
+*{{box-sizing:border-box}}html{{-webkit-text-size-adjust:100%}}
+body{{margin:0;background:var(--bg);color:var(--ink);font:{'16px/1.45' if pixel else '15px/1.55'} bb,system-ui,sans-serif;min-height:100vh}}
+{'img,canvas{image-rendering:pixelated}' if pixel else ''}
+header{{background:var(--band);border-bottom:var(--bw) solid var(--accent)}}
+.top{{max-width:980px;margin:0 auto;padding:16px;display:flex;align-items:center;gap:14px}}
+.top img{{width:48px;height:48px}}h1,h2{{font-family:bt,bb,system-ui,sans-serif;margin:0;font-weight:700}}
+h1{{font-size:{'24px' if pixel else '24px'};color:var(--accent);line-height:1.1}}h2{{font-size:18px;margin-bottom:6px}}
+.top small{{color:var(--muted);display:block}}.top .sp{{flex:1}}
+.dot{{width:10px;height:10px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:6px}}
+main{{max-width:980px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))}}
+.wide{{grid-column:1/-1}}
+section{{background:var(--panel);border:var(--bw) solid var(--edge);border-radius:var(--r);padding:16px;box-shadow:var(--shadow)}}
+section>p{{margin:0 0 12px}}.stats{{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}}
+.stat{{background:var(--bg);border:var(--bw) solid var(--edge);border-radius:var(--r);padding:10px 12px}}
+.stat b{{display:block;font-family:bt,bb,system-ui,sans-serif;font-size:20px;color:var(--accent)}}.stat span{{color:var(--muted);font-size:13px}}
+.bar{{height:10px;background:var(--bg);border:var(--bw) solid var(--edge);border-radius:var(--r);margin-top:6px;overflow:hidden}}
+.bar i{{display:block;height:100%;background:var(--accent);width:0;transition:width .4s}}
 a{{color:var(--accent)}}small,.m{{color:var(--muted)}}
 button,input[type=submit],.btn{{background:var(--accent);color:var(--onpick);border:var(--bw) solid var(--edge);border-radius:var(--r);
-padding:8px 14px;font:inherit;cursor:pointer;text-decoration:none;display:inline-block}}
-input,select{{background:var(--bg);color:var(--ink);border:var(--bw) solid var(--edge);border-radius:var(--r);padding:8px;font:inherit;max-width:100%}}
-table{{width:100%;border-collapse:collapse}}td{{padding:5px 4px;border-top:1px solid var(--muted);word-break:break-all}}
-td:last-child{{text-align:right;white-space:nowrap}}pre{{white-space:pre-wrap;word-break:break-all;max-height:320px;overflow:auto;background:var(--bg);padding:8px}}
-progress{{width:100%;accent-color:var(--accent)}}.row{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}"""
+padding:9px 16px;font:inherit;cursor:pointer;text-decoration:none;display:inline-block;box-shadow:{'2px 2px 0 var(--edge)' if pixel else 'none'}}}
+button:active,.btn:active{{transform:translate(1px,1px)}}.btn.alt{{background:var(--bg);color:var(--ink)}}
+input,select{{background:var(--bg);color:var(--ink);border:var(--bw) solid var(--edge);border-radius:var(--r);padding:9px;font:inherit;max-width:100%}}
+.drop{{display:block;border:var(--bw) dashed var(--accent);border-radius:var(--r);padding:22px 12px;text-align:center;cursor:pointer;margin:10px 0;color:var(--muted)}}
+.drop.over{{background:var(--band);color:var(--ink)}}.drop input{{display:none}}
+table{{width:100%;border-collapse:collapse}}td{{padding:6px 4px;border-top:1px solid var(--muted);word-break:break-all}}
+td+td{{text-align:right;white-space:nowrap}}pre{{white-space:pre-wrap;word-break:break-all;max-height:60vh;overflow:auto;background:var(--bg);padding:10px;border-radius:var(--r)}}
+progress{{width:100%;height:10px;accent-color:var(--accent)}}.row{{display:flex;gap:10px;flex-wrap:wrap;align-items:center}}
+.files div{{padding:3px 0;font-size:14px}}.ok{{color:var(--accent)}}.err{{color:#ff6b5a}}
+footer{{max-width:980px;margin:0 auto;padding:8px 16px 32px;color:var(--muted);font-size:13px}}
+@media(max-width:520px){{.top{{padding:12px}}main{{padding:12px;gap:12px}}section{{padding:12px}}}}"""
 
 
 # ---------------------------------------------------------------- pages
@@ -186,27 +204,48 @@ def esc(s):
     return html.escape(str(s), quote=True)
 
 
-def page(body, title="Banana Pocket"):
+def page(body, title="Banana Pocket", status=False):
     return f"""<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<meta name=theme-color content="{esc(theme()['band'])}"><link rel=icon href=/img/banana.png>
 <title>{esc(title)}</title><link rel=stylesheet href=/style.css></head><body>
-<header><h1>Banana Pocket</h1><small>{esc(theme()['name'])}</small></header><main>{body}</main></body></html>"""
+<header><div class=top><img src=/img/banana.png alt=""><div><h1>Banana Pocket</h1><small>{esc(theme()['name'])}</small></div>
+<div class=sp></div><small id=live><span class=dot></span>connected</small></div></header><main>{body}</main>
+<footer>Banana Pocket &middot; <a href=https://github.com/jesussaves-dev/Banana-Pocket>project</a></footer></body></html>"""
 
 
 def login_page(msg=""):
-    return page(f"""<section><h2>PIN</h2><p>Type the PIN shown on the handheld (Settings &gt; Network &gt; Web page).</p>
-<p class=m>{esc(msg)}</p><form method=post action=/login class=row>
-<input name=pin inputmode=numeric autocomplete=off autofocus size=8 maxlength=8><input type=submit value=Open></form></section>""")
+    return page(f"""<section class=wide style="max-width:420px;margin:24px auto"><h2>Enter the PIN</h2>
+<p class=m>It is on the handheld: Settings &gt; Network &gt; Web page.</p>
+<p class=err>{esc(msg)}</p><form method=post action=/login class=row>
+<input name=pin inputmode=numeric autocomplete=off autofocus size=8 maxlength=8 placeholder="000000"><input type=submit value=Open></form></section>""")
 
 
-UPLOAD_JS = """<script>
-function up(f){f.preventDefault();var form=f.target,fs=form.querySelector('[type=file]').files,bar=form.querySelector('progress'),
-out=form.querySelector('.out'),i=0;if(!fs.length)return;(function next(){if(i>=fs.length){out.textContent='Done: '+fs.length+' file(s).';
-if(form.dataset.reload)location.reload();return}var x=new XMLHttpRequest(),fd=new FormData(),n=fs[i];
-x.open('POST',form.action+(form.action.indexOf('?')<0?'?':'&')+'name='+encodeURIComponent(n.name));
-x.upload.onprogress=function(e){if(e.lengthComputable){bar.value=e.loaded/e.total}};
-x.onload=function(){if(x.status!=200){out.textContent=n.name+': '+x.responseText;return}i++;next()};
-x.onerror=function(){out.textContent='Upload failed'};out.textContent=n.name+'...';x.send(n)})()}
+# the page's script: uploads (drop zone, one file at a time with its own bar) and the live status strip
+SCRIPT = """<script>
+function drop(z){var inp=z.querySelector('input'),form=z.closest('form'),list=form.querySelector('.files');
+z.ondragover=function(e){e.preventDefault();z.classList.add('over')};z.ondragleave=function(){z.classList.remove('over')};
+z.ondrop=function(e){e.preventDefault();z.classList.remove('over');send(form,e.dataTransfer.files,list)};
+inp.onchange=function(){send(form,inp.files,list);inp.value=''}}
+function send(form,fs,list){var i=0,sel=form.querySelector('select');(function next(){if(i>=fs.length){if(form.dataset.reload)setTimeout(function(){location.reload()},600);return}
+var n=fs[i++],row=document.createElement('div'),bar=document.createElement('progress');row.textContent=n.name+' ';bar.max=1;bar.value=0;row.appendChild(bar);list.appendChild(row);
+var x=new XMLHttpRequest(),act=sel?'/upload/roms/'+sel.value:form.dataset.to;x.open('POST',act+'?name='+encodeURIComponent(n.name));
+x.upload.onprogress=function(e){if(e.lengthComputable)bar.value=e.loaded/e.total};
+x.onload=function(){row.removeChild(bar);row.className=x.status==200?'ok':'err';row.textContent=n.name+(x.status==200?' - done':' - '+x.responseText);next()};
+x.onerror=function(){row.removeChild(bar);row.className='err';row.textContent=n.name+' - failed';next()};x.send(n)})()}
+document.querySelectorAll('.drop').forEach(drop);
+function gb(b){return b>=1e9?(b/1e9).toFixed(1)+' GB':(b/1e6).toFixed(0)+' MB'}
+function put(id,v){var e=document.getElementById(id);if(e)e.textContent=v}
+function poll(){fetch('/status').then(function(r){if(r.status==401){location.reload();return}return r.json()}).then(function(s){if(!s)return;
+put('s-bat',s.battery<0?'n/a':s.battery+'%'+(s.charging?' (charging)':''));put('s-ver',s.version+(s.slot?' / slot '+s.slot:''));
+put('s-disk',gb(s.free)+' free');document.getElementById('s-bar').style.width=(100-100*s.free/s.total)+'%';put('s-up',s.uptime);
+put('s-upd',s.update);document.getElementById('live').innerHTML='<span class=dot></span>connected'}).catch(function(){
+document.getElementById('live').innerHTML='<span class=dot style="background:#888"></span>handheld not answering'})}
+poll();setInterval(poll,5000);
 </script>"""
+
+
+def dropzone(label, extra=""):
+    return f"""<label class=drop>{label}<input type=file multiple {extra}></label><div class=files></div>"""
 
 
 def home():
@@ -217,21 +256,25 @@ def home():
                   f'<input type=hidden name=name value="{esc(n)}"><input type=submit value="Install"></form></td></tr>'
                   for n in list_dir(DATA + "/banana/updates") if n.endswith(".tar"))
     bios = "".join(f"<tr><td>{esc(n)}</td></tr>" for n in list_dir(DATA + "/bios"))
-    return page(f"""{UPLOAD_JS}
-<section><h2>Games</h2><p class=m>Pick the system, then the files. They land in roms/&lt;system&gt;. Press Y in the menu to rescan.</p>
-<form onsubmit="up(event)" action="/upload/roms" data-reload=0><div class=row>
-<select name=system onchange="this.form.action='/upload/roms/'+this.value">{opts}</select>
-<input type=file multiple><input type=submit value=Send></div><progress value=0 max=1></progress><div class=out></div></form>
-<script>document.currentScript.previousElementSibling.querySelector('select').dispatchEvent(new Event('change'))</script></section>
-<section><h2>BIOS</h2><form onsubmit="up(event)" action="/upload/bios" data-reload=1><div class=row><input type=file multiple>
-<input type=submit value=Send></div><progress value=0 max=1></progress><div class=out></div></form><table>{bios}</table></section>
-<section><h2>Saves and backup</h2><p class=m>Saves and states as one zip; the backup also carries settings and Wi-Fi passwords, so keep it private.</p>
-<div class=row><a class=btn href=/download/saves.zip>Saves + states (zip)</a><form method=post action=/backup/create style="display:inline">
-<input type=submit value="Make a backup"></form></div><table>{"".join(f'<tr><td>{esc(n)}</td><td><a href="/backup/get/{quote(n)}">Download</a></td></tr>' for n in list_dir(DATA + "/banana/backups"))}</table></section>
-<section><h2>Logs</h2><table>{logs}</table></section>
-<section><h2>Update</h2><p class=m>Send a banana-*.update.tar; it is checked against its signature before it is used.</p>
-<form onsubmit="up(event)" action="/upload/update" data-reload=1><div class=row><input type=file accept=.tar><input type=submit value=Send></div>
-<progress value=0 max=1></progress><div class=out></div></form><table>{ups}</table><p class=m>{esc(update_status())}</p></section>""")
+    backups = "".join(f'<tr><td>{esc(n)}</td><td><a href="/backup/get/{quote(n)}">Download</a></td></tr>'
+                      for n in reversed(list_dir(DATA + "/banana/backups")))
+    return page(f"""
+<section class=wide><div class=stats>
+<div class=stat><b id=s-bat>-</b><span>Battery</span></div>
+<div class=stat><b id=s-disk>-</b><span>Card</span><div class=bar><i id=s-bar></i></div></div>
+<div class=stat><b id=s-ver>-</b><span>Version</span></div>
+<div class=stat><b id=s-up>-</b><span>Up for</span></div></div></section>
+<section><h2>Games</h2><p class=m>Choose the system, then drop the files in. Press Y in the menu to rescan.</p>
+<form><div class=row><select aria-label=System>{opts}</select></div>{dropzone("Drop games here, or tap to choose")}</form></section>
+<section><h2>BIOS</h2><p class=m>Files some systems need. They go in the bios folder.</p>
+<form data-to=/upload/bios data-reload=1>{dropzone("Drop BIOS files here, or tap to choose")}</form><table>{bios}</table></section>
+<section><h2>Saves and backups</h2><p class=m>Saves and states as one zip. A backup also carries settings and Wi-Fi passwords: keep it private.</p>
+<div class=row><a class=btn href=/download/saves.zip>Download saves</a>
+<form method=post action=/backup/create style="display:inline"><input class=alt type=submit value="Make a backup"></form></div><table>{backups}</table></section>
+<section><h2>Update</h2><p class=m>Drop a banana-*.update.tar. It is checked against its signature before it is used.</p>
+<form data-to=/upload/update data-reload=1>{dropzone("Drop an update here, or tap to choose", "accept=.tar")}</form><table>{ups}</table>
+<p class=m id=s-upd>{esc(update_status())}</p></section>
+<section class=wide><h2>Logs</h2><table>{logs}</table></section>{SCRIPT}""")
 
 
 def list_dir(d):
@@ -248,6 +291,40 @@ def update_status():
         return ""
 
 
+def status():
+    def num(p):
+        try:
+            return int(open(p).read().strip())
+        except (OSError, ValueError):
+            return -1
+    bat, charging = -1, False
+    for d in list_dir("/sys/class/power_supply") if not os.environ.get("BANANA_SYS") else list_dir(os.environ["BANANA_SYS"]):
+        base = os.path.join(os.environ.get("BANANA_SYS", "/sys/class/power_supply"), d)
+        if os.path.exists(base + "/capacity") and os.path.exists(base + "/status"):
+            bat = num(base + "/capacity")
+            try:
+                charging = open(base + "/status").read().strip() in ("Charging", "Full")
+            except OSError:
+                pass
+            break
+    try:
+        st = os.statvfs(DATA)
+        free, total = st.f_bavail * st.f_frsize, max(1, st.f_blocks * st.f_frsize)
+    except OSError:
+        free, total = 0, 1
+    try:
+        up = int(float(open("/proc/uptime").read().split()[0]))
+        uptime = f"{up // 3600} h {up % 3600 // 60} min" if up >= 3600 else f"{up // 60} min"
+    except OSError:
+        uptime = "-"
+    def line(p):
+        try:
+            return open(p).read().strip()
+        except OSError:
+            return ""
+    return {"battery": bat, "charging": charging, "free": free, "total": total, "uptime": uptime,
+            "version": line(ETC + "/version") or "dev", "slot": line(RUN + "/slot"), "update": update_status()}
+
 # ---------------------------------------------------------------- server
 
 class H(BaseHTTPRequestHandler):
@@ -256,6 +333,12 @@ class H(BaseHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
+
+    def handle(self):
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):
+            pass     # a browser that closed the tab mid-download
 
     def send(self, code, body=b"", ctype="text/html; charset=utf-8", extra=()):
         if isinstance(body, str):
@@ -294,10 +377,14 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, css(), "text/css")
         if p.startswith("/font/"):
             return self.font(p[6:])
+        if p == "/img/banana.png":
+            return self.file(SHARE + "/themes/banana.png", "image/png", False)
         if not self.authed():
             return self.send(200, login_page())
         if p == "/":
             return self.send(200, home())
+        if p == "/status":
+            return self.send(200, json.dumps(status()), "application/json")
         if p == "/download/saves.zip":
             return self.zip_saves()
         if p.startswith("/logs/"):
