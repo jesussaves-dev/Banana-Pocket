@@ -40,8 +40,8 @@ in 1.0 only if a stranger would notice it missing or broken. Sizes: **S** a day 
 
 ### 1.0 checks (on hardware, ticked in `docs/RPC-TEST.md`)
 - **Flasher 2.0.0 on real Windows:** one full flash and one mid-flash cancel (Windows paths are tested with mocks only).
-- **Sleep means paused:** built (patch `0015`, `SAVE_STATE_AUTO`, answer in `/run/banana/autosave`); sleep with a game
-  open, Quick resume on, and confirm the `.auto` state lands before the freeze.
+- **Sleep means paused:** done, checked on hardware 2026-11-19 (patch `0015`, `SAVE_STATE_AUTO`, answer in
+  `/run/banana/autosave`): sleep with a game open and Quick resume on wrote the `.auto` state in 40 ms before the freeze.
 - **Sleep soak:** 20 sleep/wake cycles with a game open plus one overnight, with no stuck wake, no lost audio, no
   `enc35 timeout`. Drain is accepted at the ~18 mA baseline (0.8.0 overnight, ~12 days standby); it is not a gate.
 - **Recovery and welcome** on a freshly flashed card, from the website's install path end to end.
