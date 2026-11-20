@@ -34,8 +34,8 @@ goes into 1.0.1, not into a delay.
    Left: the first signed release must go out as a full flash; then apply a signed package for real.
 4. **Sessions survive a hang (M):** done in software, untested on hardware. While a RetroArch game runs, `bananad` asks
    for its automatic state every 180 s (`session_secs`) and rewrites `/data/banana/resume` (fsync + rename); the
-   menu's existing "resume?" card and Quick resume's auto-load pick it up after a hang or a pulled battery, and a clean
-   quit clears it. Left: alternating state slots and a "cut off N minutes ago" line on the card.
+   menu's existing resume path relaunches the game after a hang and Quick resume loads the state (checked on hardware
+   with `reboot -f`, 2026-11-20); a clean quit clears it. Left: a real battery pull, alternating state slots.
 5. **Recovery screen without Android (M):** hold a button at power-on: boot the other slot, reset settings, fsck `/data`,
    transfer mode.
 6. **Fresh-card welcome (S):** where ROMs go, the share and `banana.local` address with a QR code, missing BIOS files.
