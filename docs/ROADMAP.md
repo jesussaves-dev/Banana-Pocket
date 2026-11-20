@@ -22,15 +22,16 @@ goes into 1.0.1, not into a delay.
    and wakes fully (2026-11-16 14:34). Not the gauge. Not seen again through 2026-11-19 (overnight 9.9 h, 12 mA, five
    slow phantoms that re-slept: `ipcc_0`/`glink-smem` +40-49, no power key, the battmgr ping). At the next burst, dump
    `wakeup_sources` and `/proc/interrupts` deltas per re-sleep before guessing. Stopgap: the give-up keeps the panel dark.
-2. **Sleep: power-button sleeps that "did not take"** (17 in `sleep.log`, last 2026-11-18 22:01): woke 0-4 s later with
-   "power key" and no kernel wakeup event. Not only the USB gadget (three at 14:40 were unplugged), and 5 sleeps since
-   23:16 took, so the sample proves nothing. Next: about 20 quick sleep/wake presses, unplugged and on USB, after the
-   signed flash.
-3. **Signed releases: built, unshipped.** `update` verifies `sha256sums.sig` (ed25519, `tools/release-key.sh`) against
-   `/etc/banana/release.pub` and refuses unsigned packages unless `/data/banana/allow-unsigned` exists. Left: back up
-   `~/.config/banana/release-ed25519.pem`, commit the public key, build the image once (needs `openssl` in the
-   image: `LIBOPENSSL_BIN`), and apply a signed and a tampered package on hardware. The first signed release must go
-   out as a full flash.
+2. **Sleep: power-button sleeps that "did not take"** (25 in `sleep.log` by 2026-11-20, all woke 0-4 s later with
+   "power key" and no kernel wakeup event). Mostly quick double-presses by the owner, which the log cannot tell apart
+   from a failed sleep, so the count proves nothing. No early wake without a key since 2026-11-19. Next: a short
+   deliberate check after the signed flash (sleep, wait about 10 s, wake, about 10 times, unplugged and on USB). Every
+   sleep holding closes this.
+3. **Signed releases: built, verified on hardware, unshipped.** `update` verifies `sha256sums.sig` (ed25519,
+   `tools/release-key.sh`) against `/etc/banana/release.pub` and refuses unsigned packages unless
+   `/data/banana/allow-unsigned` exists. Done: public key committed, `openssl` in the image, key backed up (NAS,
+   2026-11-20), and on the handheld a tampered `sha256sums` and a missing `.sig` are refused before any slot write.
+   Left: the first signed release must go out as a full flash; then apply a signed package for real.
 4. **Sessions survive a hang (M):** two alternating hidden state slots on a timer, a fsynced journal in
    `/data/banana/sessions.tsv`, and a "cut off 4 minutes ago, resume?" card at boot. Quick resume today saves only on a
    clean quit (`run-retroarch:378`).
