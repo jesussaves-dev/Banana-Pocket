@@ -1,7 +1,7 @@
 {
   // LCD Mint: the handheld LCD layout, four shades of cool mint.
   "name": "LCD Mint",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "base": "light",
   "accent": "#0d2c22",
   "colors": { "screenBg": "#d4efdc", "ink": "#0d2c22", "muted": "#357a5c", "edge": "#0d2c22", "line": "#357a5c", "panelBody": "#d4efdc", "bubbleBody": "#86c4a0", "kbdBg": "#0d2c22", "kbdInk": "#d4efdc", "slotOn": "#0d2c22", "pickEdge": "#0d2c22", "onPick": "#d4efdc", "onPickAccent": "#86c4a0", "screenFrame": "#86c4a0", "screenBand": "#d4efdc", "panelBand": "#d4efdc", "panelLow": "#86c4a0", "bubbleBand": "#86c4a0", "bubbleLow": "#357a5c" },

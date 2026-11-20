@@ -1,6 +1,6 @@
 #!/bin/sh
 # What the handheld is doing under an emulator, one line a second, so a game can be compared across builds, settings
-# or operating systems on the same SoC (BananaOS/Linux and the stock Android). It logs only things both expose --
+# or operating systems on the same SoC (Banana Pocket/Linux and the stock Android). It logs only things both expose --
 # each thermal zone, the fan, every CPU policy's clock, every devfreq node's clock, the load, memory and the
 # emulator's own CPU share -- from /sys and /proc, so it runs unchanged in a Linux shell, over ssh, or from
 # `adb shell` on Android.

@@ -1,4 +1,4 @@
-# PLAN: Banana's own kernel (RPC / SM4450)
+# PLAN: Banana Pocket's own kernel (RPC / SM4450)
 
 Written 2026-11-10 · status: **approved, in progress on branch `kernel` (2026-11-16)** · owner decision still needed
 per phase before it merges to `main`.
@@ -44,7 +44,7 @@ Kernel work is split so the two never edit the same file at once:
 **Whose code counts as ours.** Banana Pocket (Tom) and Jorre's project (JorreFog) are separate repositories with the
 same soul: Tom fixes bugs in Jorre's repo, each maintains his own, and **code by either of them is "ours"** and free to
 reuse here. The long-term goal is a completely custom distro: patch out, over time, everything that is neither
-Banana's nor Jorre's — except the generic Linux core and the firmware, which no one can reasonably own (below).
+Banana Pocket's nor Jorre's — except the generic Linux core and the firmware, which no one can reasonably own (below).
 
 Banana already does **not** run someone else's kernel tree: it builds **mainline Linux 7.2** straight from kernel.org
 and adds a patch queue, a config and a device tree on top. So the realistic goal is not "write a kernel"; it is to
@@ -91,7 +91,7 @@ The patches by area (what each phase would touch):
 |---|---|---|---|---|---|
 | K0 | Safe test loop + baseline numbers | **S** (1–2 days) | low | everything else depends on it | **yes, first** |
 | K1 | Banana's own config from scratch | **M** (1–2 weeks) | medium | the single biggest "it's ours" win: every option chosen and documented; smaller, faster to build | **yes** |
-| K2 | Own the device tree | **S–M** (3–5 days) | low | the hardware description becomes Banana's, documented line by line | **yes** |
+| K2 | Own the device tree | **S–M** (3–5 days) | low | the hardware description becomes Banana Pocket's, documented line by line | **yes** |
 | K3 | A kernel repo with a rebase workflow + CI | **S** (2–3 days) + ongoing | low | stops "45 loose patches"; makes 7.3, 7.4… routine | **yes** |
 | K4 | Banana-written device drivers (pad, board/platform driver) | **M** per driver (1–2 weeks) | medium | the parts that make it a Banana Pocket are Banana code | **yes, after K1–K3** |
 | K5 | Rewrite or retire each community patch (patch-by-patch audit) | **M–L** (weeks, incremental) | medium | fewer foreign patches; each one understood | **yes, incremental** |
@@ -156,16 +156,16 @@ Banana's, with the generic SoC support still community code on its way upstream.
 
 ### K2 — Own the device tree · S–M
 - **Goal:** the `.dts`/`.dtsi` files read as Banana's description of this handheld, every node justified.
-- **Steps:** delete nodes for hardware the RPC does not have or Banana does not use (HDMI/DP, cameras, unused
+- **Steps:** delete nodes for hardware the RPC does not have or Banana Pocket does not use (HDMI/DP, cameras, unused
   regulators); split the 2,857-line `common.dtsi` by subsystem (display, audio, input, power, connectivity) with a
-  header comment per block; name Banana as the maintainer in the file header; keep BSD-3-Clause.
+  header comment per block; name Banana Pocket as the maintainer in the file header; keep BSD-3-Clause.
 - **Verify:** `dtc` builds with no new warnings; the K0 report's probed-driver list is unchanged; RPC-TEST passes.
 
 ### K3 — A Banana kernel repository and a rebase workflow · S + ongoing
 - **Goal:** turn `linux-patches/` into a real git branch: `banana-linux` (`v7.2` + Banana commits), from which the
   patch directory is generated (`git format-patch v7.2..`) so Buildroot keeps working unchanged.
 - **Steps:** import the 45 patches as commits with their original authors (keep authorship — it is their work and
-  the GPL expects it), so `git log --author` shows at a glance what is ours (Tom, Banana, Jorre) and what is left to
+  the GPL expects it), so `git log --author` shows at a glance what is ours (Tom, Banana Pocket, Jorre) and what is left to
   replace; tag `banana-7.2-1`; document the rebase recipe (`git rebase --onto v7.3 v7.2`), conflict notes per
   patch; a CI job that builds the kernel + modules and runs the QEMU boot test on every push.
 - **Verify:** the generated patch dir is byte-identical to today's; CI green.

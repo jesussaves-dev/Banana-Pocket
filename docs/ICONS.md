@@ -22,7 +22,7 @@ system (or one per kind), named in `ui/assets/rnds/systems.cfg`.
 The theme reads one PNG per entry and draws it at a fixed size on the panel, so the file's own pixels are only a
 source. Sizes in use:
 
-- **32×32** — the whole current set: BenJelter's Console Icon Pack, what `gen-icons.py` draws, and Banana's own.
+- **32×32** — the whole current set: BenJelter's Console Icon Pack, what `gen-icons.py` draws, and Banana Pocket's own.
 - **larger, a multiple of 32** — also allowed, and it draws at the full tile size. `pixelContain`/`pixel` only grow a
   small source in whole multiples, so a 32×32 icon draws 32 CSS px wide while a source at or above the tile box is
   fitted to it with nearest-neighbour.
@@ -60,7 +60,7 @@ Keep it flat: the engine's bilinear scaling softens gradients and shading, and t
 
 ## Status
 
-Every shelf Banana ships today has its own art (either a dedicated file or a shared family icon such as
+Every shelf Banana Pocket ships today has its own art (either a dedicated file or a shared family icon such as
 `snes,snesh,...` → `snes.png`). `mastersystem` was the last one without and now has `mastersystem.png`.
 
 ## Missing dedicated icons (for future projects)

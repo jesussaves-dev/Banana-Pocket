@@ -5,7 +5,7 @@
   // shading ramps, scanline skies) for each time of day: "phase" (dawn, day, dusk, night) picks the folder. The system
   // icons, names and counts stay live, so a new system needs no new art. Text is Banana's own pixel faces at 12 / 24.
   "name": "Harbor",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "style": "snes",
   "base": "dark",
   "accent": "#52c5ef",

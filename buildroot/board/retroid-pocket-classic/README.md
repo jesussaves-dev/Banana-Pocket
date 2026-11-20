@@ -1,4 +1,4 @@
-# Retroid Pocket Classic (SM4450 / Rev Q) — BananaOS board
+# Retroid Pocket Classic (SM4450 / Rev Q) — Banana Pocket board
 
 This board reuses **ROCKNIX's SM4450 hardware layer** (kernel 7.2 + patches, Rev Q
 DTB, ADSP/WPSS/ACF/QCA firmware) and **OpenABL** (already flashed) instead of

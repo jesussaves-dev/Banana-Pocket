@@ -1,7 +1,7 @@
 {
   // LCD Sakura: the handheld LCD layout, four shades of blossom pink.
   "name": "LCD Sakura",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "base": "light",
   "accent": "#321826",
   "colors": { "screenBg": "#f7dfe6", "ink": "#321826", "muted": "#8a4a66", "edge": "#321826", "line": "#8a4a66", "panelBody": "#f7dfe6", "bubbleBody": "#d99fb4", "kbdBg": "#321826", "kbdInk": "#f7dfe6", "slotOn": "#321826", "pickEdge": "#321826", "onPick": "#f7dfe6", "onPickAccent": "#d99fb4", "screenFrame": "#d99fb4", "screenBand": "#f7dfe6", "panelBand": "#f7dfe6", "panelLow": "#d99fb4", "bubbleBand": "#d99fb4", "bubbleLow": "#8a4a66" },

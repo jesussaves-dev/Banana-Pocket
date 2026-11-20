@@ -1,7 +1,7 @@
-# What Banana gives an emulator, and what it expects back
+# What Banana Pocket gives an emulator, and what it expects back
 
 This is the contract between the menu and any program that plays a game — on the Retroid Pocket Classic, that is
-RetroArch and its cores. Keep to it and the rest of Banana (sleep, the volume keys, the logs, the settings) works
+RetroArch and its cores. Keep to it and the rest of Banana Pocket (sleep, the volume keys, the logs, the settings) works
 around the emulator without knowing it.
 
 ## Starting
@@ -63,16 +63,16 @@ The launcher runs in its own session (`setsid`), with signals at their defaults 
 
 ### Controller remaps and per-game options
 
-Banana has no remap screen of its own: RetroArch's are the UI, and they persist on the card.
+Banana Pocket has no remap screen of its own: RetroArch's are the UI, and they persist on the card.
 
 - **Per core:** in a game, RetroArch's menu > *Settings > Input > RetroPad Binds*, then *Save Remap File*. It writes
-  `/data/retroarch/remaps/<Core>/<Core>.rmp` and RetroArch loads it for that core from then on. Banana's own Dreamcast
+  `/data/retroarch/remaps/<Core>/<Core>.rmp` and RetroArch loads it for that core from then on. Banana Pocket's own Dreamcast
   shoulder swap is one of these (see *The Dreamcast*); `run-retroarch` writes it only when the core has **no** remap
   yet, so a remap saved from that menu -- including one that moves the shoulders elsewhere -- survives every launch.
 - **Per game:** the same menu's *Save Game Remap File* writes `/data/retroarch/remaps/<Core>/<Game>.rmp`, which
   overrides the core's remap for that game only. Delete the `.rmp` to go back to the core's.
 - **Per-game core options:** RetroArch's *Quick Menu > Core Options > Manage Core Options > Save Game Override* writes
-  `config/<Core>/<Game>.opt` beside Banana's per-core `.opt`. Both are under `/data/retroarch`, so neither is lost on
+  `config/<Core>/<Game>.opt` beside Banana Pocket's per-core `.opt`. Both are under `/data/retroarch`, so neither is lost on
   an update.
 - `Settings > System > Back up settings` includes `retroarch/remaps`, so a controller layout survives a restore.
   Per-game/core `.opt` files are not in it (they are easy to recreate, and can be large).
@@ -83,7 +83,7 @@ on a one-panel handheld, `midi_driver = null`, `config_save_on_exit`, `quick_men
 RetroArch writes `retroarch.cfg` back when it quits and one trip through its own menus otherwise leaves a value the
 handheld cannot use. What the user changes in RetroArch's own menu is kept: RetroArch saves `retroarch.cfg` on quit
 and flushes a core's options to its `.opt` as the core unloads (on their own; the manual *Save Core Options* item is
-also shown, where Banana used to hide it). **Quick resume** (Settings > RetroArch) is on by default: RetroArch
+also shown, where Banana Pocket used to hide it). **Quick resume** (Settings > RetroArch) is on by default: RetroArch
 saves an automatic state when a game quits and loads it when the game starts again (`savestate_auto_save` and
 `savestate_auto_load`, which `run-retroarch` keeps in step).
 
@@ -145,7 +145,7 @@ write -- an update, a Wi-Fi join, the account check -- and the menu reads on its
 ## The PlayStation
 
 `run-retroarch` picks the core from `core.psx`: **SwanStation** (DuckStation's libretro core, the default) or
-**PCSX-ReArmed** (the fallback if SwanStation is not installed). SwanStation's renderer is its own option; Banana
+**PCSX-ReArmed** (the fallback if SwanStation is not installed). SwanStation's renderer is its own option; Banana Pocket
 writes **Vulkan at 4x** (1280x960, already past the 4:3 area on the 1240x1080 panel), which runs at 60 fps through
 Turnip -- where its software renderer and the freedreno OpenGL path both fell short, and where 5x only adds a
 downscale pass. PCSX-ReArmed is the ari64 dynarec with its NEON rasterizer, the lighter of the two. RetroArch's
@@ -169,14 +169,14 @@ it starts.
 **Flycast** is the core (`systems.conf`'s `[dreamcast]`, run by `run-retroarch flycast`). It needs a real BIOS --
 `dc_boot.bin` and `dc_flash.bin` in `banana/bios` on the card -- and reads `.chd`/`.gdi`/`.cdi` images. Master System
 and Game Gear are not Flycast: they share the Mega Drive's Genesis Plus GX core (`systems.conf`'s `[mastersystem]`
-and `[gamegear]`). Four things are Banana's rather than the core's:
+and `[gamegear]`). Four things are Banana Pocket's rather than the core's:
 
 - **glcore, not Vulkan (Dreamcast only).** Flycast is the one core this handheld cannot quite hold: sampled on the
   unit, its emulation thread spends most of its time in Flycast's own render-thread wait (a futex) with the GPU
   already at its top step, the console runs 55-60 fps, and the sound comes out choppy -- with no ALSA underrun at all,
   because the renderer is what paces the emulation. ROCKNIX runs this SoC on `glcore` (freedreno's GLES) for the same
   reason, and Flycast keeps a GLES renderer when the frontend asks for GL instead of Vulkan, so `run-retroarch` gives
-  this one system `glcore`. glcore's shader backend is GLSL rather than Slang, so the Slang preset Banana would apply
+  this one system `glcore`. glcore's shader backend is GLSL rather than Slang, so the Slang preset Banana Pocket would apply
   cannot load under it and the shader is left off for Dreamcast (the preset file is untouched).
 - **The triggers are on the shoulders.** The Dreamcast's L/R are analogue *triggers* (Crazy Taxi's brake and
   accelerator), and Flycast reads them from the RetroPad's **L2/R2**, not its L/R -- which it reads as the Dreamcast's

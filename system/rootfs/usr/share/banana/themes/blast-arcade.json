@@ -5,7 +5,7 @@
   // is baked by tools/gen-blast.py to the Mega Drive's rules: 9-bit colour, true black for every backdrop (the AMOLED's
   // pixels stay off), no blends. The billboards, names and counts are live, so a new system needs no new art.
   "name": "Hyper Arcade",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "style": "genesis",
   "base": "dark",
   "accent": "#ff0024",

@@ -1,9 +1,9 @@
 {
-  // Pocket: BananaOS's own look (the DS bottom screen layout), retro -- flat surfaces, sharp corners, hard 1-2px
+  // Pocket: Banana Pocket's own look (the DS bottom screen layout), retro -- flat surfaces, sharp corners, hard 1-2px
   // borders and a banana palette: warm brown-black glass, butter text, ripe-yellow highlights and a golden-amber
   // card edge. The bunch by the clock is the OS's own icon. The panel at the DS panels scale is 640x557 layout px.
   "name": "Pocket",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "base": "dark",
   "accent": "#ffd21e",
   "colors": { "screenBg": "#17140d", "ink": "#ffefb2", "muted": "#bfa963", "edge": "#8c7328", "line": "#4a3d18", "panelBody": "#201b11", "bubbleBody": "#2a2315", "kbdBg": "#2a2315", "kbdInk": "#ffefb2", "slotOn": "#ffe873", "pickEdge": "#ffe873" },

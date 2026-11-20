@@ -20,7 +20,7 @@ Windows' File Explorer, or `smb://<address>/banana` on a Mac.
 the normal look. If a theme file cannot be read, the menu quietly uses Dark and writes down why in
 `banana/logs/banana-ui.log`.
 
-**Work on a copy.** A new card already has the themes BananaOS ships in `banana/themes/` — the Pocket layout
+**Work on a copy.** A new card already has the themes Banana Pocket ships in `banana/themes/` — the Pocket layout
 (`pocket.json`) and its colour variations (`pocket-ocean.json`, `pocket-sakura.json`, `pocket-sunset.json`,
 `pocket-terminal.json`) — and the originals live in `/usr/share/banana/themes` on the handheld. Copy one, rename it,
 and edit that. A file on the card with an example's name replaces that example.
@@ -161,7 +161,7 @@ write them for you.
 A theme is its `.json` plus its folder, if it has one. Zip those together and post the zip — that is what the
 themes in [banana-themes](https://github.com/jesussaves-dev/banana-themes) are.
 
-Worth doing: put a `name` and an `author` in the file, and say which BananaOS it was made for. Pictures and fonts
+Worth doing: put a `name` and an `author` in the file, and say which Banana Pocket it was made for. Pictures and fonts
 are your own or openly licensed — a lot of the old console and computer fonts are not.
 
 ## 6. When something looks wrong

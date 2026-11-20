@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""BananaOS system icons from painted sprite sheets: tools/icons/sheets/*.jpg -> 32x32 PNGs in
+"""Banana Pocket system icons from painted sprite sheets: tools/icons/sheets/*.jpg -> 32x32 PNGs in
 ui/assets/overrides/icons (the source of truth, see docs/ICONS.md) and ui/assets/rnds/icons (the working set).
 
 The sheets are 1024x1024 JPEGs on a chroma-green (or magenta) ground, a 3x3 (or 2x2) grid of sprites drawn on a

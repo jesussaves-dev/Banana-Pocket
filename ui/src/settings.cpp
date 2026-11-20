@@ -348,7 +348,7 @@ namespace banana
 		add(D, "picture", "Battery", "The battery in the status bar: its icon, or its icon and how full it is.", menu, "battery", { "Icon", "Icon and %" }, { "icon", "percent" });
 		add(D, "picture", "Box art", "In the SNES style, a game's box on the counter: drawn on the street's grid in the Super NES's colours, or the picture as it is.", menu, "boxart_look", { "Pixel", "Original" }, { "pixel", "original" });
 		add(D, "picture", "Clock", "How the time in the status bar is written.", menu, "clock", { "24-hour", "12-hour" }, { "24h", "12h" });
-		add(D, "picture", "Boot animation", "The bananas and the cartridge while Banana starts. Off goes straight to the menu once it is ready.", menu, "splash", { "On", "Off" }, { "on", "off" });
+		add(D, "picture", "Boot animation", "The bananas and the cartridge while Banana Pocket starts. Off goes straight to the menu once it is ready.", menu, "splash", { "On", "Off" }, { "on", "off" });
 		const char* P = "Sleep & power";
 		add(P, "moon", "Sleep when idle", "In the menu, after this long with no button pressed. Never while a game is running.", power, "autosleep_minutes",
 			{ "Never", "5 minutes", "10 minutes", "15 minutes", "30 minutes" }, { "0", "5", "10", "15", "30" });
@@ -388,7 +388,7 @@ namespace banana
 			add(S, "gear", "Time zone", "The clock's time zone, summer time included, for the menu and the games. The time itself comes from Wi-Fi or the handheld's own clock.",
 				menu, "timezone", names, tzs);
 		}
-		add(S, "gear", "Update", "A new version of Banana, written to the other slot and run from the next restart; this one stays as it is until then. Over Wi-Fi, \"Check for updates\" downloads the newest release from GitHub; a package on the card in banana/updates (File sharing can copy one) works too.", "", "update", {}, {}, Item::PAGE);
+		add(S, "gear", "Update", "A new version of Banana Pocket, written to the other slot and run from the next restart; this one stays as it is until then. Over Wi-Fi, \"Check for updates\" downloads the newest release from GitHub; a package on the card in banana/updates (File sharing can copy one) works too.", "", "update", {}, {}, Item::PAGE);
 		add(S, "gear", "Back up settings", "Settings, accounts, the saves/states trees and RetroArch's controller remaps in one file in banana/backups on the card (File sharing can copy it off). Games and box art stay out of it. Press A twice.", "", "backup", { "" }, { "" }, Item::ACTION);
 		add(S, "gear", "Restore settings", "Unpacks the newest backup over the card's settings, saves and states, then restarts the menu so they are read. Press A twice.", "", "restore", { "" }, { "" }, Item::ACTION);
 		add(S, "picture", "Box art", "Covers, title screens, genres and years for your games, from libretro's free collections (no account, Wi-Fi needed). It keeps going in the background; games that already have art are skipped, so running it again only fetches what is new. Starts only on the charger (or the USB cable), so a long scrape cannot flatten the battery.",
@@ -599,7 +599,7 @@ namespace banana
 			if (fd >= 0) ::close(fd);
 		}
 		std::ostringstream a;
-		a << "Banana " << (version.empty() ? "dev" : version) << (slot.empty() ? "" : " (slot " + slot + ")") << " on the " << (model.empty() ? "handheld" : model) << ". ";
+		a << "Banana Pocket " << (version.empty() ? "dev" : version) << (slot.empty() ? "" : " (slot " + slot + ")") << " on the " << (model.empty() ? "handheld" : model) << ". ";
 		if (battery >= 0) a << "Battery " << battery << "%. ";
 		if (space[0]) a << "Card: " << space << ".";
 		about = a.str();
@@ -1691,7 +1691,7 @@ namespace banana
 		if (cur.kind == Item::INFO) help = about;
 		if (cur.key == "wifi") help = "Wi-Fi: " + wifiInfo + ". Network, below, joins one; networks can also be written in banana/wifi.conf on a computer (see banana/README.txt).";
 		if (cur.key == "ssh")
-			help = "For working on Banana itself: ssh root@" + (ip.empty() ? std::string("<address>") : ip) +
+			help = "For working on Banana Pocket itself: ssh root@" + (ip.empty() ? std::string("<address>") : ip) +
 				", with the public keys in banana/ssh/authorized_keys on the card (no passwords). Files: scp -O (dropbear has no SFTP), or File sharing.";
 		if (cur.key == "adb")
 			help = "adb over the network, its own switch (not SSH's): a computer runs adb connect " +
@@ -2495,7 +2495,7 @@ namespace banana
 			{
 				const Pkg& k = pkgs[i];
 				SRow r;
-				r.label = "Banana " + k.version;
+				r.label = "Banana Pocket " + k.version;
 				r.accent = armed == 1000 + (int)i + 1;
 				r.value = tr(r.accent ? "Press A again" : k.board == "universal" ? "for both handhelds"
 					: k.board == board || board.empty() ? "for the " + k.board : "not for this handheld");
@@ -2534,7 +2534,7 @@ namespace banana
 				continue;
 			}
 			const Pkg& k = pkgs[r - 1];
-			text(fit("Banana " + k.version, true, 20, 330), true, 20, 38, y + 16, c);
+			text(fit("Banana Pocket " + k.version, true, 20, 330), true, 20, 38, y + 16, c);
 			std::string tag = armed == 1000 + r ? "Press A again" : (k.board == board || board.empty() || k.board == "universal" ? (k.board == "universal" ? std::string("for both handhelds") : "for the " + k.board) : "not for this handheld");
 			float tw = text(tag, true, 17, 0, 0, c, false, 0, true);
 			text(tag, true, 17, 586 - tw, y + 18, armed == 1000 + r ? (on ? p.onPickAccent : p.accent) : c);
@@ -3085,7 +3085,7 @@ namespace banana
 				row.arrows = r == 1;
 				rows.push_back(row);
 			}
-			renderLedger(tr("Welcome to Banana"), std::to_string(wsel + 1) + " / 5", tr("First-time setup"), rows, wsel, "", tr(help),
+			renderLedger(tr("Welcome to Banana Pocket"), std::to_string(wsel + 1) + " / 5", tr("First-time setup"), rows, wsel, "", tr(help),
 				!message.empty(), { { "B", tr("Skip") } }, { "A", tr(act) });
 			return;
 		}
@@ -3094,7 +3094,7 @@ namespace banana
 		be->beginScreen();
 		box("screen", false, 0, 0, 640, 480);
 		box("bubble", false, 18, 14, 604, 54);
-		text("Welcome to Banana", true, 22, 38, 28, p.ink);
+		text(tr("Welcome to Banana Pocket"), true, 22, 38, 28, p.ink);
 		std::string count = std::to_string(wsel + 1) + " / 5";
 		float cw = text(count, true, 17, 0, 0, p.muted, false, 0, true);
 		text(count, true, 17, 602 - cw, 31, p.muted);

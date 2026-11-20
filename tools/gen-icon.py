@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a 32x32 pixel-art icon for BananaOS with a local, headless ComfyUI.
+"""Generate a 32x32 pixel-art icon for Banana Pocket with a local, headless ComfyUI.
 
     python3 tools/gen-icon.py --prompt "dreamcast console, swirl logo" --name dreamcast
     python3 tools/gen-icon.py --prompt "game boy advance" --name gba --colors 12 --seed 42
@@ -220,7 +220,7 @@ def post_process(src_png, name, colors, out_dir=OUT_DIR, use_rembg=True):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate a 128x128 BananaOS pixel-art icon.")
+    ap = argparse.ArgumentParser(description="Generate a 128x128 Banana Pocket pixel-art icon.")
     ap.add_argument("--prompt", required=True, help="what the icon shows, e.g. 'dreamcast console'")
     ap.add_argument("--name", required=True, help="output file name, without .png")
     ap.add_argument("--colors", type=int, default=16, help="palette size (default 16)")

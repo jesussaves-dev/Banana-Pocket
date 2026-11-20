@@ -178,7 +178,7 @@ if [ "$REBUILD" = 1 ]; then
     echo 0x1d6b > $G/idVendor
     echo 0x0104 > $G/idProduct
     mkdir -p $G/strings/0x409
-    echo "Banana"         > $G/strings/0x409/manufacturer
+    echo "Banana Pocket"         > $G/strings/0x409/manufacturer
     echo "Pocket Classic" > $G/strings/0x409/product
     # a serial number is what Windows keys the network profile on; it must not be empty
     echo 0123456789ab     > $G/strings/0x409/serialnumber

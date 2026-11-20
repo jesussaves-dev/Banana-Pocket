@@ -400,12 +400,12 @@ struct LowBattery
 		if (step == 5)
 		{
 			title = "Battery nearly empty: " + std::to_string(percent) + "%";
-			body = "Save your game now. At " + off + " Banana closes it and shuts down.";
+			body = "Save your game now. At " + off + " Banana Pocket closes it and shuts down.";
 		}
 		else
 		{
 			title = "Battery low: " + std::to_string(percent) + "%";
-			body = step == 10 ? "Plug in the charger soon. At " + off + " Banana closes the game and shuts down."
+			body = step == 10 ? "Plug in the charger soon. At " + off + " Banana Pocket closes the game and shuts down."
 				: "Time to find the charger.";
 		}
 		return true;

@@ -2,7 +2,7 @@
   // Sunset: the Pocket layout at dusk -- warm ember darks, a peach ink, an orange sun for the highlights and a
   // red sky at the card's edge.
   "name": "Sunset",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "base": "dark",
   "accent": "#ff9e57",
   "colors": { "screenBg": "#1a0e10", "ink": "#ffe4d0", "muted": "#d09a80", "edge": "#8a4b3a", "line": "#55302a", "panelBody": "#3a2020", "bubbleBody": "#4a2828", "kbdBg": "#4a2828", "kbdInk": "#ffe4d0", "slotOn": "#ffc4a0", "pickEdge": "#ffc4a0" },

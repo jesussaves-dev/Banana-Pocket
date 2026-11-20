@@ -1,4 +1,4 @@
-# Banana: a light Linux for the Retroid Pocket Classic (Qualcomm SM4450).
+# Banana Pocket: a light Linux for the Retroid Pocket Classic (Qualcomm SM4450).
 #
 #   make retroid-pocket-classic   the SD card image   -> output/retroid-pocket-classic/images/banana-retroid-pocket-classic.img.gz
 #   make ui                       banana-ui for this computer (headless renders, no panel needed)

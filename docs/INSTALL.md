@@ -1,7 +1,7 @@
-# Installing BananaOS on the Retroid Pocket Classic
+# Installing Banana Pocket on the Retroid Pocket Classic
 
-Two things stand between a stock Retroid Pocket Classic and BananaOS: a Linux bootloader (**OpenABL**, flashed once —
-the stock bootloader boots **Android only**), and the Banana image on a microSD card. Both have a tool now:
+Two things stand between a stock Retroid Pocket Classic and Banana Pocket: a Linux bootloader (**OpenABL**, flashed once —
+the stock bootloader boots **Android only**), and the Banana Pocket image on a microSD card. Both have a tool now:
 
 | Step | Tool | Runs on |
 |---|---|---|
@@ -41,7 +41,7 @@ Open **<https://jesussaves-dev.github.io/Banana-Pocket/install.html>** and follo
 3. **Flash OpenABL** — writes both bootloader slots (`abl_a`, `abl_b`) and restarts the handheld into the OpenABL menu.
    Don't unplug it until the page says done.
 
-This only ever needs doing once; later Banana updates don't touch the bootloader.
+This only ever needs doing once; later Banana Pocket updates don't touch the bootloader.
 
 **The handheld doesn't show up?**
 
@@ -64,7 +64,7 @@ Download **BananaLinux Flasher** from
 
 1. Pick **Retroid Pocket Classic**.
 2. Insert the card, press **Refresh**, pick the card.
-3. Press **Download & Flash**. It fetches the newest Banana release, checks its sha256 and writes it. Approve the UAC
+3. Press **Download & Flash**. It fetches the newest Banana Pocket release, checks its sha256 and writes it. Approve the UAC
    prompt (Windows) or type your `sudo` password in its dialog (Linux).
 
 **Everything on the card is erased.** The flasher only lists removable drives and re‑checks the one you picked before
@@ -79,7 +79,7 @@ it writes.
 Put the card in the handheld, hold **Volume Down** and press **Power** for the OpenABL menu:
 
 - Set **Boot mode → Linux** and **Boot source → Auto**, then *Start*. OpenABL remembers these, so after this an
-  ordinary power‑on boots Banana (**Volume Up** at power‑on boots Android).
+  ordinary power‑on boots Banana Pocket (**Volume Up** at power‑on boots Android).
 - The boot animation plays; the very first boot takes a few seconds longer while it makes the games partition from
   the rest of the card.
 - The **first‑time setup** opens: **Wi‑Fi**, **time zone**, **RetroAchievements**, **Box art**, **Finish**. **B** skips
@@ -117,7 +117,7 @@ backup of the stock ABL partitions (see [below](#back-up-the-stock-bootloader)).
 
 ## If it doesn't boot, or something is wrong
 
-Everything Banana knows about a boot is in `banana/logs/` on the card (put it in a computer):
+Everything Banana Pocket knows about a boot is in `banana/logs/` on the card (put it in a computer):
 
 | File | What |
 |---|---|
@@ -156,8 +156,8 @@ terminal. The result is the same.
 
 ### 1. The bootloader by hand
 
-Banana needs **OpenABL** — <https://github.com/OpenHandheldCollective/OpenABL> — a patched ABL with a graphical menu
-that offers a Linux boot and reads `extlinux/extlinux.conf` from the card. It is the only bootloader Banana supports.
+Banana Pocket needs **OpenABL** — <https://github.com/OpenHandheldCollective/OpenABL> — a patched ABL with a graphical menu
+that offers a Linux boot and reads `extlinux/extlinux.conf` from the card. It is the only bootloader Banana Pocket supports.
 Its releases carry `abl_signed-SM4450.elf` (+ `.sha256`) and `openabl-recovery-flashable-sm4450.zip`. It must be the
 **SM4450** build, and check its `.sha256` before flashing.
 

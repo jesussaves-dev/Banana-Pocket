@@ -2,7 +2,7 @@
   // Ocean: the Pocket layout under the sea -- deep navy water, foam-bright highlights, a sea-glass card edge and
   // aqua inverse video where the menu's amber is.
   "name": "Fantasy",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "base": "dark",
   "accent": "#f2c14e",
   "colors": { "screenBg": "#0a0718", "ink": "#f4e9cf", "muted": "#9a8ec4", "edge": "#4b3d86", "line": "#241a4a", "panelBody": "#151030", "bubbleBody": "#1d1640", "kbdBg": "#1d1640", "kbdInk": "#f4e9cf", "slotOn": "#ffe08a", "pickEdge": "#ffe9b0" },

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://bananaos-cfw.dev/theme.schema.json",
-  "title": "BananaOS layout theme",
-  "description": "A BananaOS theme file. A theme with a \"screens\" member is a layout theme and draws the whole menu itself; a theme without one is a colour theme over the Pixel look and only uses the colour/font/icon/sound keys. Any property may be a literal, an =expression or a {template} string. // and /* */ comments and trailing commas are allowed in the file the engine reads. See docs/THEMES.md and /usr/share/banana/themes/README.txt.",
+  "title": "Banana Pocket layout theme",
+  "description": "A Banana Pocket theme file. A theme with a \"screens\" member is a layout theme and draws the whole menu itself; a theme without one is a colour theme over the Pixel look and only uses the colour/font/icon/sound keys. Any property may be a literal, an =expression or a {template} string. // and /* */ comments and trailing commas are allowed in the file the engine reads. See docs/THEMES.md and /usr/share/banana/themes/README.txt.",
   "type": "object",
   "additionalProperties": true,
   "properties": {

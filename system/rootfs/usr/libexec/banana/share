@@ -11,12 +11,12 @@ up)
     pidof ksmbd.mountd >/dev/null && exit 0
     cat > $CONF <<'CONF'
 [global]
-	server string = Banana
+	server string = Banana Pocket
 	netbios name = BANANA
 	map to guest = bad user
 	guest account = nobody
 [banana]
-	comment = Banana: games, BIOS, saves and settings
+	comment = Banana Pocket: games, BIOS, saves and settings
 	path = /data
 	read only = no
 	guest ok = yes

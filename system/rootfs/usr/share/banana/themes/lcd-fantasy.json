@@ -1,7 +1,7 @@
 {
   // LCD Fantasy: the handheld LCD layout, four shades of indigo, with the fantasy console icons.
   "name": "LCD Fantasy",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "base": "light",
   "accent": "#1a1238",
   "colors": { "screenBg": "#e4dcf4", "ink": "#1a1238", "muted": "#54458e", "edge": "#1a1238", "line": "#54458e", "panelBody": "#e4dcf4", "bubbleBody": "#a596d6", "kbdBg": "#1a1238", "kbdInk": "#e4dcf4", "slotOn": "#1a1238", "pickEdge": "#1a1238", "onPick": "#e4dcf4", "onPickAccent": "#a596d6", "screenFrame": "#a596d6", "screenBand": "#e4dcf4", "panelBand": "#e4dcf4", "panelLow": "#a596d6", "bubbleBand": "#a596d6", "bubbleLow": "#54458e" },

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Write a BananaOS card image to an SD card, checking it is the right card first: the device must be removable, big
+# Write a Banana Pocket card image to an SD card, checking it is the right card first: the device must be removable, big
 # enough for the image, and not hold anything mounted. Then the image goes on with dd and is read back and compared,
 # sector by sector (a card that lies about writes is the usual cause of a boot that fails halfway).
 #

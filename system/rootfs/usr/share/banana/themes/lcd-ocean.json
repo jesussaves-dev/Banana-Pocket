@@ -1,7 +1,7 @@
 {
   // LCD Ocean: the handheld LCD layout, four shades of sea blue.
   "name": "LCD Ocean",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "base": "light",
   "accent": "#122a3a",
   "colors": { "screenBg": "#d6ecf0", "ink": "#122a3a", "muted": "#3f6f86", "edge": "#122a3a", "line": "#3f6f86", "panelBody": "#d6ecf0", "bubbleBody": "#8fbccb", "kbdBg": "#122a3a", "kbdInk": "#d6ecf0", "slotOn": "#122a3a", "pickEdge": "#122a3a", "onPick": "#d6ecf0", "onPickAccent": "#8fbccb", "screenFrame": "#8fbccb", "screenBand": "#d6ecf0", "panelBand": "#d6ecf0", "panelLow": "#8fbccb", "bubbleBand": "#8fbccb", "bubbleLow": "#3f6f86" },

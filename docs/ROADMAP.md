@@ -39,7 +39,7 @@ goes into 1.0.1, not into a delay.
 6. **Fresh-card welcome (S):** where ROMs go, the share and `banana.local` address with a QR code, missing BIOS files.
 7. **Rename to Banana Pocket (S):** the public name. Change every user-visible string (boot splash, About screen, update
    package name, site, installer, flasher, release notes) through `tr()`; `banana-rpc` and `retroid-pocket-classic`
-   stay as internal IDs. The README credits Jorre's BananaLinux, which this code derives from. Check the kernel
+   stay as internal IDs. The README credits Jorre by name and his BananaLinux, which this code derives from. Check the kernel
    `-Bananix` string and `check-kver` before touching it.
 
 ### Headline features

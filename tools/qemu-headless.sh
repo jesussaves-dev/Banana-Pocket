@@ -1,5 +1,5 @@
 #!/bin/sh
-# Boot a BananaOS card image on QEMU's arm64 "virt" machine with no window, and take a picture of the panel:
+# Boot a Banana Pocket card image on QEMU's arm64 "virt" machine with no window, and take a picture of the panel:
 # the same boot tools/qemu-boot.sh does, for a machine with nobody at the screen (or for checking the menu from a
 # script). The card is read exactly as the handheld's bootloader reads it: extlinux.conf's DEFAULT label, its
 # LINUX file and its root=.

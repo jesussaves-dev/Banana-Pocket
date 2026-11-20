@@ -2,7 +2,7 @@
   // Terminal: the Pocket layout as an old green-phosphor text terminal -- near-black glass, phosphor text, dark
   // green traces and inverse-video highlights.
   "name": "Terminal",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "base": "dark",
   "accent": "#46e07f",
   "colors": { "screenBg": "#030d07", "ink": "#b8ffcc", "muted": "#5fbf85", "edge": "#1e6b3f", "line": "#0a1f12", "panelBody": "#0c2416", "bubbleBody": "#10301d", "kbdBg": "#10301d", "kbdInk": "#b8ffcc", "slotOn": "#9bffb8", "pickEdge": "#9bffb8" },

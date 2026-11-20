@@ -1,7 +1,7 @@
 {
   // LCD Sunset: the handheld LCD layout, four shades of evening orange.
   "name": "LCD Sunset",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "base": "light",
   "accent": "#341a12",
   "colors": { "screenBg": "#f6dcc0", "ink": "#341a12", "muted": "#8f4a2e", "edge": "#341a12", "line": "#8f4a2e", "panelBody": "#f6dcc0", "bubbleBody": "#dc9a68", "kbdBg": "#341a12", "kbdInk": "#f6dcc0", "slotOn": "#341a12", "pickEdge": "#341a12", "onPick": "#f6dcc0", "onPickAccent": "#dc9a68", "screenFrame": "#dc9a68", "screenBand": "#f6dcc0", "panelBand": "#f6dcc0", "panelLow": "#dc9a68", "bubbleBand": "#dc9a68", "bubbleLow": "#8f4a2e" },

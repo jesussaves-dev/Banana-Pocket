@@ -1,7 +1,7 @@
 {
   // LCD Banana: the handheld LCD layout, four shades of banana yellow.
   "name": "LCD Banana",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "base": "light",
   "accent": "#2a2410",
   "colors": { "screenBg": "#f3e6a0", "ink": "#2a2410", "muted": "#75652a", "edge": "#2a2410", "line": "#75652a", "panelBody": "#f3e6a0", "bubbleBody": "#c8b455", "kbdBg": "#2a2410", "kbdInk": "#f3e6a0", "slotOn": "#2a2410", "pickEdge": "#2a2410", "onPick": "#f3e6a0", "onPickAccent": "#c8b455", "screenFrame": "#c8b455", "screenBand": "#f3e6a0", "panelBand": "#f3e6a0", "panelLow": "#c8b455", "bubbleBand": "#c8b455", "bubbleLow": "#75652a" },

@@ -97,7 +97,7 @@
   "Clock": "Clock",
   "How the time in the status bar is written.": "How the time in the status bar is written.",
   "Boot animation": "Boot animation",
-  "The bananas and the cartridge while Banana starts. Off goes straight to the menu once it is ready.": "The bananas and the cartridge while Banana starts. Off goes straight to the menu once it is ready.",
+  "The bananas and the cartridge while Banana Pocket starts. Off goes straight to the menu once it is ready.": "The bananas and the cartridge while Banana Pocket starts. Off goes straight to the menu once it is ready.",
   "Sleep when idle": "Sleep when idle",
   "In the menu, after this long with no button pressed. Never while a game is running.": "In the menu, after this long with no button pressed. Never while a game is running.",
   "Dim when idle": "Dim when idle",
@@ -132,7 +132,7 @@
   "Time zone": "Time zone",
   "The clock's time zone, summer time included, for the menu and the games. The time itself comes from Wi-Fi or the handheld's own clock.": "The clock's time zone, summer time included, for the menu and the games. The time itself comes from Wi-Fi or the handheld's own clock.",
   "Update": "Update",
-  "A new version of Banana, written to the other slot and run from the next restart; this one stays as it is until then. Over Wi-Fi, \"Check for updates\" downloads the newest release from GitHub; a package on the card in banana/updates (File sharing can copy one) works too.": "A new version of Banana, written to the other slot and run from the next restart; this one stays as it is until then. Over Wi-Fi, \"Check for updates\" downloads the newest release from GitHub; a package on the card in banana/updates (File sharing can copy one) works too.",
+  "A new version of Banana Pocket, written to the other slot and run from the next restart; this one stays as it is until then. Over Wi-Fi, \"Check for updates\" downloads the newest release from GitHub; a package on the card in banana/updates (File sharing can copy one) works too.": "A new version of Banana Pocket, written to the other slot and run from the next restart; this one stays as it is until then. Over Wi-Fi, \"Check for updates\" downloads the newest release from GitHub; a package on the card in banana/updates (File sharing can copy one) works too.",
   "Back up settings": "Back up settings",
   "Settings, accounts, the saves/states trees and RetroArch's controller remaps in one file in banana/backups on the card (File sharing can copy it off). Games and box art stay out of it. Press A twice.": "Settings, accounts, the saves/states trees and RetroArch's controller remaps in one file in banana/backups on the card (File sharing can copy it off). Games and box art stay out of it. Press A twice.",
   "Restore settings": "Restore settings",
@@ -191,6 +191,6 @@
     "Searching...": "Searching...",
     "Skip": "Skip",
     "Update packages": "Update packages",
-    "Welcome to Banana": "Welcome to Banana"
+    "Welcome to Banana Pocket": "Welcome to Banana Pocket"
 }
 }

@@ -2,7 +2,7 @@
   // Sakura: the Pocket layout in cherry blossom -- petal pink on deep plum, a branch-red card edge and blossom
   // for the highlights, with the petals in the dot grid.
   "name": "Sakura",
-  "author": "BananaOS",
+  "author": "Banana Pocket",
   "base": "dark",
   "accent": "#ffb7cd",
   "colors": { "screenBg": "#1d0f16", "ink": "#ffe3ee", "muted": "#d79ab0", "edge": "#7d4a5f", "line": "#4a2a37", "panelBody": "#331c28", "bubbleBody": "#40232f", "kbdBg": "#40232f", "kbdInk": "#ffe3ee", "slotOn": "#ffd9e6", "pickEdge": "#ffd9e6" },

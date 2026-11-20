@@ -13,7 +13,7 @@ example's file name replaces that example.
       "author": "you",             (shown nowhere yet)
       "base": "dark",              the palette it starts from: "dark" or "light"
       "accent": "#3cc6e8",         the selection, the logo, the boot banana: one colour (its lighter and darker
-                                   shades are worked out), one of Banana's names ("yellow", "blue", "red",
+                                   shades are worked out), one of Banana Pocket's names ("yellow", "blue", "red",
                                    "green", "purple", "pink"), or all five: { "base": "#...", "light": "#...",
                                    "dark": "#...", "band": "#...", "low": "#..." }
       "colors": {                  any of the colours below; the ones not named keep the base palette's
@@ -79,7 +79,7 @@ Layout themes
 -------------
 A theme with "screens" in it draws the whole menu itself: every element on the screen, where it goes, how it
 looks and how it moves, from the menu's data (the systems, the games, the selection, the clock, the battery...).
-pocket.json (the handheld's own) is one. In Banana's source (github.com/jesussaves-dev/Banana-Pocket): docs/MAKE-A-THEME.md starts from the
+pocket.json (the handheld's own) is one. In Banana Pocket's source (github.com/jesussaves-dev/Banana-Pocket): docs/MAKE-A-THEME.md starts from the
 beginning, with the theme editor, and docs/THEMES.md describes the format exactly.
 
 Themes apply to the menu and to Settings (its colours and fonts). theme-builder.html, next to this file, makes a theme in a web browser with a live

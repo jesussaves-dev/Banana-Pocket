@@ -27,7 +27,7 @@ the app folder) and `accent` (`#rrggbb`). An id `systems.conf` already lists win
 
 ## Look
 
-The client wears BananaOS's **Pocket** theme: a warm brown-black ground (`#17140d`), butter text, olive metadata and
+The client wears Banana Pocket's **Pocket** theme: a warm brown-black ground (`#17140d`), butter text, olive metadata and
 banana gold for focus, the active tab and the brand. Pixelify Sans is the face (Inter is the fallback), black-and-gold
 crisp borders replace rounded corners, and the app sits in the menu's raised bezel with its dot-grid backdrop. The top
 strip carries the OS banana mark and the **BananaTube** wordmark; the search well, tabs, cards, keyboard and button-chip
