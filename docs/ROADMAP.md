@@ -46,8 +46,6 @@ goes into 1.0.1, not into a delay.
   apply updates. Replaces SMB/SSH for strangers and is the 1.0 answer to "saves off the card". QR in Settings > Network.
 - **The game page (M):** art, description, facts, playtime (`playstats.tsv`), achievements. The scraper already receives
   the data and drops it.
-- **Home button, game keeps waiting (L):** back to the library with the game frozen and a "running" badge; one press to
-  return. Builds on the compositor's freeze and the pause menu.
 
 ### 1.0 checks (on hardware, ticked in `docs/RPC-TEST.md`)
 - **Flasher 2.0.0 on real Windows:** one full flash and one mid-flash cancel (Windows paths are tested with mocks only).
@@ -63,12 +61,17 @@ Not commitments. Banana owns the screen (it sees every frame, owns an overlay pl
 its own daemon and A/B updates, and a CPU-drawn UI that costs nothing idle.
 
 ### Next in line
+- **Home button, game keeps waiting (L):** cut from 1.0 on 2026-11-20. Back to the library with the game frozen and a
+  "running" badge; one press to return. Builds on the compositor's freeze and the pause menu.
 - **Languages, phase 2:** Settings sub-pages, menu chrome, system and app names, date/time formats, then more languages.
   Pipeline done (`ui/src/i18n.cpp`, `/usr/share/banana/lang/`, card override `/data/banana/lang/`); the main Settings
   list is translated (130 strings, informal tú/du).
 - **Rumble for games without it (M):** per-game files map rcheevos memory conditions to vibrator patterns via `bananad`.
 
 ### New ideas
+- **Custom scraper (side quest):** our own scraper that needs no API or account: it reads names, art and facts from what is
+  already on the card (sidecar files, ROM headers, a user-supplied DAT) and from open sources such as libretro's servers.
+  Online is fine; ScreenScraper and other services that need an API key or login are out.
 - **Living shelf (S-M):** box art wears with play: dust on the untouched, a creased spine on favourites, a sticker at 100 %
   achievements.
 - **Banana Radio (M):** the menu BGM becomes a station of your own soundtrack rips (VGM/SPC/GSF on the card), with a
