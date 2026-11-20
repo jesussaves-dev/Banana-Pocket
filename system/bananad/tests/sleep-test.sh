@@ -22,7 +22,7 @@ static void state(const char *s) { FILE *f = fopen("/run/banana/sound-state", "w
 static void on(int s) { FILE *f = fopen("/run/test/ui-signals", "a"); if (f) { fprintf(f, "SIGUSR1\n"); fclose(f); } }
 /* and it turns the panel off first, answering in panel-state */
 static void panel(const char *s) { FILE *f = fopen("/run/banana/panel-state", "w"); if (f) { fputs(s, f); fclose(f); } }
-static void onhup(int s) { panel("off"); usleep(50000); state("closed (test)\n"); }
+static void onhup(int s) { FILE *f = fopen("/run/test/ui-signals", "a"); if (f) { fprintf(f, "SIGHUP\n"); fclose(f); } panel("off"); usleep(50000); state("closed (test)\n"); }
 int main(void) { signal(SIGUSR1, on); signal(SIGHUP, onhup); state("open (test)\n"); for (;;) pause(); }
 EOF
     # an LD_PRELOAD shim for bananad: a real sysfs answers EBUSY to a stale wakeup_count, which a tmpfs cannot, so the
@@ -401,13 +401,23 @@ echo Discharging > /sys/class/power_supply/battery/status
 echo 10 > /sys/class/power_supply/battery/capacity
 rm -f /run/banana/game.pid
 start "sleep_floor_percent = 15"
+: > /run/test/ui-signals
 power
 sleep 0.5
 asleep 2>/dev/null && bad "it slept a low battery with no wake source" || ok "refused to sleep the low battery"
+grep -q '^SIGHUP$' /run/test/ui-signals && ok "the menu was told to go quiet (SIGHUP)" || bad "no SIGHUP to the menu on the refusal"
 [ "$(cat /sys/class/backlight/backlight0/bl_power)" = 4 ] && ok "the panel went dark instead" || bad "panel not dark ($(cat /sys/class/backlight/backlight0/bl_power))"
 grep -q 'no RTC wake alarm' /data/banana/logs/sleep.log && ok "logged the refusal" || bad "refusal not logged"
 ev $EV_KEY 304 1; ev $EV_KEY 304 0; sleep 0.3      # BTN_SOUTH: the SoC never slept, so a press lights it again
 [ "$(cat /sys/class/backlight/backlight0/bl_power)" = 0 ] && ok "a press brings the panel back" || bad "panel stayed dark"
+grep -q '^SIGUSR1$' /run/test/ui-signals && ok "the menu was woken (SIGUSR1)" || bad "no SIGUSR1 after the panel came back"
+# the power press that lights a dark panel is swallowed: it must not start another refused sleep
+power; sleep 0.5                                # lit panel: refused again, dark
+[ "$(cat /sys/class/backlight/backlight0/bl_power)" = 4 ] || bad "second refusal did not darken the panel"
+n=$(grep -c 'no RTC wake alarm' /data/banana/logs/sleep.log)
+power; sleep 0.5                                # a press on the dark panel: it lights, and its release must not sleep again
+[ "$(cat /sys/class/backlight/backlight0/bl_power)" = 0 ] && ok "a power press lights the dark panel and it stays lit" || bad "the waking power press re-blanked the panel"
+[ "$(grep -c 'no RTC wake alarm' /data/banana/logs/sleep.log)" = "$n" ] && ok "the waking press started no sleep" || bad "the waking press started another sleep"
 stop
 
 echo "11. Quick resume on: the game writes its .auto state before it is stopped; a frozen game is not asked"
