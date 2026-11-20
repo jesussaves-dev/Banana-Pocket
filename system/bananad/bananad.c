@@ -924,6 +924,10 @@ static void suspend_now(const char *why)
 		 * shut down cleanly. The next key press brings the panel back (see panel_blanked in handle()). */
 		sleep_log("not sleeping (%s): %d%% and no RTC wake alarm: dark, but watching the battery", why,
 		    battery_discharging_pct());
+		/* a sleep that did not happen must still be quiet: SIGHUP stops the menu's ambient loop and releases the sound
+		 * device (the next key's SIGUSR1 brings both back). A game's own sound is left alone. */
+		pid_t ui = ui_pid();
+		if (ui > 0 && !pid_of("/run/banana/game.pid")) kill(ui, SIGHUP);
 		backlights_power(0);
 		panel_blanked = 1;
 		if (!pid_of("/run/banana/game.pid")) standby_enter();	/* a game left running keeps its clocks */
@@ -2500,10 +2504,13 @@ static void resync_keys(int fd)
 	}
 }
 
+/* the power press that woke a panel bananad had blanked: it and its release must not start another sleep */
+static int swallow_power;
+
 static void handle(const struct input_event *e)
 {
 	double now = mono();
-	if (e->type == EV_KEY) { last_input = now; undim(); if (panel_blanked) { panel_blanked = 0; standby_exit(); backlights_power(1); pid_t u = ui_pid(); if (u > 0 && (!pid_of("/run/banana/game.pid") || compositor_on())) kill(u, SIGUSR1); } }
+	if (e->type == EV_KEY) { last_input = now; undim(); if (panel_blanked) { panel_blanked = 0; if (e->code == KEY_POWER && e->value) swallow_power = 1; standby_exit(); backlights_power(1); pid_t u = ui_pid(); if (u > 0 && (!pid_of("/run/banana/game.pid") || compositor_on())) kill(u, SIGUSR1); } }
 	if (e->type == EV_SW && e->code == SW_HEADPHONE_INSERT) {
 		if (headphones != e->value) {
 			/* unplugged while a game runs: it would blast the speaker, so pause it; plugging back in does not
@@ -2532,6 +2539,7 @@ static void handle(const struct input_event *e)
 	case BTN_SOUTH: if (e->value && fn_held && !overlay_open()) ra_cmd("TOGGLE_ANALOG_DPAD"); break;
 	case KEY_POWER:
 		if (now < ignore_power_until) break;
+		if (swallow_power) { if (!e->value) swallow_power = 0; break; }
 		/* Transfer mode (Settings > System > Mass storage, read-write): the menu is stopped and /data is the
 		 * computer's. A press brings the card back -- usb-msc off ejects the disk from the host, mounts /data and
 		 * restarts the menu -- rather than sleeping. Eject on the computer first if it is safe to do so. */
