@@ -824,7 +824,7 @@ static void sleep_save_state(pid_t game)
  * the next key press, so nothing depends on which clock profile was active. */
 #define SB_POL 4
 #define SB_CPU 8
-static struct { char dir[96]; char gov[32]; int min, max; } sb_pol[SB_POL];
+static struct { char dir[160]; char gov[32]; int min, max; } sb_pol[SB_POL];
 static int sb_npol, sb_on;
 static char sb_online[SB_CPU];
 static char sb_gpu[160], sb_gpu_gov[32];
@@ -838,7 +838,7 @@ static void standby_enter(void)
 	struct dirent *e;
 	while (d && (e = readdir(d)) && sb_npol < SB_POL) {
 		if (strncmp(e->d_name, "policy", 6)) continue;
-		char p[160], v[200];
+		char p[160], v[240];
 		snprintf(p, sizeof p, "/sys/devices/system/cpu/cpufreq/%.40s", e->d_name);
 		snprintf(sb_pol[sb_npol].dir, sizeof sb_pol[0].dir, "%s", p);
 		snprintf(v, sizeof v, "%s/cpuinfo_min_freq", p);
@@ -893,14 +893,14 @@ static void standby_exit(void)
 	/* the policy of a cluster whose cores all went offline is made again with the kernel's defaults: write every
 	 * saved value back after the cores are up */
 	for (int i = 0; i < sb_npol; i++) {
-		char v[200], n[16];
-		snprintf(v, sizeof v, "%s/scaling_max_freq", sb_pol[i].dir);
+		char v[240], n[16];
+		snprintf(v, sizeof v, "%.150s/scaling_max_freq", sb_pol[i].dir);
 		snprintf(n, sizeof n, "%d", sb_pol[i].max);
 		write_file(v, n);
-		snprintf(v, sizeof v, "%s/scaling_min_freq", sb_pol[i].dir);
+		snprintf(v, sizeof v, "%.150s/scaling_min_freq", sb_pol[i].dir);
 		snprintf(n, sizeof n, "%d", sb_pol[i].min);
 		write_file(v, n);
-		snprintf(v, sizeof v, "%s/scaling_governor", sb_pol[i].dir);
+		snprintf(v, sizeof v, "%.150s/scaling_governor", sb_pol[i].dir);
 		if (sb_pol[i].gov[0]) write_file(v, sb_pol[i].gov);
 	}
 	if (sb_gpu[0] && sb_gpu_gov[0]) {
