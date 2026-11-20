@@ -85,6 +85,11 @@ namespace banana
 		// the volume or brightness keys' level: a small bubble near the bottom of the panel, its label, the percent and
 		// a bar (drawn like notice)
 		void level(const std::string& label, int percent);
+		// the pause menu's quick settings: the same panel level, volume and Wi-Fi switch Settings has, stepped from a game.
+		// Brightness is in percent (10-100, steps of 10), volume 0-100; both return the new level (-1: unknown).
+		int quickBrightness(int step);
+		int quickVolume(int step);
+		bool quickWifi(bool toggle);	// toggle: flip it; either way, whether Wi-Fi is on now
 		// the in-game pause menu over a frozen game (the compositor's overlay plane), two columns: the actions on the
 		// left (a value with < > when Left/Right change it), and on the right what the selected row is about (a save
 		// state's thumbnail, the achievements, the box art). Strings are English keys; the menu translates them.

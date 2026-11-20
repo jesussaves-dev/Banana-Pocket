@@ -28,6 +28,9 @@ void PauseMenu::build()
 		r.label = id;
 		if (gameRA && (id == "Save state" || id == "Load state")) { r.value = tr("Slot") + " " + std::to_string(pickSlot); r.arrows = true; }
 		else if (id == "Change disc") { r.value = tr("Disc") + " " + std::to_string(discPick) + "/" + std::to_string(discs); r.arrows = true; }
+		else if (id == "Brightness") { r.value = qBright < 0 ? "" : std::to_string(qBright) + "%"; r.arrows = qBright >= 0; }
+		else if (id == "Volume") { r.value = qVol < 0 ? "" : std::to_string(qVol) + "%"; r.arrows = qVol >= 0; }
+		else if (id == "Wi-Fi") r.value = qWifi ? "On" : "Off";
 		else if (id == "Fast-forward") r.value = ffOn ? "On" : "Off";
 		else if (id == "Frame") { r.value = frameKind == FrameKind::Art ? "Console" : frameKind == FrameKind::Banana ? "Banana" : "None"; r.arrows = true; }
 		else if (id == "Achievements" && prog >= 0) r.value = std::to_string(prog) + "/" + std::to_string(total);
@@ -132,6 +135,17 @@ static std::vector<std::pair<std::string, int>> parseMenuKeys(const std::string&
 // The pause menu: MENU over a game freezes it (SIGSTOP on the launcher's whole tree, so a port or BananaTube stops
 // too) and lists what can be done; RetroArch's own menu stays one row away (and on MENU + X). It replaces the
 // RetroArch menu as the first thing MENU opens: fewer choices, Banana's look, the same for every game.
+// Brightness, Volume and (when the image has the helper) Wi-Fi, with their levels read now
+void PauseMenu::addQuick()
+{
+	qBright = settings.quickBrightness(0);
+	qVol = settings.quickVolume(0);
+	qWifi = settings.quickWifi(false);
+	rows.push_back("Brightness");
+	rows.push_back("Volume");
+	if (access("/usr/libexec/banana/wifi", X_OK) == 0) rows.push_back("Wi-Fi");
+}
+
 void PauseMenu::show()
 {
 	if (gamePid <= 0) { pending = false; return; }
@@ -150,6 +164,7 @@ void PauseMenu::show()
 		rows.push_back("Shader");
 		if (gameFramable && frameMaster()) rows.push_back("Frame");
 		if (access("/run/banana/ra-progress", R_OK) == 0) rows.push_back("Achievements");
+		addQuick();
 		for (const char* r : { "Restart game", "RetroArch menu", "Quit game" }) rows.push_back(r);
 	}
 	else
@@ -159,6 +174,7 @@ void PauseMenu::show()
 		rows = { "Resume" };
 		for (const auto& k : appKeys) rows.push_back(k.first);
 		if (gameFramable && frameMaster()) rows.push_back("Frame");
+		addQuick();
 		rows.push_back("Quit");
 	}
 	signalTree(gamePid, SIGSTOP);
@@ -193,6 +209,13 @@ void PauseMenu::act()
 	if (risky && armed != sel) { armed = sel; draw(); return; }
 	logf("quick menu: %s", row.c_str());
 	if (row == "Achievements" || row == "Frame" || (row == "Change disc" && discPick == discNow)) return;	// nothing to do
+	if (row == "Brightness" || row == "Volume") return;	// Left and Right change these
+	if (row == "Wi-Fi")
+	{
+		qWifi = settings.quickWifi(true);
+		draw();
+		return;
+	}
 	if (row == "Fast-forward")
 	{
 		// stays open: the line is queued and goes out on Resume; the row shows the new state
@@ -237,6 +260,8 @@ void PauseMenu::key(Key k)
 	{
 		int d = k == Key::LEFT ? -1 : 1;
 		if (gameRA && (row == "Save state" || row == "Load state")) pickSlot = (pickSlot + d + 10) % 10;
+		else if (row == "Brightness") { int v = settings.quickBrightness(d); if (v >= 0) qBright = v; }
+		else if (row == "Volume") { int v = settings.quickVolume(d * 10); if (v >= 0) qVol = v; }
 		else if (row == "Change disc") discPick = (discPick - 1 + d + discs) % discs + 1;
 		else if (row == "Frame" && gameIndex >= 0)
 		{

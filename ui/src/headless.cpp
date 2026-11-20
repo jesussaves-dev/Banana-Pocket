@@ -326,7 +326,7 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 			Settings::PauseView v;
 			v.title = lib.gameCount() ? lib.gameAt(0).title : "Game";
 			v.status = "85%   4:37 PM   12m";
-			for (const char* r : { "Resume", "Save state", "Load state", "Fast-forward", "Shader", "Frame", "Achievements", "Restart game", "RetroArch menu", "Quit game" })
+			for (const char* r : { "Resume", "Save state", "Load state", "Fast-forward", "Shader", "Frame", "Achievements", "Brightness", "Volume", "Wi-Fi", "Restart game", "RetroArch menu", "Quit game" })
 			{
 				Settings::PauseRow pr;
 				pr.label = r;
@@ -334,6 +334,9 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 				else if (!strcmp(r, "Fast-forward")) pr.value = "Off";
 				else if (!strcmp(r, "Frame")) { pr.value = "Console"; pr.arrows = true; }
 				else if (!strcmp(r, "Achievements")) pr.value = "3/24";
+				else if (!strcmp(r, "Brightness")) { pr.value = "70%"; pr.arrows = true; }
+				else if (!strcmp(r, "Volume")) { pr.value = "50%"; pr.arrows = true; }
+				else if (!strcmp(r, "Wi-Fi")) pr.value = "On";
 				v.rows.push_back(pr);
 			}
 			v.sel = sel; v.armed = armed;

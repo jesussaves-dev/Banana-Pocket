@@ -612,7 +612,7 @@ int main(int argc, char** argv)
 	bool gameRA = false;
 	FrameKind frameKind = FrameKind::None;
 	bool gameFramable = false;
-	PauseMenu pause(lib, input, comp, gamePid, gameStart, gameIndex, gameRA, gameFramable, gameRom, frameKind, raSlot, discs, discNow, ffOn, raQueue);
+	PauseMenu pause(settingsView, lib, input, comp, gamePid, gameStart, gameIndex, gameRA, gameFramable, gameRom, frameKind, raSlot, discs, discNow, ffOn, raQueue);
 	be.overlay = [&]()
 	{
 		drawOverlay(settingsView, low, plug, osdLabel, osdPercent, osdUntil, nowMs(),

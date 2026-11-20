@@ -18,10 +18,10 @@ namespace banana
 	class PauseMenu
 	{
 	public:
-		PauseMenu(Library& lib, Input& input, Compositor& comp, pid_t& gamePid, double& gameStart, int& gameIndex, bool& gameRA,
+		PauseMenu(Settings& settings, Library& lib, Input& input, Compositor& comp, pid_t& gamePid, double& gameStart, int& gameIndex, bool& gameRA,
 		          bool& gameFramable, std::string& gameRom, FrameKind& frameKind, int& raSlot, int& discs, int& discNow, bool& ffOn,
 		          std::deque<std::string>& raQueue)
-			: lib(lib), input(input), comp(comp), gamePid(gamePid), gameStart(gameStart), gameIndex(gameIndex), gameRA(gameRA),
+			: settings(settings), lib(lib), input(input), comp(comp), gamePid(gamePid), gameStart(gameStart), gameIndex(gameIndex), gameRA(gameRA),
 			  gameFramable(gameFramable), gameRom(gameRom), frameKind(frameKind), raSlot(raSlot), discs(discs), discNow(discNow),
 			  ffOn(ffOn), raQueue(raQueue) {}
 
@@ -43,8 +43,10 @@ namespace banana
 	private:
 		void build();
 		void syncSlot();
+		void addQuick();
 		void act();
 
+		Settings& settings;
 		Library& lib;
 		Input& input;
 		Compositor& comp;
@@ -62,6 +64,8 @@ namespace banana
 		std::deque<std::string>& raQueue;
 
 		int sel = 0, armed = -1, pickSlot = 0, discPick = 1;
+		int qBright = -1, qVol = -1;	// the quick settings' levels, read when the menu opens
+		bool qWifi = false;
 		std::vector<std::string> rows;	// the row ids (English labels) for this game
 		std::vector<std::pair<std::string, int>> appKeys;	// an app's rows that tap a key: label, evdev code (from menu_keys)
 	};

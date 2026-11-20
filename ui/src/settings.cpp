@@ -1424,11 +1424,13 @@ namespace banana
 		if (sw > 0) text(v.status, false, 16, x0 + w - 16 - sw, y0 + 16, p.muted);
 		// left: the rows
 		const float lx = x0 + 12, lw = 320, top = y0 + 48, pitch = 40;
-		for (int i = 0; i < (int)v.rows.size(); i++)
+		const int vis = 11, nrows = (int)v.rows.size();
+		const int first = std::max(0, std::min(v.sel - vis / 2, nrows - vis));	// more rows than fit: the list scrolls
+		for (int i = first; i < std::min(nrows, first + vis); i++)
 		{
 			const PauseRow& r = v.rows[i];
 			const bool on = i == v.sel, armed = i == v.armed;
-			float y = top + i * pitch;
+			float y = top + (i - first) * pitch;
 			box(on ? "pick" : "slot", on, lx, y, lw, pitch - 6);
 			Color c = armed ? (on ? p.onPickAccent : p.accent) : on ? p.onPick : p.muted;
 			text(fit(armed ? tr("Press A again") : tr(r.label), true, 18, lw - 120), true, 18, lx + 14, y + 7, c);
@@ -1481,6 +1483,75 @@ namespace banana
 			hx += text(hp.first, true, 16, hx, hy, p.ink) + gap;
 			hx += text(hp.second, false, 16, hx, hy, p.muted) + sep;
 		}
+	}
+
+	// ---- quick settings (the pause menu) ----------------------------------------------------------
+	int Settings::quickBrightness(int step)
+	{
+		int pm = atoi(readLine("/run/banana/dim").c_str());	// (dimmed now: the level before)
+		if (pm <= 0) pm = atoi(readLine(data + "/backlight").c_str());
+		if (pm <= 0 || pm > 1000)
+		{
+			pm = -1;
+			if (DIR* d = opendir("/sys/class/backlight"))
+			{
+				while (dirent* e = readdir(d))
+				{
+					if (e->d_name[0] == '.') continue;
+					std::string b = std::string("/sys/class/backlight/") + e->d_name;
+					int max = atoi(readLine(b + "/max_brightness").c_str()), cur = atoi(readLine(b + "/brightness").c_str());
+					if (max > 0) { pm = cur * 1000 / max; break; }
+				}
+				closedir(d);
+			}
+		}
+		if (pm < 0) return -1;
+		pm = std::min(1000, std::max(100, (pm + 50) / 100 * 100));
+		if (step == 0) return pm / 10;
+		pm = std::min(1000, std::max(100, pm + step * 100));
+		if (DIR* d = opendir("/sys/class/backlight"))
+		{
+			while (dirent* e = readdir(d))
+			{
+				if (e->d_name[0] == '.') continue;
+				std::string b = std::string("/sys/class/backlight/") + e->d_name;
+				int max = atoi(readLine(b + "/max_brightness").c_str());
+				if (max <= 0) continue;
+				std::ofstream(b + "/brightness") << std::max(1, max * pm / 1000) << "\n";
+			}
+			closedir(d);
+		}
+		std::ofstream(data + "/backlight") << pm << "\n";	// bananad restores it at boot
+		std::ofstream("/run/banana/pic-scale") << "100\n";
+		std::ofstream(data + "/bl-scale") << "100\n";
+		nightChanged = true;
+		return pm / 10;
+	}
+
+	int Settings::quickVolume(int step)
+	{
+		std::string cmd = step == 0 ? "/usr/libexec/banana/volume get 2>/dev/null"
+		                            : std::string("/usr/libexec/banana/volume ") + (step > 0 ? "up " : "down ") + std::to_string(std::abs(step)) + " 2>/dev/null";
+		int pct = -1;
+		if (FILE* p = popen(cmd.c_str(), "r"))
+		{
+			char ln[64];
+			int v;
+			if (fgets(ln, sizeof ln, p) && sscanf(ln, "%d", &v) == 1) pct = v;
+			pclose(p);
+		}
+		if (step != 0 && pct >= 0) poke("bananad");	// it keeps the level across reboots
+		return pct;
+	}
+
+	bool Settings::quickWifi(bool toggle)
+	{
+		bool on = wifiOn();
+		if (!toggle) return on;
+		on = !on;
+		setConfValue(data + "/settings.conf", "wifi", on ? "on" : "off");
+		spawn("/usr/libexec/banana/wifi", on ? "up" : "down");
+		return on;
 	}
 
 	void Settings::level(const std::string& label, int percent)
