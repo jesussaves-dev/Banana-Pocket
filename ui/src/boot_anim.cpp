@@ -69,7 +69,7 @@ static bool audioFlowing()
 void playSplash(Display& disp, SoftBackend& be, const Options& o, const std::string& variant, bool on,
 	std::atomic<bool>& ready, std::mutex& readyM, std::condition_variable& readyCv, Sound& sound, int sig, bool waitAudio)
 {
-	if (!on || !gSplash.load(o.splash, o.banana + "/banana-48.png", variant, be.width(), be.height()))
+	if (!on || !gSplash.load(o.splash, o.banana + "/banana-32.png", variant, be.width(), be.height()))
 	{
 		// no animation: sleep until the loader publishes the menu instead of polling `ready` every 2 ms
 		std::unique_lock<std::mutex> l(readyM);

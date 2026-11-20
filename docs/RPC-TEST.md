@@ -10,7 +10,7 @@ internal Android is there.
 
 ## First boot
 
-- [ ] The panel lights up and the Banana Pocket splash plays (bunch, BANANAOS, LOADING)
+- [ ] The panel lights up and the Banana Pocket splash plays (white screen, BANANA flying in, sparkle, the banana bunch)
 - [ ] The menu comes up **upright** and fills the panel, not sideways or upside down
       (if it is turned: add `banana.rotate=0`, `90`, `180` or `270` to the `APPEND` lines in
       `/boot/extlinux/extlinux.conf` -- no rebuild needed)

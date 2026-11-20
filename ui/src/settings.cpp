@@ -340,7 +340,7 @@ namespace banana
 		add(D, "music", "Volume", "The speakers or the headphones, whichever is playing. The volume keys change it anywhere.", "", "",
 			{ "0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" }, { "0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100" }, Item::VOLUME);
 		add(D, "picture", "Night light", "Warmer colours at night: a panel-level tint over the menu and the games; Warmer cuts more blue.", menu, "night_light", { "Off", "Warm", "Warmer" }, { "off", "warm", "warmer" });
-		add(D, "music", "Menu sounds", "The menu's clicks, and the cartridge going into the console.", menu, "sounds", { "On", "Off" }, { "on", "off" });
+		add(D, "music", "Menu sounds", "The menu's clicks, and the click as the boot logo lands.", menu, "sounds", { "On", "Off" }, { "on", "off" });
 		add(D, "music", "Background Music", "An ambient loop under the menu, mixed low so the clicks stay clear. The SNES style plays its own; a bgm.wav (or music/bgm.wav) on the card plays instead. Off stops it at once.", menu, "bgm", { "On", "Off" }, { "on", "off" });
 		if (genesis)	// the era's Options screens had one
 			add(D, "music", "Sound Test", "Plays the theme's sounds by number. Left and right pick one, L and R by ten, A plays it.", "", "",
@@ -348,7 +348,7 @@ namespace banana
 		add(D, "picture", "Battery", "The battery in the status bar: its icon, or its icon and how full it is.", menu, "battery", { "Icon", "Icon and %" }, { "icon", "percent" });
 		add(D, "picture", "Box art", "In the SNES style, a game's box on the counter: drawn on the street's grid in the Super NES's colours, or the picture as it is.", menu, "boxart_look", { "Pixel", "Original" }, { "pixel", "original" });
 		add(D, "picture", "Clock", "How the time in the status bar is written.", menu, "clock", { "24-hour", "12-hour" }, { "24h", "12h" });
-		add(D, "picture", "Boot animation", "The bananas and the cartridge while Banana Pocket starts. Off goes straight to the menu once it is ready.", menu, "splash", { "On", "Off" }, { "on", "off" });
+		add(D, "picture", "Boot animation", "The banana wordmark flying in while Banana Pocket starts. Off goes straight to the menu once it is ready.", menu, "splash", { "On", "Off" }, { "on", "off" });
 		const char* P = "Sleep & power";
 		add(P, "moon", "Sleep when idle", "In the menu, after this long with no button pressed. Never while a game is running.", power, "autosleep_minutes",
 			{ "Never", "5 minutes", "10 minutes", "15 minutes", "30 minutes" }, { "0", "5", "10", "15", "30" });

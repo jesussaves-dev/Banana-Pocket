@@ -5,14 +5,15 @@
 
 namespace banana
 {
-	// timings (ms)
-	static constexpr double WORD_AT = 560, LETTER = 60, LOAD_AT = 600, DOT = 240;
-	static constexpr double SHINE_AT = 1000, SHINE = 300;
-	static constexpr double CLICK_AT = 1000;	// the bunch lands and the wordmark is complete: the intro's cue ("insert")
-	static constexpr double DROP_AT = Splash::HOLD_AT;	// the bunch leaves the top a beat after the background
-
-	// the layout, in CSS px of a 640x480 panel
-	static constexpr float BUNCH_Y = 96, WORD_Y = 268, LOAD_Y = 342, DOTS_Y = 368;
+	// The GBA BIOS intro's own clock, at 60 fps: the letters seat at frame 108, the shine runs to frame 210, then the
+	// fade. SEAT_AT and INTRO_END are those frames in ms.
+	static constexpr double MS_PER_FRAME = 1000.0 / 60.0;
+	static constexpr double SEAT_AT = 1800, SHINE_AT = 1800, SHINE = 1700;
+	static constexpr double FADE_AT = 3450, FADE = 250;
+	static constexpr int GW = 240, GH = 160, WORD_Y = 32, ICON_Y = 100;
+	static constexpr int STAGGER_FRAMES = 5, FLIGHT_FRAMES = 75;
+	static constexpr int FIRST_FRAME = 8;
+	static_assert(Splash::HOLD_AT < FIRST_FRAME * MS_PER_FRAME, "the audio hold must release before the first letter moves");
 
 	static inline uint32_t mul255(uint32_t p, uint32_t k)
 	{
@@ -31,6 +32,17 @@ namespace banana
 		return s + mul255(d, 255 - a);
 	}
 
+	// an opaque lerp, channel by channel
+	static inline uint32_t mix(uint32_t a, uint32_t b, double f)
+	{
+		f = std::clamp(f, 0.0, 1.0);
+		int ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+		int br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+		return 0xff000000u | (uint32_t)std::lround(ar + (br - ar) * f) << 16
+		                   | (uint32_t)std::lround(ag + (bg - ag) * f) << 8
+		                   | (uint32_t)std::lround(ab + (bb - ab) * f);
+	}
+
 	static bool loadRgba(const std::string& path, std::vector<uint32_t>& px, int& w, int& h)
 	{
 		rnds::Bitmap b = rnds::decodeFile(path);
@@ -47,61 +59,46 @@ namespace banana
 		return true;
 	}
 
-	// a word's mask (white on black), with each letter's first column found from the empty columns between them
-	static bool loadMask(const std::string& path, int& w, int& h, std::vector<uint8_t>& a, std::vector<int>& letters)
+	// a word's mask (white on black), with each letter's column range found from the empty columns between them
+	static bool loadMask(const std::string& path, int& w, int& h, std::vector<uint8_t>& a,
+	                     std::vector<int>& letters, std::vector<int>& ends)
 	{
 		rnds::Bitmap b = rnds::decodeFile(path);
 		if (b.empty()) return false;
 		w = b.w; h = b.h;
 		a.resize((size_t)w * h);
 		for (size_t i = 0; i < a.size(); i++) a[i] = b.px[i * 4] > 127 ? 255 : 0;
-		letters.clear();
-		bool prev = false;
+		letters.clear(); ends.clear();
+		int start = -1;
 		for (int x = 0; x < w; x++)
 		{
 			bool any = false;
 			for (int y = 0; y < h; y++) any |= a[(size_t)y * w + x] != 0;
-			if (any && !prev) letters.push_back(x);
-			prev = any;
+			if (any && start < 0) start = x;
+			else if (!any && start >= 0) { letters.push_back(start); ends.push_back(x); start = -1; }
 		}
+		if (start >= 0) { letters.push_back(start); ends.push_back(w); }
 		return true;
 	}
 
 	bool Splash::load(const std::string& dir, const std::string& banana, const std::string& variant, int w, int h)
 	{
-		// the composition is laid out in CSS px of a 640x480 panel, so it is the width that fixes its scale (1.9375 on
-		// the RPC's 1240x1080); a panel taller than 480*s keeps the background's
-		// dots below the console, which is what the artwork is behind the console anyway
-		W = w; H = h; s = w / 640.0f;
-		oy = std::max(0, (H - (int)std::lround(480 * s)) / 2);
-		light = variant == "light";
-		K = std::max(1, (int)std::lround(3 * s));
-		KW = std::max(1, (int)std::lround(6 * s));
-		KL = std::max(1, (int)std::lround(2 * s));
-		std::string size = w > 640 ? "1024" : "640", pal = light ? "light" : "dark";
-		int bw, bh;
-		if (!loadRgba(dir + "/" + pal + "-" + size + "-top.png", bgTop, bw, bh) || !bgTop.size()) return false;
-		// a panel the assets weren't made for (the RPC's 1240x1080): the background is stretched to it, dots and all
-		if (bw != W || bh != H)
-		{
-			for (auto* bg : { &bgTop })
-			{
-				std::vector<uint32_t> o((size_t)W * H);
-				for (int y = 0; y < H; y++)
-					for (int x = 0; x < W; x++)
-						o[(size_t)y * W + x] = (*bg)[(size_t)((int64_t)y * bh / H) * bw + (int64_t)x * bw / W];
-				bg->swap(o);
-			}
-		}
+		// a 240x160 GBA scene, integer-scaled and centred: 5x (1200x800) on the RPC's 1240x1080, 2x on the host test's
+		W = w; H = h;
+		g = std::max(1, std::min(w / GW, h / GH));
+		ox = (w - GW * g) / 2;
+		oy = (h - GH * g) / 2;
 		if (!loadRgba(banana, bunch.px, bunch.w, bunch.h)) return false;
-		if (!loadMask(dir + "/word.png", word.w, word.h, word.a, word.letters)) return false;
-		if (!loadMask(dir + "/loading.png", loading.w, loading.h, loading.a, loading.letters)) return false;
-		ink = light ? 0xff2a2620u : 0xfff1ede2u;
-		muted = light ? 0xff7a7262u : 0xffa39d8eu;
+		if (!loadMask(dir + "/word.png", word.w, word.h, word.a, word.letters, word.ends)) return false;
+		if (word.w < 1 || word.h < 1 || word.letters.empty()) return false;
+		// the wordmark is 32 virtual px tall, like the GBA's glyphs
+		KW = std::max(1, (int)std::lround(g * 32.0 / word.h));
+		(void)variant;
 		return true;
 	}
 
-	int Splash::X(float v) const { return (int)std::lround(v * s); }
+	int Splash::VX(float v) const { return ox + (int)std::lround(v * g); }
+	int Splash::VY(float v) const { return oy + (int)std::lround(v * g); }
 
 	void Splash::fill(uint32_t* d, int x, int y, int w, int h, uint32_t c) const
 	{
@@ -110,133 +107,125 @@ namespace banana
 			for (int xx = x0; xx < x1; xx++) d[(size_t)yy * W + xx] = over(c, d[(size_t)yy * W + xx]);
 	}
 
-	// the bunch, drawn in device space so the drop's squash can scale it: kxs/kys are device px per sprite px (both K at
-	// rest), the top-left is (x,y). Nearest-neighbour sampling, so a fractional scale still maps cleanly and the pass
-	// stays one walk over the sprite's device pixels -- the drop adds no cost, only a different (x,y,kxs,kys).
-	// shine: the light band's position over the sprite, 0..1 (outside: none).
-	void Splash::drawBunch(uint32_t* d, int x, int y, double shine, double kxs, double kys) const
+	// the bunch, in the Nintendo wordmark's place, at k device px per sprite px
+	void Splash::drawBunch(uint32_t* d, int x, int y, int k, int alpha) const
 	{
-		const int Wd = (int)std::lround(bunch.w * kxs), Hd = (int)std::lround(bunch.h * kys);
-		if (Wd <= 0 || Hd <= 0 || bunch.w <= 0 || bunch.h <= 0) return;
-		const int band = shine >= 0 && shine <= 1 ? (int)std::lround(shine * (bunch.w + bunch.h + 8)) - 4 : -100000;
+		const int Wd = bunch.w * k, Hd = bunch.h * k;
+		if (Wd <= 0 || Hd <= 0) return;
 		for (int dy = 0; dy < Hd; dy++)
 		{
 			const int yy = y + dy;
 			if (yy < 0 || yy >= H) continue;
-			const int sy = (int)((int64_t)dy * bunch.h / Hd);
-			const uint32_t* srow = &bunch.px[(size_t)sy * bunch.w];
+			const uint32_t* srow = &bunch.px[(size_t)(dy / k) * bunch.w];
 			uint32_t* drow = d + (size_t)yy * W;
 			for (int dx = 0; dx < Wd; dx++)
 			{
-				const int sx = (int)((int64_t)dx * bunch.w / Wd);
-				uint32_t p = srow[sx];
+				uint32_t p = srow[dx / k];
 				if (!(p >> 24)) continue;
-				// the shine: a diagonal stripe of pale yellow across the fruit (not the outline)
-				const int diag = sx + (bunch.h - sy);
-				if ((p & 0xffffff) != 0 && diag >= band && diag < band + 4) p = rnds::tintAccent(0xfffff0b4u);
+				if (alpha < 255) p = mul255(p, (uint32_t)alpha);
 				const int xx = x + dx;
 				if (xx >= 0 && xx < W) drow[xx] = over(p, drow[xx]);
 			}
 		}
 	}
 
-	// columns [fromCol, toCol) of a mask at k device px per pixel, dy device px lower
-	void Splash::drawMask(uint32_t* d, const Mask& m, int k, int x, int y, uint32_t colour, int fromCol, int toCol, int dy) const
+	// a rainbow colour for h in 0..1 (hue wheel, full saturation and value): no tables, no allocation
+	static uint32_t rainbow(double h)
 	{
-		for (int my = 0; my < m.h; my++)
-			for (int mx = fromCol; mx < toCol; mx++)
-			{
-				if (!m.a[(size_t)my * m.w + mx]) continue;
-				fill(d, x + mx * k, y + dy + my * k, k, k, colour);
-			}
+		h = h - std::floor(h);
+		double x = h * 6, f = x - std::floor(x);
+		double r = 0, g = 0, b = 0;
+		switch ((int)x)
+		{
+		case 0: r = 1; g = f; break;
+		case 1: r = 1 - f; g = 1; break;
+		case 2: g = 1; b = f; break;
+		case 3: g = 1 - f; b = 1; break;
+		case 4: r = f; b = 1; break;
+		default: r = 1; b = 1 - f; break;
+		}
+		return 0xff000000u | ((uint32_t)(r * 255) << 16) | ((uint32_t)(g * 255) << 8) | (uint32_t)(b * 255);
 	}
 
-	// BANANAOS: one letter more every LETTER ms, each popping up from one word-pixel lower; BANANA in two banana
-	// tones, OS in white, and a shadow, as the status bar's logo (tools/make-logo.py)
-	void Splash::drawWord(uint32_t* d, double t) const
+	// one letter, scaled about its centre: k device px per mask px, sheared to italic, in its flight colour mixed to
+	// the banana tones by mixf, with the shine band over it after it seats
+	void Splash::drawLetter(uint32_t* d, int c0, int c1, double cx, double cy, double k, double t, double mixf, int i) const
 	{
-		int n = (int)word.letters.size();
-		const int white = 2;		// the last two letters, OS
-		int shown = t < WORD_AT ? 0 : std::min(n, 1 + (int)((t - WORD_AT) / LETTER));
-		int x = (W - word.w * KW) / 2, y = X(WORD_Y) + oy;
-		int sh = std::max(1, KW / 3);
-		for (int i = 0; i < shown; i++)
+		const int kw = std::max(1, (int)std::lround(k));
+		const int lw = (c1 - c0) * kw, lh = word.h * kw;
+		const int x0 = (int)std::lround(cx - lw * 0.5), y0 = (int)std::lround(cy - lh * 0.5);
+		const int lightRow = (word.h * 11 + 19) / 20;
+		const uint32_t banana[2] = { rnds::tintAccent(0xffffde52u), rnds::tintAccent(0xffeea018u) };
+		const uint32_t flight = rainbow(i * 0.17 + t * 0.0006);
+		const int wordX = (W - word.w * KW) / 2;
+		const int bandW = std::max(1, word.w * KW / 4);
+		const bool shining = t >= SHINE_AT && t < SHINE_AT + SHINE;
+		const int bandX = shining ? (int)std::lround((t - SHINE_AT) / SHINE * (word.w * KW + 2 * bandW)) - bandW : -1000000;
+		for (int my = 0; my < word.h; my++)
 		{
-			int c0 = word.letters[i], c1 = i + 1 < n ? word.letters[i + 1] : word.w;
-			double age = t - (WORD_AT + i * LETTER);
-			int dy = age < 40 ? KW : 0;
-			drawMask(d, word, KW, x + sh, y + sh, 0xff000000u, c0, c1, dy);
-			// light over the top rows, darker below
-			for (int my = 0; my < word.h; my++)
-				for (int mx = c0; mx < c1; mx++)
-					if (word.a[(size_t)my * word.w + mx])
-						fill(d, x + mx * KW, y + dy + my * KW, KW, KW,
-						     i >= n - white ? 0xffffffffu : my < (word.h * 11 + 19) / 20 ? rnds::tintAccent(0xffffde52u) : rnds::tintAccent(0xffeea018u));
+			const uint32_t base = mix(flight, banana[my < lightRow ? 0 : 1], mixf);
+			const int shear = (word.h - 1 - my) * kw / 4;
+			for (int mx = c0; mx < c1; mx++)
+			{
+				if (!word.a[(size_t)my * word.w + mx]) continue;
+				const int x = x0 + (mx - c0) * kw + shear;
+				const int rel = x - wordX;
+				const uint32_t c = rel >= bandX && rel < bandX + bandW ? rnds::tintAccent(0xfffff0b4u) : base;
+				fill(d, x, y0 + my * kw, kw, kw, c);
+			}
 		}
 	}
 
 	void Splash::draw(uint32_t* scr, double t, bool ready)
 	{
-		// The bunch drops in from above and lands with a click -- its ground line reaching BUNCH_Y exactly at CLICK_AT,
-		// where the insert cue fires -- then a short damped settle and a squash sell its weight. BANANAOS types itself
-		// in, the shine runs over the bananas as they land and LOADING ticks. (`ready` only stops the dots at the
-		// hand-over; see nextFrame.)
-		(void)ready;
-		std::copy(bgTop.begin(), bgTop.end(), scr);
+		// The white GBA screen; the bunch fades in under the wordmark; the six letters fly in from the bottom-right,
+		// tiny at first, and ease onto their seats at SEAT_AT, their colour chase settling to the banana tones. Then
+		// the shine sweeps the wordmark, and the last 250 ms fade to white so the iris closes on white.
+		std::fill(scr, scr + (size_t)W * H, 0xffffffffu);
 
-		// The drop, in geometry the drawBunch pass already walks, so a frame costs the same as before: an easeInCubic
-		// fall (it accelerates into the impact, the way gravity does), then a decaying oscillation about the ground and
-		// a squash that recovers -- the micro-bounce at the click coordinate. The ground line (the sprite's bottom) is
-		// what lands; the top is derived from it and the squash so the fruit keeps its foot on the surface.
-		double drop = 0, squash = 0;
-		const double restTop = (double)X(BUNCH_Y) + oy;		// the sprite's top line at rest
-		if (t < CLICK_AT)
+		const int alpha = (int)std::lround(255 * std::clamp(t / 300.0, 0.0, 1.0));
+		drawBunch(scr, (W - bunch.w * g) / 2, VY(ICON_Y), g, alpha);
+
+		const int n = (int)word.letters.size();
+		const int wordX = (W - word.w * KW) / 2;
+		const double cy = VY(WORD_Y) + word.h * KW * 0.5;
+		const double flight = FLIGHT_FRAMES * MS_PER_FRAME;
+		for (int i = 0; i < n; i++)
 		{
-			double p = (t - DROP_AT) / (CLICK_AT - DROP_AT);
-			p = std::clamp(p, 0.0, 1.0);
-			drop = -(restTop + (double)K * bunch.h + X(24)) * (1.0 - p * p * p);	// from just above the panel, onto the ground
+			const int c0 = word.letters[i], c1 = word.ends[i];
+			const double s0 = (FIRST_FRAME + STAGGER_FRAMES * (n - 1 - i)) * MS_PER_FRAME;
+			const double p = std::clamp((t - s0) / flight, 0.0, 1.0);
+			const double e = 1.0 - std::pow(1.0 - p, 3.0);
+			const double k = KW * (0.04 + 0.96 * e);
+			const double cx = wordX + (c0 + c1) * 0.5 * KW;
+			const double dx = (n - 1 - i) * 70.0 * g, dy = 130.0 * g;
+			const double mixf = std::clamp((e - 0.7) / 0.3, 0.0, 1.0);
+			drawLetter(scr, c0, c1, cx + dx * (1.0 - e), cy + dy * (1.0 - e), k, t, mixf, i);
 		}
-		else
+
+		if (!cued && t >= SEAT_AT) { cued = true; if (onCue) onCue("insert"); }
+
+		if (ready && t >= FADE_AT)
 		{
-			const double tau = (t - CLICK_AT) / 1000.0;	// seconds after the click
-			if (tau < 0.28)
-			{
-				drop = 6.0 * s * std::exp(-tau * 15.0) * std::sin(tau * 42.0);	// the micro-bounce about the ground
-				squash = 0.26 * std::exp(-tau * 24.0);				// a sharp squash, then gone
-			}
+			// a 256-entry table, so the fade's whole-canvas pass is integer lookups, not three lerps a pixel
+			const int k = (int)std::lround(255 * std::clamp((t - FADE_AT) / FADE, 0.0, 1.0));
+			uint8_t lut[256];
+			for (int v = 0; v < 256; v++) lut[v] = (uint8_t)((v * (255 - k) + 255 * k + 127) / 255);
+			if (k > 0)
+				for (size_t i = 0; i < (size_t)W * H; i++)
+				{
+					const uint32_t c = scr[i];
+					scr[i] = 0xff000000u | (uint32_t)lut[(c >> 16) & 255] << 16
+					                   | (uint32_t)lut[(c >> 8) & 255] << 8
+					                   | (uint32_t)lut[c & 255];
+				}
 		}
-		const double kx = K * (1.0 + squash * 0.5), ky = K * (1.0 - squash);
-		const double ground = restTop + (double)K * bunch.h;	// the sprite's bottom line at rest
-		int bx = (int)std::lround((W - kx * bunch.w) / 2.0);
-		int by = (int)std::lround(ground + drop - ky * bunch.h);
-		double shine = t >= SHINE_AT && t < SHINE_AT + SHINE ? (t - SHINE_AT) / SHINE : -1;
-		drawBunch(scr, bx, by, shine, kx, ky);
-		drawWord(scr, t);
-		if (t >= LOAD_AT)
-		{
-			int lx = (W - loading.w * KL) / 2;
-			drawMask(scr, loading, KL, lx, X(LOAD_Y) + oy, muted, 0, loading.w, 0);
-			// three dots, the lit one moving along
-			int lit = (int)((t - LOAD_AT) / DOT) % 3, dw = X(10), gap = X(10);
-			int dx = (W - 3 * dw - 2 * gap) / 2;
-			for (int i = 0; i < 3; i++)
-			{
-				uint32_t c = i == lit ? ink : mul255(ink, i == (lit + 2) % 3 ? 0x99 : 0x4d);	// the last lit one fading
-				fill(scr, dx + i * (dw + gap), X(DOTS_Y) + oy, dw, dw, c);
-			}
-		}
-		// the intro's cue: the frame the bunch seats -- it lands exactly at CLICK_AT, so the click is heard as it
-		// touches down. The sound device is pre-opened by Sound::warm() at boot (the rcS bring-up has the DSP playing
-		// by ~8 s, before this), so it is a write, not a graph to instantiate.
-		if (!cued && t >= CLICK_AT) { cued = true; if (onCue) onCue("insert"); }
 	}
 
 	int Splash::nextFrame(double t, bool ready) const
 	{
 		if (t < INTRO_END) return 16;
-		if (ready) return 0;
-		// waiting on the library: the dots
-		double toDot = DOT - std::fmod(t - LOAD_AT, DOT);
-		return (int)std::ceil(toDot);
+		// holding on the seated wordmark until the library is ready
+		return ready ? 0 : 100;
 	}
 }

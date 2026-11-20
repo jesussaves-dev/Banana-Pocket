@@ -57,8 +57,5 @@ font, bananas, out = sys.argv[1], sys.argv[2], sys.argv[3]
 logo(font, bananas, 134, 20, 2, 20, 6).save(out + "/logo@1x.png")
 logo(font, bananas, 214, 32, 3, 32, 9).save(out + "/logo@1.6x.png")
 if len(sys.argv) > 4:
-    # for the boot animation (src/splash.cpp): the words as masks, one font pixel per image pixel; banana-ui scales
-    # them by whole numbers
-    # them by whole numbers; the word's last len(SUFFIX) letters are the white ones (splash.cpp knows the count)
-    for name, word in (("word", WORD + SUFFIX), ("loading", "LOADING")):
-        text_layer(font, 1, word).save(f"{sys.argv[4]}/{name}.png")
+    # for the boot animation (src/splash.cpp): the word as a mask, one font pixel per image pixel; banana-ui scales it
+    text_layer(font, 1, "BANANA").save(f"{sys.argv[4]}/word.png")

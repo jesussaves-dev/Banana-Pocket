@@ -310,7 +310,7 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 			cs >> name >> t >> ready;
 			static Splash sp;
 			static bool loaded = false;
-			if (!loaded && !(loaded = sp.load(o.splash, o.banana + "/banana-48.png", variant, o.w, o.h))) { logf("no splash assets in %s", o.splash.c_str()); return 1; }
+			if (!loaded && !(loaded = sp.load(o.splash, o.banana + "/banana-32.png", variant, o.w, o.h))) { logf("no splash assets in %s", o.splash.c_str()); return 1; }
 			double s0 = nowMs();
 			sp.draw(be.canvas(), t, ready != 0);
 			double s1 = nowMs();

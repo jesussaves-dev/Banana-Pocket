@@ -79,7 +79,7 @@ for size in 640x557; do
     "$HERE/banana-ui" --headless "$OUT/$size-" --size $size --assets "$HERE/assets/rnds" \
         --splash "$HERE/assets/splash" --banana "$HERE/assets/banana" \
         --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
-        --script "boot; splash boot-drop 200; splash boot-word 700; splash boot-click 1100 1; home 0; sysinfo 0; apps; wait 2400; shot home; bench 120; press a; wait 2400; shot lib; press down; wait 2400; shot lib2; bench 120; press a; wait 3000; shot ready; press b; press b; battery 50; battery 19; shot battery-low; press left; battery 18; battery 4; wait 2400; shot battery-empty; battery 4 charging; battery 19" \
+        --script "boot; splash boot-fly 900; splash boot-seat 1900 1; splash boot-shine 2700 1; splash boot-hold 3760 0; splash boot-fade 3760 1; splash boot-last 3733 1; home 0; sysinfo 0; apps; wait 2400; shot home; bench 120; press a; wait 2400; shot lib; press down; wait 2400; shot lib2; bench 120; press a; wait 3000; shot ready; press b; press b; battery 50; battery 19; shot battery-low; press left; battery 18; battery 4; wait 2400; shot battery-empty; battery 4 charging; battery 19" \
         2> "$log" || { echo "FAIL $size: banana-ui exited $?"; fail=1; continue; }
     check() { grep -q "$1" "$log" || { echo "FAIL $size: no '$1'"; fail=1; }; }
     check "press a: used, view 1"          # home -> the library
@@ -88,7 +88,7 @@ for size in 640x557; do
     check "apps .*: hello (Hello App), 1 entries"  # the Apps shelf: a scanned manifest (fixture.sh)
     check "press a: used, view 2"          # library -> ready screen
     check "launch 1: .*Monkey Puzzle League.ngp"
-    check "splash boot-click at 1100 ms"
+    check "splash boot-seat at 1900 ms"
     check "battery 19%: notice Battery low: 19%"
     check "press left: notice hidden"
     # which overlay the frame was drawn with (drawOverlay, shared with main.cpp): the screenshots' coarse golden compare
@@ -106,12 +106,19 @@ for size in 640x557; do
     [ "$(sed -n '1p' "$style" 2>/dev/null)" = "bg 211f26" ] || { echo "FAIL $size: osd-style bg '$(sed -n '1p' "$style" 2>/dev/null)'"; fail=1; }
     [ "$(sed -n '2p' "$style" 2>/dev/null)" = "edge f1ede2" ] || { echo "FAIL $size: osd-style edge '$(sed -n '2p' "$style" 2>/dev/null)'"; fail=1; }
     [ "$(sed -n '3p' "$style" 2>/dev/null)" = "crisp 0" ] || { echo "FAIL $size: osd-style crisp '$(sed -n '3p' "$style" 2>/dev/null)'"; fail=1; }
-    # the splash is one screen now (no second panel, no console/cartridge): only -top is written for it
-    for s in boot-drop boot-word boot-click; do
+    # the splash: the fly-in, the seated word, the shine and the hold are not blank; the ready frame has faded to white
+    for s in boot-fly boot-seat boot-shine boot-hold; do
         f=$OUT/$size-$s.png
         [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
         [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ] || { echo "FAIL $size: $f is blank"; fail=1; }
     done
+    f=$OUT/$size-boot-fade.png
+    [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; }
+    [ "$(convert "$f" -format '%[fx:minima>0.999]' info:)" = 1 ] || { echo "FAIL $size: the fade is not white"; fail=1; }
+    # the last frame the boot loop draws before INTRO_END (finished() breaks at >= 3750): the fade must be complete
+    f=$OUT/$size-boot-last.png
+    [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; }
+    [ "$(convert "$f" -format '%[fx:minima>0.999]' info:)" = 1 ] || { echo "FAIL $size: the last frame before the hand-over is not white"; fail=1; }
     for s in home lib lib2 ready battery-low battery-empty; do
         f=$OUT/$size-$s.png
         [ -s "$f" ] || { echo "FAIL $size: no $f"; fail=1; continue; }
