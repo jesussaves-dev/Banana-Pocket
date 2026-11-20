@@ -528,7 +528,7 @@ namespace banana
 			{
 			case NETWORKS: n = (int)nets.size(); cur = &nsel; pressIt = &Settings::pressNetworks; break;
 			case UPDATES: n = (int)pkgs.size() + 1; cur = &usel; pressIt = &Settings::pressUpdates; break;
-			case SETUP: n = 5; cur = &wsel; pressIt = &Settings::pressSetup; break;
+			case SETUP: n = SETUP_STEPS; cur = &wsel; pressIt = &Settings::pressSetup; break;
 			case STATES: n = (int)states.size(); cur = &ssel; pressIt = &Settings::pressStates; break;
 			default: return NONE;
 			}

@@ -254,6 +254,8 @@ namespace banana
 				const std::string& badge = std::string());
 		// the first-time setup: the steps (Wi-Fi, the time zone, RetroAchievements, box art), run once after
 		// the installation (banana/setup-done is written at the end) and from Settings > System
+		static constexpr int SETUP_STEPS = 6;
+		std::string missingBios() const;
 		bool wizard = false;
 		int wsel = 0;
 		bool tzAsked = false;	// the setup's Finish has pointed at a time zone left at UTC once

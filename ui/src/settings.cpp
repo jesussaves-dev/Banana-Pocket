@@ -2979,6 +2979,32 @@ namespace banana
 		return b;
 	}
 
+	// the systems whose games can't run without a BIOS file in /data/bios (any one of a row's files will do): the ones
+	// with games on the card and no file are named on the "Your games" step
+	std::string Settings::missingBios() const
+	{
+		static const struct { const char* folder; const char* name; const char* files; } need[] = {
+			{ "segacd", "Sega CD", "bios_CD_U.bin bios_CD_E.bin bios_CD_J.bin" },
+			{ "dreamcast", "Dreamcast", "dc_boot.bin" },
+			{ "atarilynx", "Atari Lynx", "lynxboot.img" },
+		};
+		std::string out;
+		for (auto& n : need)
+		{
+			DIR* d = opendir((data + "/roms/" + n.folder).c_str());
+			if (!d) continue;
+			bool games = false;
+			while (dirent* e = readdir(d)) if (e->d_name[0] != '.') { games = true; break; }
+			closedir(d);
+			if (!games) continue;
+			bool have = false;
+			std::istringstream fs(n.files);
+			for (std::string f; fs >> f;) if (access((data + "/bios/" + f).c_str(), F_OK) == 0) have = true;
+			if (!have) out += (out.empty() ? "" : ", ") + std::string(n.name);
+		}
+		return out;
+	}
+
 	void Settings::setupDone()
 	{
 		std::ofstream(data + "/setup-done") << "done\n";
@@ -2994,7 +3020,7 @@ namespace banana
 		switch (k)
 		{
 		case Key::UP: case Key::DOWN:
-			wsel = (wsel + (k == Key::UP ? -1 : 1) + 5) % 5;
+			wsel = (wsel + (k == Key::UP ? -1 : 1) + SETUP_STEPS) % SETUP_STEPS;
 			message.clear();
 			return MOVED;
 		case Key::LEFT: case Key::RIGHT:
@@ -3013,6 +3039,7 @@ namespace banana
 			case 1: return pressSetup(Key::RIGHT);
 			case 2: startEntry(ENTRY_RA_USER, "RetroAchievements", "Account name", SETUP, account("ra_user")); return MOVED;
 			case 3: startScrape(); return MOVED;	// box art: on its own, while the setup goes on
+			case 4: wsel = 5; message.clear(); return MOVED;	// where the games go: information only, A moves on
 			default:
 				// the clock is UTC until a zone is picked, and a setup finished with the first entry left the menu's clock
 				// hours off: the first A on Finish goes to the time zone (with the time it would show), a second finishes
@@ -3039,25 +3066,31 @@ namespace banana
 		Item* tz = nullptr;
 		for (auto& it : items) if (it.key == "timezone") tz = &it;
 		std::string ra = account("ra_user");
-		static const char* names[5] = { "Wi-Fi", "Time zone", "RetroAchievements", "Box art", "Finish" };
-		std::string status[5] = {
+		static const char* names[SETUP_STEPS] = { "Wi-Fi", "Time zone", "RetroAchievements", "Box art", "Your games", "Finish" };
+		std::string bios = missingBios();
+		std::string status[SETUP_STEPS] = {
 			wstat.connected ? "Connected to " + wstat.ssid : wifiOn() ? "Not connected" : "Off",
 			tz ? tz->names[tz->at] + " (" + clockNow() + ")" : "",	// (the time it gives, so a wrong zone shows)
 			ra.empty() ? "Not signed in" : ra,
 			scrapeShort(),
+			bios.empty() ? tr("roms/ on the card") : "BIOS missing: " + bios,
 			"" };
-		static const char* helps[5] = {
+		std::string gamesHelp = std::string("Games go in roms/<system> on the BANANA partition") +
+			(ip.empty() ? ", or over Wi-Fi with File sharing in the settings." : ", or at \\\\" + ip + "\\banana (Windows) or smb://" + ip + " with File sharing on.") +
+			(bios.empty() ? "" : " BIOS files go in bios/.");
+		static const char* helps[SETUP_STEPS] = {
 			"Achievements, the clock and art need your home network. Press A to pick one and type its password.",
 			"The clock in the status bar, and the games' own clocks. Left and right change it.",
 			"Your retroachievements.org account, for RetroArch's achievements. Press A to type it; skip if you have none.",
 			"Box art from libretro's free collections, no account. Press A to start (Wi-Fi first); it runs while you finish setup.",
+			"",
 			"Everything here is in the settings too (Start in the menu), and this setup is under System > First-time setup. Press A to finish." };
-		std::string help = message.empty() ? helps[wsel] : message;
-		const char* act = wsel == 4 ? "Finish" : wsel == 1 ? "Next zone" : wsel == 3 ? (scraping() ? "Running" : "Start") : "Open";
+		std::string help = message.empty() ? (wsel == 4 ? gamesHelp : helps[wsel]) : message;
+		const char* act = wsel == 5 ? "Finish" : wsel == 4 ? "Next" : wsel == 1 ? "Next zone" : wsel == 3 ? (scraping() ? "Running" : "Start") : "Open";
 		if (snes)
 		{
 			std::vector<SRow> rows;
-			for (int r = 0; r < 5; r++)
+			for (int r = 0; r < SETUP_STEPS; r++)
 			{
 				SRow row;
 				row.label = tr(names[r]);
@@ -3065,7 +3098,7 @@ namespace banana
 				row.arrows = r == 1;
 				rows.push_back(row);
 			}
-			renderLedger(tr("Welcome to Banana Pocket"), std::to_string(wsel + 1) + " / 5", tr("First-time setup"), rows, wsel, "", tr(help),
+			renderLedger(tr("Welcome to Banana Pocket"), std::to_string(wsel + 1) + " / " + std::to_string(SETUP_STEPS), tr("First-time setup"), rows, wsel, "", tr(help),
 				!message.empty(), { { "B", tr("Skip") } }, { "A", tr(act) });
 			return;
 		}
@@ -3075,26 +3108,26 @@ namespace banana
 		box("screen", false, 0, 0, 640, 480);
 		box("bubble", false, 18, 14, 604, 54);
 		text(tr("Welcome to Banana Pocket"), true, 22, 38, 28, p.ink);
-		std::string count = std::to_string(wsel + 1) + " / 5";
+		std::string count = std::to_string(wsel + 1) + " / " + std::to_string(SETUP_STEPS);
 		float cw = text(count, true, 17, 0, 0, p.muted, false, 0, true);
 		text(count, true, 17, 602 - cw, 31, p.muted);
-		for (int r = 0; r < 5; r++)
+		for (int r = 0; r < SETUP_STEPS; r++)
 		{
 			bool on = r == wsel;
-			float y = 82 + r * 64;
-			box(on ? "pick" : "slot", on, 18, y, 604, 56);
+			float y = 80 + r * 56;
+			box(on ? "pick" : "slot", on, 18, y, 604, 50);
 			Color c = on ? p.onPick : p.muted;
-			text(names[r], true, 20, 38, y + 16, c);
+			text(tr(names[r]), true, 20, 38, y + 13, c);
 			if (status[r].empty()) continue;
 			std::string v = fit(status[r], true, 19, 300);
 			float vw = text(v, true, 19, 0, 0, c, false, 0, true);
-			if (r == 1) { arrow(true, 576, y + 21, c); text(v, true, 19, 566 - vw, y + 17, c); arrow(false, 556 - vw - 2 - std::round(13 / 2.0f + 1), y + 21, c); }
-			else text(v, true, 19, 586 - vw, y + 17, c);
+			if (r == 1) { arrow(true, 576, y + 18, c); text(v, true, 19, 566 - vw, y + 14, c); arrow(false, 556 - vw - 2 - std::round(13 / 2.0f + 1), y + 18, c); }
+			else text(v, true, 19, 586 - vw, y + 14, c);
 		}
-		float bw = faceWidth("B", "Skip");
-		face("B", "Skip", 18, bw);
-		float aw = faceWidth("A", act);
-		face("A", act, 622 - aw, aw);
+		float bw = faceWidth("B", tr("Skip"));
+		face("B", tr("Skip"), 18, bw);
+		float aw = faceWidth("A", tr(act));
+		face("A", tr(act), 622 - aw, aw);
 		footer(help, p.muted);
 		be->endScreen();
 	}
