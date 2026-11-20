@@ -22,5 +22,5 @@ mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null; chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/nul
 # Mass storage read-write transfer mode (Settings > System > Mass storage): /data is the computer's disk right now,
 # so there is no menu to run and nothing to write. init respawns this script, so waiting here is what also keeps it
 # from starting banana-ui into an unmounted /data. The flag goes away when the disk is ejected (usb-msc off).
-while [ "$(cat /run/banana/usb-msc.mode 2>/dev/null)" = rw ]; do sleep 1; done
+while [ "$(cat /run/banana/usb-msc.mode 2>/dev/null)" = rw ] || [ -e /run/banana/fsck.run ]; do sleep 1; done
 exec /usr/bin/banana-ui >> $LOG 2>&1

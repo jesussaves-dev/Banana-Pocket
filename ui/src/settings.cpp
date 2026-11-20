@@ -715,6 +715,58 @@ namespace banana
 		mOpen = true;
 	}
 
+	// the recovery screen: the game page's flat list machinery with the rescue actions. B and Start leave for the menu.
+	void Settings::openRecovery()
+	{
+		if (gamePage) close();
+		savedItems = items; savedGroups = groups;
+		gamePage = true; recoveryPage = true;
+		items.clear();
+		const char* S = "Recovery";
+		auto act = [&](const char* label, const char* help, const char* key)
+		{
+			Item it;
+			it.section = S; it.icon = "gear"; it.label = label; it.help = help; it.kind = Item::ACTION; it.key = key;
+			it.names = { "" }; it.values = { "" };
+			items.push_back(it);
+		};
+		act("Boot the other slot", "Restarts into the other system slot, the version that ran before the last update. Press A twice.", "switch");
+		act("Reset settings", "Puts menu, display, sound, power and network settings back to default. Games and card are untouched. Press A twice.", "reset_system");
+		act("Check the card", "Checks and repairs the games partition, then returns to the menu. Press A twice.", "fsck");
+		act("Transfer mode", "Hands the card to the computer over USB-C until you eject it. Press A twice.", "transfer");
+		act("Restart", "Restarts the handheld. Press A twice.", "reboot");
+		groups = { S };
+		inGroups = false;
+		sel = top = 0;
+		armed = -1;
+		message.clear();
+		mOpen = true;
+	}
+
+	Settings::Result Settings::changeRecovery()
+	{
+		Item& it = items[sel];
+		if (it.key == "reset_system")
+		{
+			// resetApply works on the main list: put it back for the call, then the recovery rows again
+			armed = -1;
+			items.swap(savedItems); groups.swap(savedGroups);
+			Result r = resetApply(false);
+			items.swap(savedItems); groups.swap(savedGroups);
+			sel = top = 0;
+			return r;
+		}
+		if (it.key == "fsck") { armed = -1; spawn("/usr/libexec/banana/recovery", "fsck"); close(); return CLOSED; }
+		if (it.key == "transfer")
+		{
+			armed = -1;
+			spawn("/usr/libexec/banana/usb-msc", "rw");
+			message = "Starting transfer mode...";
+			return MOVED;
+		}
+		return NONE;
+	}
+
 	void Settings::save(const Item& it)
 	{
 		if (gamePage)
@@ -794,6 +846,7 @@ namespace banana
 		{
 			if (dir <= 0) { armed = -1; return MOVED; }
 			if (armed != sel) { armed = sel; return MOVED; }
+			if (recoveryPage && (it.key == "reset_system" || it.key == "fsck" || it.key == "transfer")) return changeRecovery();
 			if (it.key == "switch")
 			{
 				// the other slot made the default, then a restart; the script says why not when it can't

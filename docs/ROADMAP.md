@@ -37,7 +37,8 @@ goes into 1.0.1, not into a delay.
    menu's existing resume path relaunches the game after a hang and Quick resume loads the state (checked on hardware
    with `reboot -f`, 2026-11-20); a clean quit clears it. Left: a real battery pull, alternating state slots.
 5. **Recovery screen without Android (M):** hold a button at power-on: boot the other slot, reset settings, fsck `/data`,
-   transfer mode.
+   transfer mode. **Built and checked on hardware 2026-11-20 (0.9.2):** hold Select + Start through the splash; rows in
+   `Settings::openRecovery`, fsck in `usr/libexec/banana/recovery`.
 6. **Fresh-card welcome (S):** where ROMs go, the share and `banana.local` address with a QR code, missing BIOS files.
 
 ### Headline features

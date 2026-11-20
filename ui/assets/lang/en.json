@@ -203,6 +203,15 @@
   "Your games": "Your games",
   "roms/ on the card": "roms/ on the card",
   "Next": "Next",
-  "Finish": "Finish"
+  "Finish": "Finish",
+  "Boot the other slot": "Boot the other slot",
+  "Reset settings": "Reset settings",
+  "Check the card": "Check the card",
+  "Transfer mode": "Transfer mode",
+  "Recovery": "Recovery",
+  "Starting transfer mode...": "Starting transfer mode...",
+  "Restarts into the other system slot, the version that ran before the last update. Press A twice.": "Restarts into the other system slot, the version that ran before the last update. Press A twice.",
+  "Checks and repairs the games partition, then returns to the menu. Press A twice.": "Checks and repairs the games partition, then returns to the menu. Press A twice.",
+  "Hands the card to the computer over USB-C until you eject it. Press A twice.": "Hands the card to the computer over USB-C until you eject it. Press A twice."
 }
 }

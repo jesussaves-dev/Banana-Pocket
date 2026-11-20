@@ -31,6 +31,8 @@ namespace banana
 		// panelW/panelH: the size the menu draws in (the RPC's 1240x1080). rot: the panel is mounted turned (the
 		// RPC's 90); scanoutW/scanoutH: the panel's own size (1080x1240 there), which the touchscreen reports --
 		// taps are turned from those to the menu's. 0 for rot/scanout: the panel is the menu's own size, unturned.
+		// Select + Start both held right now (the recovery screen's power-on combination)
+		static bool recoveryHeld();
 		void open(int panelW, int panelH, int rot = 0, int scanoutW = 0, int scanoutH = 0);
 		void close();
 		// grab the gamepad and touchscreen (never the power/volume keys), so a client under the compositor sees

@@ -187,6 +187,16 @@ for size in 640x557; do
         [ -s "$OUT/$size-$s.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }
     done
     rm -f "$FX/data/setup-done" "$FX/data/accounts.conf"
+    # The recovery screen (Select + Start at power-on): a flat list of rescue rows over the menu; B leaves it
+    reclog=$OUT/$size-recovery.log
+    "$HERE/banana-ui" --headless "$OUT/$size-" --size 640x557 --assets "$HERE/assets/rnds" \
+        --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "home 0; recovery; shot recovery; press down; press down; press down; shot recovery-transfer; press b; wait 1" 2> "$reclog" ||
+        { echo "FAIL $size: banana-ui (recovery) exited $?"; fail=1; }
+    grep -q "recovery open" "$reclog" || { echo "FAIL $size: the recovery screen didn't open"; fail=1; }
+    for s in recovery recovery-transfer; do
+        [ -s "$OUT/$size-$s.png" ] || { echo "FAIL $size: no $s shot"; fail=1; }
+    done
     # Favorites starred itself (first on the shelf, ahead of every system): a GBA favourite launches with GBA's
     # emulator, not the shelf's one along (its systems' places moved when Favorites went in before them)
     flog=$OUT/$size-favorites.log
@@ -333,7 +343,7 @@ for size in 640x557; do
     BANANA_LANG_DIR="$HERE/assets/lang" "$HERE/banana-ui" --headless "$OUT/$size-" --size 640x557 --assets "$HERE/assets/rnds" \
         --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" --script "home 0; press start; wait 300; shot settings-de" \
         2>> "$rlog" || { echo "FAIL $size: banana-ui (german) exited $?"; fail=1; }
-    grep -q 'i18n: de (1[0-9][0-9] strings' "$rlog" || { echo "FAIL $size: the German catalog did not load"; fail=1; }
+    grep -q 'i18n: de ([0-9][0-9][0-9] strings' "$rlog" || { echo "FAIL $size: the German catalog did not load"; fail=1; }
     sed -i '/^lang = /d' "$FX/data/settings.conf"; echo 'lang = en' >> "$FX/data/settings.conf"
     # a layout theme (the image's pocket.json, the handheld's own): every screen drawn from its JSON, home ->
     # library -> a launch, and a tap on a system. It is the single-panel layout, so it runs at its own 640x557.

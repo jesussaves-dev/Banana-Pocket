@@ -251,6 +251,7 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 			bool used = letterJump(ui, lib, btn) || ui.press(btn);
 			logf("press %s: %s, view %d sys %d game %d", b.c_str(), used ? "used" : "unused", (int)ui.view(), ui.systemIndex(), ui.gameIndex());
 		}
+		else if (op == "recovery") { settings.recovery(); logf("recovery open"); }
 		else if (op == "setup") { settings.setup(); logf("setup open"); }
 		// search <text>: the search keyboard open with that text typed (START then searches)
 		else if (op == "search") { std::string t; std::getline(cs, t); size_t b = t.find_first_not_of(' '); settings.openSearch(b == std::string::npos ? "" : t.substr(b)); logf("search open: \"%s\"", t.c_str()); }

@@ -43,6 +43,31 @@ namespace banana
 		}
 	}
 
+	bool Input::recoveryHeld()
+	{
+		// Select and Start both down now, on any device (the pad's MCU may enumerate a moment after the menu starts, so
+		// the caller asks again for a while)
+		bool sel = false, start = false;
+		if (DIR* d = opendir("/dev/input"))
+		{
+			while (dirent* e = readdir(d))
+			{
+				if (strncmp(e->d_name, "event", 5)) continue;
+				int fd = ::open((std::string("/dev/input/") + e->d_name).c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+				if (fd < 0) continue;
+				unsigned long now[KEY_MAX / (8 * sizeof(long)) + 1] = {};
+				if (ioctl(fd, EVIOCGKEY(sizeof now), now) >= 0)
+				{
+					sel = sel || testBit(now, BTN_SELECT);
+					start = start || testBit(now, BTN_START);
+				}
+				::close(fd);
+			}
+			closedir(d);
+		}
+		return sel && start;
+	}
+
 	void Input::open(int panelW, int panelH, int turn, int scanoutW, int scanoutH)
 	{
 		bool regrab = grabWanted;	// a hotplug while the quick menu is up

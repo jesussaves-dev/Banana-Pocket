@@ -1,0 +1,38 @@
+#!/bin/sh
+# recovery: the recovery screen's (hold Select + Start at power-on) one job that needs /data unmounted.
+#   recovery fsck   stop the menu, unmount /data, fsck.exfat -y it, mount it again; the menu comes back by itself.
+# banana-ui-session holds its respawn while /run/banana/fsck.run exists. The result goes to
+# /data/banana/logs/recovery.log (and /run/banana/recovery.log if /data would not come back).
+DISK=$(cat /run/banana/disk 2>/dev/null || echo /dev/mmcblk0)
+PART=${DISK}p4
+FLAG=/run/banana/fsck.run
+LOG=/run/banana/recovery.log
+
+case "$1" in
+fsck)
+    [ -b "$PART" ] || { echo "$PART is not there" >> $LOG; exit 1; }
+    [ -e /run/banana/usb-msc.mode ] && { echo "transfer mode is on" >> $LOG; exit 1; }
+    : > "$FLAG"
+    pkill -f '/usr/bin/banana-ui' 2>/dev/null
+    i=0
+    while pidof banana-ui >/dev/null 2>&1 && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+    sync
+    i=0
+    while [ $i -lt 10 ] && ! umount /data 2>/dev/null; do sleep 0.3; i=$((i+1)); done
+    if grep -q ' /data ' /proc/mounts 2>/dev/null; then
+        echo "fsck: /data is busy, not checking" >> $LOG
+        rm -f "$FLAG"
+        exit 1
+    fi
+    OUT=$(fsck.exfat -y "$PART" 2>&1); RC=$?
+    mount -t exfat -o noatime,uid=0,gid=0,fmask=0000,dmask=0000,iocharset=utf8,errors=remount-ro "$PART" /data 2>/dev/null ||
+        mount -o noatime "$PART" /data 2>/dev/null ||
+        { echo "fsck: /data would not mount again" >> $LOG; mount -t tmpfs -o mode=0755 tmpfs /data; }
+    { echo "fsck.exfat exit $RC"; echo "$OUT"; } >> /data/banana/logs/recovery.log 2>/dev/null || echo "fsck.exfat exit $RC" >> $LOG
+    rm -f "$FLAG"
+    ;;
+*)
+    echo "usage: recovery fsck" >&2
+    exit 2
+    ;;
+esac

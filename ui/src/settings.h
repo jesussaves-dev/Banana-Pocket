@@ -35,10 +35,12 @@ namespace banana
 		void close()
 		{
 			mOpen = false; page = LIST; wizard = false;
-			if (gamePage) { items.swap(savedItems); groups.swap(savedGroups); gamePage = false; }
+			if (gamePage) { items.swap(savedItems); groups.swap(savedGroups); gamePage = false; recoveryPage = false; }
 			savedItems.clear(); savedGroups.clear();
 		}
 		void setup() { mOpen = true; openSetup(); }	// the first-time setup, from the host
+		// the recovery screen (Select + Start held at power-on): a flat page of rescue actions over the held-aside main list
+		void recovery() { openRecovery(); }
 		// a game's own options (the library's X): the core and shader this one game runs with instead of the
 		// system's and the global ones, and its save states. `core`, `shader` and `frame` are the game's present overrides
 		// ("" for none); `rom` is its path, for the states page; `framable` shows the Frame row.
@@ -216,6 +218,9 @@ namespace banana
 		// a game's own options: the LIST machinery, but a flat list (Emulator, Shader, Save states) for one game,
 		// opened from the library and closed back to the menu (there is no group grid behind it)
 		bool gamePage = false;
+		bool recoveryPage = false;	// gamePage's flat list, holding the recovery actions
+		void openRecovery();
+		Result changeRecovery();
 		std::string gameSys, gameRel, gameTitle;
 		std::vector<Item> savedItems;		// the main list, while a game's page holds items instead
 		std::vector<std::string> savedGroups;

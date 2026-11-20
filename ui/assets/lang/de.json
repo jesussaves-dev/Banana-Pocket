@@ -194,6 +194,15 @@
   "Your games": "Deine Spiele",
   "roms/ on the card": "roms/ auf der Karte",
   "Next": "Weiter",
-  "Finish": "Fertig"
+  "Finish": "Fertig",
+  "Boot the other slot": "Das andere System starten",
+  "Reset settings": "Einstellungen zurücksetzen",
+  "Check the card": "Karte prüfen",
+  "Transfer mode": "Übertragungsmodus",
+  "Recovery": "Wiederherstellung",
+  "Starting transfer mode...": "Übertragungsmodus startet...",
+  "Restarts into the other system slot, the version that ran before the last update. Press A twice.": "Startet im anderen Systemslot neu, der Version vor dem letzten Update. A zweimal drücken.",
+  "Checks and repairs the games partition, then returns to the menu. Press A twice.": "Prüft und repariert die Spielepartition, danach geht es zurück ins Menü. A zweimal drücken.",
+  "Hands the card to the computer over USB-C until you eject it. Press A twice.": "Übergibt die Karte per USB-C an den Computer, bis du sie auswirfst. A zweimal drücken."
 }
 }

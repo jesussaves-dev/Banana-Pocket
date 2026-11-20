@@ -477,6 +477,9 @@ int main(int argc, char** argv)
 	Resume resume = resumePlan(o.data, resumeRom);
 	if (resume == Resume::Ready) logf("resume: ready %s (any key cancels)", resumeRom.c_str());
 	else if (resume != Resume::None) resumeCancel(o.data);
+	// Select + Start held at power-on: the recovery screen instead of the first-time setup. Asked before the splash
+	// and again after it, so the pad's late enumeration does not hide it.
+	bool recoveryAsked = Input::recoveryHeld();
 	playSplash(disp, be, o, variant, settings["splash"] != "off" && resume != Resume::Ready, ready, readyM, readyCv, sound, sigPipe[0],
 	           settings["sounds"] != "off");
 	// the splash is done: free its layers (bgTop is a full screen) before the menu's idle loop, so they are not held
@@ -588,7 +591,8 @@ int main(int argc, char** argv)
 	LowBattery low;
 	PlugNotice plug;
 	bool batteryDue = true;
-	if (firstSetup) { settingsView.setup(); logf("first-time setup"); }
+	if (recoveryAsked || Input::recoveryHeld()) { settingsView.recovery(); logf("recovery screen"); }
+	else if (firstSetup) { settingsView.setup(); logf("first-time setup"); }
 	RomWatch roms;
 	int powerFd = powerUeventOpen();	// the charger's uevents: repaint at once (see powerUeventOpen)
 	roms.watch(lib.watchDirs());
