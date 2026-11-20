@@ -25,6 +25,47 @@ static void panel(const char *s) { FILE *f = fopen("/run/banana/panel-state", "w
 static void onhup(int s) { panel("off"); usleep(50000); state("closed (test)\n"); }
 int main(void) { signal(SIGUSR1, on); signal(SIGHUP, onhup); state("open (test)\n"); for (;;) pause(); }
 EOF
+    # an LD_PRELOAD shim for bananad: a real sysfs answers EBUSY to a stale wakeup_count, which a tmpfs cannot, so the
+    # shim fails the open of it that many times (the number in /run/test/wk-busy); and reboot() only records the call,
+    # so a test can watch the shutdown watchdog fire without anything powering off
+    cat > "$W/shim.c" <<'EOF'
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/reboot.h>
+static int busy(const char *path)
+{
+	if (strcmp(path, "/sys/power/wakeup_count")) return 0;
+	FILE *f = fopen("/run/test/wk-busy", "r");
+	int n = 0;
+	if (!f) return 0;
+	if (fscanf(f, "%d", &n) != 1) n = 0;
+	fclose(f);
+	if (n <= 0) return 0;
+	f = fopen("/run/test/wk-busy", "w");
+	if (f) { fprintf(f, "%d\n", n - 1); fclose(f); }
+	return 1;
+}
+#define OPEN(NAME) int NAME(const char *p, int fl, ...) { \
+	static int (*real)(const char *, int, ...); \
+	if (!real) real = dlsym(RTLD_NEXT, #NAME); \
+	if ((fl & O_ACCMODE) != O_RDONLY && busy(p)) { errno = EBUSY; return -1; } \
+	va_list ap; va_start(ap, fl); int m = va_arg(ap, int); va_end(ap); \
+	return real(p, fl, m); }
+OPEN(open)
+OPEN(open64)
+int reboot(int cmd)
+{
+	FILE *f = fopen("/run/test/reboot", "a");
+	if (f) { fprintf(f, "reboot %#x\n", (unsigned)cmd); fclose(f); }
+	return 0;
+}
+EOF
+    cc -shared -fPIC -O2 -o "$W/shim.so" "$W/shim.c" -ldl
     mkdir -p /data 2>/dev/null || true
     exec unshare -m -p -f --mount-proc sh "$0" --inside "$W" "$ROOTFS"
 fi
@@ -122,7 +163,7 @@ start() {   # start [bananad.conf lines]
     pkill -x bananad 2>/dev/null || true; sleep 0.2         # one daemon at a time (a leftover would read the same keys)
     echo "s2idle [deep]" > /sys/power/mem_sleep     # the kernel's file always lists both
     printf '%s\n' "autosleep_minutes = 0" "sleep_check_hours = 0" "$@" > /data/banana/bananad.conf
-    "$W/bananad" & BD=$!
+    LD_PRELOAD="$W/shim.so" "$W/bananad" & BD=$!
     sleep 0.6
 }
 stop() { kill $BD 2>/dev/null; wait $BD 2>/dev/null || true; }
@@ -201,6 +242,45 @@ for i in $(seq 30); do [ $POWEROFF = 1 ] && break; sleep 0.1; done
 [ ! -e /data/banana/resume ] && ok "nothing to resume after a menu shutdown" || bad "a menu shutdown left a resume marker"
 stop
 POWEROFF=0
+
+echo "2c. a pending wake event (EBUSY on wakeup_count) aborts the suspend and retries"
+echo 7 > /sys/power/wakeup_count
+: > /data/banana/logs/sleep.log
+echo 2 > /run/test/wk-busy
+start
+power
+asleep && ok "suspended after the pending wake event cleared" || bad "no suspend after two EBUSY"
+[ "$(grep -c 'suspend aborted: a wake event was pending' /data/banana/logs/sleep.log)" = 2 ] && ok "two aborts logged" || bad "aborts logged: $(grep -c 'suspend aborted' /data/banana/logs/sleep.log)"
+wake
+stop
+: > /data/banana/logs/sleep.log
+echo 100 > /run/test/wk-busy
+start
+power
+asleep && ok "still suspends when the event never clears" || bad "no suspend under a permanent EBUSY"
+[ "$(grep -c 'suspend aborted: a wake event was pending' /data/banana/logs/sleep.log)" = 5 ] && ok "gave up after 5 aborts" || bad "aborts logged: $(grep -c 'suspend aborted' /data/banana/logs/sleep.log)"
+wake
+stop
+rm -f /run/test/wk-busy /sys/power/wakeup_count
+
+echo "2d. a shutdown that init never completes is forced after 8 s, panel dark and muted first"
+rm -f /run/test/reboot
+echo 200 > /sys/class/backlight/backlight0/brightness; echo 200 > /sys/class/backlight/backlight1/brightness
+echo 3 > /sys/class/power_supply/battery/capacity
+start "sleep_check_hours = 0.002" "sleep_poweroff_percent = 5"
+power
+asleep && ok "suspended" || bad "no suspend"
+: > /sys/class/rtc/rtc0/wakealarm; rtc_wake
+for i in $(seq 30); do [ $POWEROFF = 1 ] && break; sleep 0.1; done
+[ $POWEROFF = 1 ] && ok "init was asked to power off" || bad "no shutdown at 3%"
+[ "$(cat /sys/class/backlight/backlight1/brightness)" = 0 ] && ok "panel dark during the shutdown" || bad "backlight $(cat /sys/class/backlight/backlight1/brightness)"
+sleep 3
+[ ! -e /run/test/reboot ] && ok "no forced power-off while init has time" || bad "forced power-off after only 3 s"
+for i in $(seq 100); do [ -e /run/test/reboot ] && break; sleep 0.1; done
+grep -q 'reboot 0x4321fedc' /run/test/reboot 2>/dev/null && ok "forced RB_POWER_OFF once init hung" || bad "no forced power-off: $(cat /run/test/reboot 2>/dev/null)"
+stop
+POWEROFF=0
+echo 200 > /sys/class/backlight/backlight0/brightness; echo 200 > /sys/class/backlight/backlight1/brightness
 setsid sleep 600 & GAME=$!; sleep 0.1; echo $GAME > /run/banana/game.pid
 
 echo "3. an RTC wake with enough battery goes back to sleep"

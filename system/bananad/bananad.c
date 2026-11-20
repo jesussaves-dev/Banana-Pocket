@@ -872,6 +872,7 @@ static void suspend_now(const char *why)
 	double t_prep = mono();
 	if (cfg.sleep_skip[0]) sleep_log("sleep %s: skipping '%s' (debug)", why, cfg.sleep_skip);
 	int cycles = 0, rtc_wakes = 0, failures = 0, spurious = 0, phantoms = 0;
+	int wk_busy = 0;
 	int plugged0 = charger_online();
 	int pct0 = battery_discharging_pct();	/* -1 on the charger: a draining sleep is the one worth measuring */
 	long q0 = battery_charge_uah();
@@ -899,6 +900,18 @@ static void suspend_now(const char *why)
 		{
 			FILE *f = fopen("/sys/power/wakeup_count", "r");
 			if (f) { if (fscanf(f, "%lu", &wk0) != 1) wk0 = 0; fclose(f); }
+		}
+		/* Write the count back before suspending: EBUSY means a wake event arrived after it was read, so a suspend
+		 * now would wake at once with no cause. Abort, log it, and try again (a few times, then go anyway). */
+		if (wk_busy < 5) {
+			char cs[32];
+			snprintf(cs, sizeof cs, "%lu", wk0);
+			if (write_file("/sys/power/wakeup_count", cs) && errno == EBUSY) {
+				wk_busy++;
+				sleep_log("suspend aborted: a wake event was pending (wakeup_count %lu, try %d)", wk0, wk_busy);
+				sleep_us(100000);
+				continue;
+			}
 		}
 		irq_nbefore = irq_snapshot(irq_before);
 		int r = write_file("/sys/power/state", "mem");
@@ -1036,6 +1049,13 @@ static void suspend_now(const char *why)
 	sleep_note_resume(wr);
 }
 
+static void on_poweroff_deadline(int sig)
+{
+	(void)sig;
+	sync();
+	reboot(RB_POWER_OFF);
+}
+
 static void shutdown_now(const char *why)
 {
 	say("shutting down (%s)", why);
@@ -1059,6 +1079,12 @@ static void shutdown_now(const char *why)
 		for (int i = 0; i < 50 && kill(game, 0) == 0; i++) sleep_us(100000);
 	}
 	sync();
+	sleep_quiet_begin();	/* dark and muted now: a slow unmount must not look like a handheld that is still on */
+	/* if rcK hangs (an exFAT unmount), force the power off: SIGALRM runs on_poweroff_deadline */
+	struct sigaction sa = { 0 };
+	sa.sa_handler = on_poweroff_deadline;
+	sigaction(SIGALRM, &sa, NULL);
+	alarm(8);
 	/* busybox init runs /etc/init.d/rcK (unmount, sync) on SIGUSR2 = poweroff */
 	if (kill(1, SIGUSR2)) reboot(RB_POWER_OFF);
 }
