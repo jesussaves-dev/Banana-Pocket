@@ -297,6 +297,18 @@ struct FrameStats
 // One tab-separated line, split into exactly n fields (empty ones when the line is short). What RetroArch's patch
 // writes for an achievement (buildroot/patches/retroarch/0013) is one such line, and a title can hold anything but a
 // tab, so splitting is all the parsing there is.
+// mkdir -p, for the per-game achievement sets under /data
+static bool cheevosMkdirs(const std::string& path)
+{
+	for (size_t k = 1; k <= path.size(); k++)
+		if (k == path.size() || path[k] == '/')
+		{
+			std::string p = path.substr(0, k);
+			if (mkdir(p.c_str(), 0755) != 0 && errno != EEXIST) return false;
+		}
+	return true;
+}
+
 static std::vector<std::string> tsv(const std::string& line, size_t n)
 {
 	std::vector<std::string> out;
@@ -999,6 +1011,7 @@ int main(int argc, char** argv)
 		{
 			const char* PROGRESS = "/run/banana/ra-progress";	// "<unlocked> <total>", from the emulator (docs/EMULATORS.md)
 			const char* CHEEVOS  = "/run/banana/cheevos";		// one line per unlock, from the same patch
+			const char* CHEEVOS_SET = "/run/banana/cheevos-set";	// the whole set, locked and won (patch 0016)
 			int achA = -1, achB = 0;
 			std::ifstream(PROGRESS) >> achA >> achB;
 			lib.recordPlay(game, secs, achA, achB);	// (a start that failed straight away isn't a play)
@@ -1019,6 +1032,27 @@ int main(int argc, char** argv)
 				}
 			}
 			unlink("/run/banana/hud-live");
+			// the game's whole achievement set (locked and won), kept for its page: RetroArch wrote it on load and at each
+			// unlock, and it is gone with /run, so the last copy per game lives on /data. Written to a temporary file
+			// and renamed, so a card that fills leaves the old copy standing.
+			{
+				const SystemDef& csd = lib.systemOf(game);
+				std::ifstream in(CHEEVOS_SET, std::ios::binary);
+				std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+				if (!body.empty())
+				{
+					std::string dst = o.data + "/cheevos/" + csd.id + "/" + lib.gameAt(game).rel + ".tsv";
+					size_t slash = dst.rfind('/');
+					if (cheevosMkdirs(dst.substr(0, slash)))
+					{
+						std::string tmp = dst + ".tmp";
+						std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+						out << body;
+						out.close();
+						if (out.fail() || rename(tmp.c_str(), dst.c_str()) != 0) unlink(tmp.c_str());
+					}
+				}
+			}
 		}
 		ui->dataChanged();
 		ui->setLibrary(lib.currentShelf(), game);
@@ -1066,8 +1100,10 @@ int main(int argc, char** argv)
 		if (system(("banana-perf " + shellQuote(sd.perf.empty() ? "balanced" : sd.perf)).c_str()) != 0) {}
 		const char* PROGRESS = "/run/banana/ra-progress";	// "<unlocked> <total>", from the emulator (docs/EMULATORS.md)
 		const char* CHEEVOS  = "/run/banana/cheevos";		// one line per unlock, from the same patch
+		const char* CHEEVOS_SET = "/run/banana/cheevos-set";	// the whole set, locked and won (patch 0016)
 		unlink(PROGRESS);
 		unlink(CHEEVOS);	// last game's: this game's are written as they are won
+		unlink(CHEEVOS_SET);
 		double start = nowMs();
 		pid_t pid = fork();
 		if (pid < 0)
@@ -1092,7 +1128,8 @@ int main(int argc, char** argv)
 			setenv("BANANA_ROM", rom.c_str(), 1);
 			setenv("BANANA_SYSTEM", sd.id.c_str(), 1);
 			setenv("BANANA_RA_PROGRESS", PROGRESS, 1);
-			setenv("BANANA_RA_CHEEVOS", CHEEVOS, 1);	// RetroArch's patch writes both (buildroot/patches/retroarch/0013)
+			setenv("BANANA_RA_CHEEVOS", CHEEVOS, 1);
+			setenv("BANANA_RA_CHEEVOS_SET", CHEEVOS_SET, 1);	// RetroArch's patch writes both (buildroot/patches/retroarch/0013)
 			// a game's own Game options (Settings' X): the core and shader this one game runs with, when it has any
 			auto ov = lib.overrideOf(sd.id, lib.gameAt(game).rel);
 			if (!ov.core.empty()) setenv("BANANA_CORE", ov.core.c_str(), 1);
