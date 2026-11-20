@@ -29,6 +29,7 @@ namespace banana
 	struct Game
 	{
 		std::string path, rel, title, genre, year;	// rel: the path under the system's folder
+		std::string desc, dev, pub, players;	// gamelist.xml <desc>, <developer>, <publisher>, <players> (empty: unknown)
 		std::string box, cart, label;
 		int plays = 0;
 		long seconds = 0;

@@ -1,4 +1,4 @@
-// banana-scrape: box art, title screens, genres and years for the games on the card, from libretro's free
+// banana-scrape: box art, title screens, genres, years, developers and publishers for the games on the card, from libretro's free
 // collections (no account): libretro-thumbnails (thumbnails.libretro.com: <System>/Named_Boxarts and Named_Titles,
 // PNGs named after the No-Intro/Redump names) and libretro-database's metadat (genre and releaseyear DATs). Written
 // where the menu's library looks (library.cpp): <system folder>/media/box/<rom name>.jpg (the cover),
@@ -400,7 +400,7 @@ int main(int argc, char** argv)
 
 	struct Job { System sys; std::string dir, rel, stem, box, title; };
 	std::vector<Job> jobs;
-	std::map<std::string, std::map<std::string, std::string>> genres, years;	// per system: norm name -> value
+	std::map<std::string, std::map<std::string, std::string>> genres, years, devs, pubs;	// per system: norm name -> value
 	int total = 0;
 	for (auto& sys : systems(conf))
 	{
@@ -424,6 +424,8 @@ int main(int argc, char** argv)
 				if (titleAt.emplace(n, base).second) { byTitle[norm(n)].push_back(n); byTitleW[words(n)].push_back(n); }
 			genres[sys.id].merge(datField(get(meta + "genre/" + esc(col) + ".dat"), "genre"));
 			years[sys.id].merge(datField(get(meta + "releaseyear/" + esc(col) + ".dat"), "releaseyear"));
+			devs[sys.id].merge(datField(get(meta + "developer/" + esc(col) + ".dat"), "developer"));
+			pubs[sys.id].merge(datField(get(meta + "publisher/" + esc(col) + ".dat"), "publisher"));
 		}
 		auto best = [](const std::vector<std::string>& c, const std::string& stem)
 		{
@@ -523,7 +525,7 @@ int main(int argc, char** argv)
 		for (auto& m : misses) f << m << "\n";
 	}
 
-	// genres and years into each folder's gamelist.xml (new entries only)
+	// genres, years, developers and publishers into each folder's gamelist.xml (new entries; for a game already listed, only the fields it lacks)
 	std::map<std::string, std::vector<const Job*>> byDir;
 	for (auto& j : jobs) byDir[j.dir].push_back(&j);
 	for (auto& kv : byDir)
@@ -531,21 +533,48 @@ int main(int argc, char** argv)
 		std::string path = kv.first + "/gamelist.xml", x;
 		{ std::ifstream f(path); std::stringstream ss; ss << f.rdbuf(); x = ss.str(); }
 		std::string add;
+		bool filled = false;
 		for (const Job* j : kv.second)
 		{
-			if (x.find("<path>./" + xmlEsc(j->rel) + "</path>") != std::string::npos || x.find("<path>" + xmlEsc(j->rel) + "</path>") != std::string::npos) continue;
-			std::string k = norm(j->stem), kw = words(j->stem), g, y;
-			auto& G = genres[j->sys.id];
-			auto& Y = years[j->sys.id];
-			auto gi = G.find(k); if (gi == G.end()) gi = G.find(kw); if (gi != G.end()) g = gi->second;
-			auto yi = Y.find(k); if (yi == Y.end()) yi = Y.find(kw); if (yi != Y.end()) y = yi->second;
-			if (g.empty() && y.empty()) continue;
-			add += "\t<game>\n\t\t<path>./" + xmlEsc(j->rel) + "</path>\n";
-			if (!g.empty()) add += "\t\t<genre>" + xmlEsc(g) + "</genre>\n";
-			if (y.size() == 4) add += "\t\t<releasedate>" + y + "0101T000000</releasedate>\n";
-			add += "\t</game>\n";
+			std::string k = norm(j->stem), kw = words(j->stem);
+			auto look = [&](std::map<std::string, std::map<std::string, std::string>>& m) -> std::string
+			{
+				auto& M = m[j->sys.id];
+				auto i = M.find(k); if (i == M.end()) i = M.find(kw);
+				return i == M.end() ? std::string() : i->second;
+			};
+			std::string g = look(genres), y = look(years), dv = look(devs), pb = look(pubs);
+			// the fields we have, as gamelist.xml lines, in the order the page reads them
+			std::vector<std::pair<std::string, std::string>> f;
+			if (!g.empty()) f.push_back({ "genre", xmlEsc(g) });
+			if (y.size() == 4) f.push_back({ "releasedate", y + "0101T000000" });
+			if (!dv.empty()) f.push_back({ "developer", xmlEsc(dv) });
+			if (!pb.empty()) f.push_back({ "publisher", xmlEsc(pb) });
+			if (f.empty()) continue;
+			std::string pa = "<path>./" + xmlEsc(j->rel) + "</path>";
+			size_t at = x.find(pa);
+			if (at == std::string::npos) { pa = "<path>" + xmlEsc(j->rel) + "</path>"; at = x.find(pa); }
+			if (at == std::string::npos)
+			{
+				add += "\t<game>\n\t\t" + std::string("<path>./") + xmlEsc(j->rel) + "</path>\n";
+				for (auto& e : f) add += "\t\t<" + e.first + ">" + e.second + "</" + e.first + ">\n";
+				add += "\t</game>\n";
+				continue;
+			}
+			// the game is in the list already (the user's, or another tool's): only the fields it lacks are added,
+			// nothing it has is changed
+			size_t end = x.find("</game>", at);
+			if (end == std::string::npos) continue;
+			std::string have = x.substr(at, end - at), ins;
+			for (auto& e : f)
+				if (have.find("<" + e.first + ">") == std::string::npos) ins += "\t\t<" + e.first + ">" + e.second + "</" + e.first + ">\n";
+			if (ins.empty()) continue;
+			size_t ls = x.rfind('\n', end);
+			size_t ip = (ls != std::string::npos && ls > at && x.find_first_not_of(" \t", ls + 1) == end) ? ls + 1 : end;
+			x.insert(ip, ip == end ? "\n" + ins : ins);
+			filled = true;
 		}
-		if (add.empty()) continue;
+		if (add.empty() && !filled) continue;
 		size_t end = x.rfind("</gameList>");
 		// a list that is there but has no end we know (another tool's, cut short, unreadable): left as it is, not
 		// replaced by one with only these games (the user's own entries would be lost)

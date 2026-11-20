@@ -84,7 +84,7 @@ namespace banana
 	}
 
 	// ---- gamelist.xml: just the fields the shelf shows -------------------------------------------------------------
-	struct GlEntry { std::string name, genre, date, image, thumb, cart, boxback; };
+	struct GlEntry { std::string name, genre, date, image, thumb, cart, boxback, desc, dev, pub, players; };
 
 	static std::string xmlText(const std::string& block, const char* tag)
 	{
@@ -139,6 +139,7 @@ namespace banana
 			e.name = xmlText(b, "name"); e.genre = xmlText(b, "genre"); e.date = xmlText(b, "releasedate");
 			e.image = rel(xmlText(b, "image")); e.thumb = rel(xmlText(b, "thumbnail"));
 			e.cart = rel(xmlText(b, "cartridge")); e.boxback = rel(xmlText(b, "boxback"));
+			e.desc = xmlText(b, "desc"); e.dev = xmlText(b, "developer"); e.pub = xmlText(b, "publisher"); e.players = xmlText(b, "players");
 			out[path] = e;
 		}
 		return out;
@@ -733,6 +734,7 @@ namespace banana
 						g.box = exists(it->second.thumb) ? it->second.thumb : (exists(it->second.image) ? it->second.image : "");
 						if (exists(it->second.cart)) g.cart = it->second.cart;
 						if (exists(it->second.boxback)) g.label = it->second.boxback;
+						g.desc = it->second.desc; g.dev = it->second.dev; g.pub = it->second.pub; g.players = it->second.players;
 					}
 					if (g.box.empty()) g.box = media.find(dir, "box", stem);
 					if (g.cart.empty()) g.cart = media.find(dir, "cart", stem);
