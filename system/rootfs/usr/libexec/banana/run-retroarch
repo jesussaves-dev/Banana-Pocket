@@ -150,6 +150,21 @@ flycast)
         printf 'input_player1_analog_dpad_mode = "1"\n' > "$R/config/$C/$C.cfg"
         touch "$M"
     fi
+    # Two keys in the core's own config, once, as their own step (a card already past the marker above gets them too);
+    # RetroArch's menu has the last word after.
+    # - Scaling: the Dreamcast's 640x480 has no whole multiple on the 1240x1080 panel (2x is 1280 wide), so RetroArch's
+    #   integer scaler fell back to 1x, a small picture in the middle. This core fills the height at 4:3 instead.
+    # - Three swapchain images, not the two the KMS days chose: with two, RetroArch's Wayland GL context waits for
+    #   each frame's callback (the flip) before it emulates the next, so the SH4 and the GPU never overlap and
+    #   Crazy Taxi ran at 25-30 fps. With three only Mesa's own throttle is left, a frame deep: measured 60 fps.
+    MS=$R/.banana-dreamcast-scale-2
+    if [ ! -f "$MS" ]; then
+        mkdir -p "$R/config/$C"
+        CF=$R/config/$C/$C.cfg
+        sed -i -e '/^ *video_scale_integer *=/d' -e '/^ *video_max_swapchain_images *=/d' "$CF" 2>/dev/null
+        printf 'video_scale_integer = "false"\nvideo_max_swapchain_images = "3"\n' >> "$CF"
+        touch "$MS"
+    fi
     # The Dreamcast's L/R are analogue *triggers* (Crazy Taxi's brake and accelerator), and Flycast reads them from the
     # RetroPad's L2/R2 -- not its L/R, which it reads as the Dreamcast's digital C/Z:
     # shell/libretro/libretro.cpp, `lt[port] = get_analog_trigger(..., RETRO_DEVICE_ID_JOYPAD_L2)`. On this handheld the

@@ -140,6 +140,13 @@ fresh
 run dreamcast flycast
 has "$W/data/retroarch/remaps/Flycast/Flycast.rmp" 'input_player1_btn_l = "12"' && ok "a fresh card gets Banana's Dreamcast remap" || bad "no Dreamcast remap on a fresh card"
 
+echo "5c. Flycast: native internal resolution, no integer scale (fills the height), three swapchain images"
+fresh
+run dreamcast flycast
+[ "$(val flycast_internal_resolution "$W/data/retroarch/config/Flycast/Flycast.opt")" = 640x480 ] && ok "a fresh card renders at 640x480" || bad "resolution=$(val flycast_internal_resolution "$W/data/retroarch/config/Flycast/Flycast.opt")"
+[ "$(val video_scale_integer "$W/data/retroarch/config/Flycast/Flycast.cfg")" = false ] && ok "integer scale off" || bad "video_scale_integer"
+[ "$(val video_max_swapchain_images "$W/data/retroarch/config/Flycast/Flycast.cfg")" = 3 ] && ok "three swapchain images" || bad "video_max_swapchain_images"
+
 echo "6. the RetroAchievements account reaches the game, and not retroarch.cfg"
 fresh
 printf 'ra_user=someone\nra_password=secret\nra_retroarch_token=tok\n' > "$W/data/banana/accounts.conf"
