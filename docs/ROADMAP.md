@@ -42,7 +42,7 @@ goes into 1.0.1, not into a delay.
 6. **Fresh-card welcome (S):** where ROMs go, the share and `banana.local` address with a QR code, missing BIOS files.
 
 ### Headline features
-- **`banana.local` (M), built 2026-11-20 (host-tested, QR code on Settings > Network > Web page and the welcome's Your games step, X; drawn for Classic, SNES and Genesis styles, golden-tested, flashed 2026-11-20; QR page not yet looked at on the real panel in the SNES/Genesis styles):** a web page on the handheld: drop in ROMs and BIOS, download saves and a backup, read logs,
+- **`banana.local` (M), built 2026-11-20 (host-tested, QR code on Settings > Network > Web page and the welcome's Your games step, X; drawn for Classic, SNES and Genesis styles, golden-tested, flashed 2026-11-20; QR page checked on the real panel in the SNES style 2026-11-20):** a web page on the handheld: drop in ROMs and BIOS, download saves and a backup, read logs,
   apply updates. Replaces SMB/SSH for strangers and is the 1.0 answer to "saves off the card". QR in Settings > Network.
 - **The game page (M):** art, description, facts, playtime (`playstats.tsv`), achievements. The scraper already receives
   the data and drops it.
