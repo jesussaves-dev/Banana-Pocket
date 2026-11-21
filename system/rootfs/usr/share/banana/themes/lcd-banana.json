@@ -351,6 +351,48 @@
       ]
     },
 
+    // X on a game: its page. Left/Right the neighbouring game, Up/Down the achievements, B back to the list.
+    "game": {
+      "top": [
+        { "use": "lcd" },
+
+        { "type": "image", "src": "{sys.icon}", "fit": "pixelContain", "x": 30, "y": 50, "w": 32, "h": 32 },
+        { "type": "text", "x": 72, "y": 53, "w": 440, "text": "{sys.name}", "font": "pixel-medium", "size": 22, "color": "=ink" },
+        { "type": "image", "src": "fav.png", "right": 30, "y": 58, "w": 16, "h": 16, "visible": "=game.fav" },
+        { "type": "rect", "x": 24, "y": 90, "w": 592, "h": 2, "fill": "=ink" },
+
+        { "use": "box", "x": 30, "y": 102, "w": 154, "h": 174 },
+        { "type": "image", "src": "{game.art}", "fallback": "{sys.icon}", "fit": "contain", "x": 36, "y": 108, "w": 142, "h": 162, "placeholder": "#00000033" },
+        { "type": "text", "x": 202, "y": 102, "w": 404, "text": "{game.title}", "font": "pixel-medium", "size": 20, "color": "=ink", "wrap": true, "maxLines": 2 },
+        { "type": "text", "x": 202, "y": 154, "w": 404, "text": "{game.sub}", "font": "pixel", "size": 14, "color": "=soft" },
+        { "type": "text", "x": 202, "y": 180, "w": 404, "text": "{page.developer}", "font": "pixel", "size": 15, "color": "=ink", "visible": "=page.developer != ''" },
+        { "type": "text", "x": 202, "y": 202, "w": 404, "text": "{page.publisher}", "font": "pixel", "size": 15, "color": "=ink", "visible": "=page.publisher != ''" },
+        { "type": "text", "x": 202, "y": 224, "w": 404, "text": "{page.players}P", "font": "pixel", "size": 15, "color": "=ink", "visible": "=page.players != ''" },
+        { "type": "text", "x": 202, "y": 246, "w": 404, "text": "{game.plays} plays  {game.time}", "font": "pixel", "size": 14, "color": "=soft" },
+        { "type": "text", "x": 202, "y": 262, "w": 404, "text": "Last {game.last}", "font": "pixel", "size": 14, "color": "=soft", "visible": "=game.plays != '0'" },
+
+        { "type": "text", "x": 30, "y": 288, "w": 580, "text": "{page.desc}", "font": "pixel", "size": 14, "color": "=ink", "wrap": true, "maxLines": 2,
+          "visible": "=page.desc != ''" },
+
+        { "type": "rect", "x": 30, "y": 330, "w": 580, "h": 2, "fill": "=shade" },
+        { "type": "text", "x": 30, "y": 338, "w": 580, "text": "{page.achWon} / {page.achCount} achievements", "font": "pixel-medium", "size": 16, "color": "=ink",
+          "visible": "=page.achCount > 0" },
+        { "type": "text", "x": 30, "y": 338, "w": 580, "text": "No achievements yet", "font": "pixel", "size": 15, "color": "=soft", "visible": "=page.achCount == 0" },
+        { "type": "list", "source": "achievements", "direction": "column", "x": 28, "y": 360, "w": 584, "h": 124, "itemH": 26, "gap": 0,
+          "scrollMode": "edge", "clip": true,
+          "item": { "type": "group", "w": 584, "h": 26, "children": [
+            { "type": "rect", "x": 0, "y": 0, "w": 584, "h": 26, "fill": "=ink", "visible": "=sel" },
+            { "type": "image", "src": "{item.badge}", "fit": "contain", "x": 4, "y": 2, "w": 22, "h": 22, "visible": "=item.badge != ''" },
+            { "type": "text", "x": 34, "y": 5, "w": 490, "text": "{item.title}", "font": "pixel", "size": 15, "color": "=sel ? bg : item.won ? ink : soft" },
+            { "type": "text", "right": 8, "y": 5, "w": 50, "align": "right", "text": "{item.points}", "font": "pixel", "size": 14, "color": "=sel ? bg : soft" }
+          ] } },
+
+        { "type": "rect", "x": 30, "y": 488, "w": 580, "h": 2, "fill": "=shade" },
+        { "type": "list", "source": "hints", "direction": "row", "x": 40, "y": 502, "w": 560, "h": 30, "gap": 12, "flow": true, "scrollMode": "none",
+          "justify": "between", "item": { "use": "pill" } }
+      ]
+    },
+
     "launch": {
       "top": [
         { "use": "lcd" },

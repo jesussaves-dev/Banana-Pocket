@@ -214,7 +214,7 @@ for size in 640x557; do
         --script "lib 0 0; press a; wait 3000; wait 1" 2> "$flog" || { echo "FAIL $size: banana-ui (favorites) exited $?"; fail=1; }
     grep -q "launch 0: .*Orchard Tactics.gba (system gba)" "$flog" || { echo "FAIL $size: the favourite: $(grep launch "$flog")"; fail=1; }
     mv "$OUT/favorites.txt.keep" "$FX/data/favorites.txt"; rm -f "$FX/data/favorite-systems.txt"
-    # X on a game in the library: the game's own options (emulator, shader, its save states) over the library.
+    # X on a game in the library: its page, and X again on the page the game's own options (emulator, shader, its save states) over the library.
     # Changing the shader writes banana/pergame.conf (run-retroarch's BANANA_SHADER); the states page lists the
     # game's states, Y keeps a backup and A twice deletes one.
     xlog=$OUT/$size-xgame.log
@@ -223,7 +223,7 @@ for size in 640x557; do
     rm -f "$FX/states/Mednafen/"*bak-*
     BANANA_STATES="$FX/states" "$HERE/banana-ui" --headless "$OUT/$size-" --size 640x557 --assets "$HERE/assets/rnds" \
         --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
-        --script "lib 0 0; press x; wait 300; shot xgame; press down; press right; wait 100; shot xgame2; press down; press a; wait 200; shot states; press y; wait 150; press a; press a; wait 150; shot states2; press b; press b; wait 1" 2> "$xlog" ||
+        --script "lib 0 0; press x; wait 300; press x; wait 300; shot xgame; press down; press right; wait 100; shot xgame2; press down; press a; wait 200; shot states; press y; wait 150; press a; press a; wait 150; shot states2; press b; press b; press b; wait 1" 2> "$xlog" ||
         { echo "FAIL $size: banana-ui (x on a game) exited $?"; fail=1; }
     grep -q "press x: game options open" "$xlog" || { echo "FAIL $size: X did not open the game options"; fail=1; }
     grep -q "settings open" "$xlog" && { echo "FAIL $size: X opened the settings list"; fail=1; }
@@ -422,6 +422,29 @@ XML
         [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ] || { echo "FAIL $size: $f is blank"; fail=1; }
     done
     golden "street-page" "$OUT/$size-street-page.png"
+    # the other families' game pages: one theme of each (blast, lcd, pocket, fantasy) opens it on X, shows the
+    # facts and the achievements (non-blank), and B goes back to the library
+    mkdir -p "$FX/data/cheevos/ngp"
+    printf '1\t1\t10\t40\tFirst Peel\tPeel a banana\t/nonexistent.png\n2\t0\t25\t5\tGolden Skin\tFinish with every banana\t/nonexistent.png\n' \
+        > "$FX/data/cheevos/ngp/Banana Kart.ngp.tsv"
+    cat > "$FX/roms/ngp/gamelist.xml" <<'XML'
+<gameList><game><path>./Banana Kart.ngp</path><name>Banana Kart</name><desc>A kart race on a peel-slick course, built to show the page.</desc><developer>Peel Works</developer><publisher>Crate Games</publisher><players>1-2</players></game></gameList>
+XML
+    for th in blast blast-acid lcd-banana lcd-mint pocket pocket-ocean fantasy lcd-fantasy; do
+        thlog=$OUT/$size-page-$th.log
+        sed -i "s|^ *theme *=.*|theme = file:$HERE/../system/rootfs/usr/share/banana/themes/$th.json|" "$FX/data/settings.conf"
+        "$HERE/banana-ui" --headless "$OUT/$size-page-$th-" --size 1240x1080 --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+            --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+            --script "lib 0 0; press x; wait 600; shot page; press down; wait 300; press b; wait 1" \
+            2> "$thlog" || { echo "FAIL $size: banana-ui ($th page) exited $?"; fail=1; }
+        grep -q "press x: game page open" "$thlog" || { echo "FAIL $size: X did not open the $th game page"; fail=1; }
+        grep -q "press b: used, view 1 " "$thlog" || { echo "FAIL $size: B on the $th page did not go back to the library"; fail=1; }
+        f=$OUT/$size-page-$th-page.png
+        { [ -s "$f" ] && [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ]; } || { echo "FAIL $size: the $th page is missing or blank"; fail=1; }
+        case $th in blast|lcd-banana|pocket|fantasy) golden "page-$th" "$f";; esac
+    done
+    sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    rm -rf "$FX/data/cheevos" "$FX/roms/ngp/gamelist.xml"
     # halfway through the launch the street's mosaic has the picture in square blocks (8 to 16 units, 32 to 64 px
     # here): the shot equals itself sampled down to one pixel a block and back up, for one of those block sizes
     f=$OUT/$size-street-launch.png; mos=0

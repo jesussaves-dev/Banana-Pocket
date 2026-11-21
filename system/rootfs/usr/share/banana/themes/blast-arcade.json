@@ -207,6 +207,45 @@
         { "type": "list", "source": "hints", "direction": "row", "x": 8, "y": 255, "w": 294, "h": 13, "gap": 6, "flow": true, "scrollMode": "none",
           "justify": "between", "item": { "use": "pill" } }
       ]
+    },
+
+    // X on a game: its page. The cart rack's black, the name in yellow, the facts under it, then the achievements.
+    // Left/Right the neighbouring game, Up/Down the achievements, B back to the rack.
+    "game": {
+      "top": [
+        { "type": "rect", "x": 0, "y": 0, "w": 310, "h": 270, "fill": "=void" },
+        { "use": "chrome", "x": 8, "y": 20, "w": 296, "text": "{upper(sys.name)}" },
+        { "type": "rect", "x": 0, "y": 44, "w": 310, "h": 2,
+          "fill": "=pick(sys.maker == 'Nintendo' ? 0 : sys.maker == 'Sega' ? 1 : sys.maker == 'Sony' ? 2 : sys.maker == 'NEC' ? 3 : sys.maker == 'SNK' ? 4 : sys.maker == 'Atari' ? 5 : 6, '#ff0024', '#006dff', '#00dbff', '#ff6d00', '#ffdb00', '#ff00b6', '#6dff00')" },
+        { "type": "image", "src": "{game.art}", "fallback": "{sys.icon}", "x": 8, "y": 54, "w": 92, "h": 100,
+          "fit": "=boxLook == 'original' ? 'contain' : 'dither9Contain'" },
+        { "type": "text", "size": 12, "x": 108, "y": 54, "w": 194, "text": "{upper(game.title)}", "color": "=label", "wrap": true, "maxLines": 2,
+          "outline": { "width": 1, "color": "=void" } },
+        { "type": "text", "size": 12, "x": 108, "y": 80, "w": 194, "text": "{game.sub}", "color": "=dim" },
+        { "type": "text", "size": 12, "x": 108, "y": 94, "w": 194, "text": "{page.developer}", "color": "=ink", "visible": "=page.developer != ''" },
+        { "type": "text", "size": 12, "x": 108, "y": 108, "w": 194, "text": "{page.publisher}", "color": "=ink", "visible": "=page.publisher != ''" },
+        { "type": "text", "size": 12, "x": 108, "y": 122, "w": 194, "text": "{page.players}P", "color": "=ink", "visible": "=page.players != ''" },
+        { "type": "text", "size": 12, "x": 108, "y": 136, "w": 194, "text": "{game.plays} plays  {game.time}", "color": "=cyan" },
+        { "type": "text", "size": 12, "x": 108, "y": 148, "w": 194, "text": "Last {game.last}", "color": "=dim", "visible": "=game.plays != '0'" },
+        { "type": "image", "src": "{art}/fav.png", "fit": "pixel", "right": 8, "y": 54, "w": 8, "h": 8, "visible": "=game.fav" },
+
+        { "type": "text", "size": 12, "x": 8, "y": 160, "w": 294, "text": "{page.desc}", "color": "=dim", "wrap": true, "maxLines": 2,
+          "visible": "=page.desc != ''" },
+
+        { "type": "text", "size": 12, "x": 8, "y": 188, "w": 294, "text": "{page.achWon} / {page.achCount} ACHIEVEMENTS", "color": "=label",
+          "visible": "=page.achCount > 0" },
+        { "type": "text", "size": 12, "x": 8, "y": 188, "w": 294, "text": "NO ACHIEVEMENTS YET", "color": "=dim", "visible": "=page.achCount == 0" },
+        { "type": "list", "source": "achievements", "direction": "column", "x": 8, "y": 201, "w": 294, "h": 52, "itemH": 13, "gap": 0,
+          "scrollMode": "edge", "clip": true,
+          "item": { "type": "group", "w": 294, "h": 13, "children": [
+            { "type": "image", "src": "{item.badge}", "fit": "contain", "x": 0, "y": 1, "w": 11, "h": 11, "visible": "=item.badge != ''" },
+            { "type": "text", "size": 12, "x": 15, "y": 0, "w": 244, "text": "{item.title}", "color": "=item.won ? ink : dim" },
+            { "type": "text", "size": 12, "right": 0, "y": 0, "w": 30, "align": "right", "text": "{item.points}", "color": "=sel ? cyan : dim" }
+          ] } },
+
+        { "type": "list", "source": "hints", "direction": "row", "x": 8, "y": 255, "w": 294, "h": 13, "gap": 6, "flow": true, "scrollMode": "none",
+          "justify": "between", "item": { "use": "pill" } }
+      ]
     }
   }
 }
