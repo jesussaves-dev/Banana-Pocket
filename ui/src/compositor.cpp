@@ -97,12 +97,13 @@ namespace banana
 		Buffer* inflight = nullptr;		// presented, flip not completed
 		Buffer* onScreen = nullptr;		// the FB the primary is scanning now (kept until replaced)
 		Buffer* under = nullptr;		// the kiosk client's newest frame while it is covered, shown when the cover goes
-		wl_resource* pendCb = nullptr;		// a frame callback requested for the next commit
-		wl_resource* pendingCb = nullptr;
-		wl_resource* inflightCb = nullptr;
-		wl_listener pendCbGone = {};
-		wl_listener pendingCbGone = {};
-		wl_listener inflightCbGone = {};
+		// Frame callbacks, as lists (wl_resource_get_link; each one unlinks itself when destroyed, cbUnlink): a commit
+		// may carry more than one. RetroArch's Wayland GL context asks for its own and then Mesa's eglSwapBuffers asks
+		// for another; keeping only the newest left RetroArch waiting on a destroyed one until its 50 ms deadline, which
+		// held Flycast (the glcore system) to ~20 fps.
+		wl_list pendCbs;		// requested for the next commit
+		wl_list pendingCbs;		// that commit's, waiting for it to be presented
+		wl_list inflightCbs;	// presented, flip not completed
 
 		bool hidMenu = false;			// presentGame() is on screen and the overlay is off
 		uint32_t overlayFb = 0;			// the 3D card buffer (ARGB), shown above the client when non-zero
@@ -222,21 +223,31 @@ namespace banana
 			pending = nullptr;
 			bufferRelease(b);
 		}
-		void putPendingCb(wl_resource* cb)
+		// every callback in `from` joins the end of `to`
+		static void moveCbs(wl_list& from, wl_list& to)
 		{
-			if (pendingCb) wl_resource_destroy(pendingCb);	// its destroy handler nulls the slot and unlinks
-			pendingCb = cb;
-			if (cb) wl_resource_add_destroy_listener(cb, &pendingCbGone);
+			wl_list_insert_list(to.prev, &from);
+			wl_list_init(&from);
 		}
-		void fireCb(wl_resource*& slot, wl_listener&)
+		// a newer commit replaces a pending one: its callbacks are answered now (the dropped frame's, or the client
+		// waits for them), then the new commit's take their place
+		void putPendingCbs()
 		{
-			if (!slot) return;
-			wl_resource* cb = slot;
-			slot = nullptr;
+			fireCbs(pendingCbs);
+			moveCbs(pendCbs, pendingCbs);
+		}
+		static void fireCbs(wl_list& l)
+		{
+			if (wl_list_empty(&l)) return;
 			struct timespec ts;
 			clock_gettime(CLOCK_MONOTONIC, &ts);
-			wl_callback_send_done(cb, (uint32_t)((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000));
-			wl_resource_destroy(cb);
+			uint32_t ms = (uint32_t)((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000);
+			wl_resource *cb, *next;
+			wl_resource_for_each_safe(cb, next, &l)
+			{
+				wl_callback_send_done(cb, ms);
+				wl_resource_destroy(cb);	// cbUnlink takes it off the list
+			}
 		}
 		void frame()
 		{
@@ -276,7 +287,7 @@ namespace banana
 				{
 					logf("presenting a client frame failed; dropped it");
 					dropPending();
-					fireCb(pendingCb, pendingCbGone);	// the dropped frame's callback, or the client waits for it
+					fireCbs(pendingCbs);	// the dropped frame's callbacks, or the client waits for them
 				}
 				return;
 			}
@@ -340,15 +351,7 @@ namespace banana
 				onScreen = nullptr;
 			}
 			if (frames++ < 3 || frames % 60 == 0) logf("present %ux%u fb=%u (frame %u)", b->w, b->h, fb, frames);
-			if (pendingCb)
-			{
-				wl_resource* cb = pendingCb;
-				pendingCb = nullptr;
-				wl_list_remove(&pendingCbGone.link);
-				// the callback becomes the in-flight one
-				inflightCb = cb;
-				wl_resource_add_destroy_listener(cb, &inflightCbGone);
-			}
+			moveCbs(pendingCbs, inflightCbs);	// the callbacks become the in-flight ones
 		}
 		void vblank()
 		{
@@ -364,7 +367,7 @@ namespace banana
 				inflight = nullptr;
 				bufferRelease(b);
 				if (f3On) f3ReleaseAt = msNow();	// the client can render its next frame now
-				fireCb(inflightCb, inflightCbGone);
+				fireCbs(inflightCbs);
 			}
 			if (presenter && !d->flipPending()) presenter->flipDone();
 			if (restoreMenu && !inflight && !d->flipPending())
@@ -414,8 +417,8 @@ namespace banana
 		{
 			cover = nullptr;
 			dropPending();
-			fireCb(pendCb, pendCbGone);
-			fireCb(pendingCb, pendingCbGone);
+			fireCbs(pendCbs);
+			fireCbs(pendingCbs);
 			if (stopping) return;
 			if (under)
 			{
@@ -434,8 +437,8 @@ namespace banana
 		{
 			cover = s;
 			dropPending();
-			fireCb(pendCb, pendCbGone);
-			fireCb(pendingCb, pendingCbGone);
+			fireCbs(pendCbs);
+			fireCbs(pendingCbs);
 			logf("the player covers the client");
 		}
 		void childDisconnected()
@@ -462,8 +465,7 @@ namespace banana
 			client = nullptr;
 			cfgW = cfgH = 0;
 			dropLastShown();
-			if (pendCb) { pendCb = nullptr; }		// their resource destroy handlers unlink the listeners
-			if (pendingCb) { pendingCb = nullptr; }
+			// its frame callbacks unlink themselves from the lists as its resources are destroyed (cbUnlink)
 			// the Surface objects are freed by their wl_surface resource destroy callback (surfaceGone), which runs
 			// after this: wl_client_destroy emits the client destroy signal before it destroys the resources
 			surf = nullptr;
@@ -631,9 +633,9 @@ namespace banana
 				bufferRelease(b);
 			}
 			dropPending();
-			fireCb(inflightCb, inflightCbGone);
-			fireCb(pendingCb, pendingCbGone);
-			fireCb(pendCb, pendCbGone);
+			fireCbs(inflightCbs);
+			fireCbs(pendingCbs);
+			fireCbs(pendCbs);
 			if (presenter) { presenter->abandon(); presenter->detached(); }
 			if (onScreen) { bufferDrop(onScreen); onScreen = nullptr; }
 			dropLastShown();
@@ -699,23 +701,12 @@ namespace banana
 		void bufferDestroy(wl_client*, wl_resource* res) { wl_resource_destroy(res); }
 		const struct wl_buffer_interface bufferImpl = { .destroy = bufferDestroy };
 
-		void cbGonePending(wl_listener* l, void* data)
+		// a frame callback's resource destructor: off whichever list holds it (a lone link is its own list)
+		void cbUnlink(wl_resource* cb)
 		{
-			Impl* im = wl_container_of(l, im, pendingCbGone);
-			if ((wl_resource*)data == im->pendingCb) im->pendingCb = nullptr;
-			wl_list_remove(&l->link);
-		}
-		void cbGoneInflight(wl_listener* l, void* data)
-		{
-			Impl* im = wl_container_of(l, im, inflightCbGone);
-			if ((wl_resource*)data == im->inflightCb) im->inflightCb = nullptr;
-			wl_list_remove(&l->link);
-		}
-		void cbGonePend(wl_listener* l, void* data)
-		{
-			Impl* im = wl_container_of(l, im, pendCbGone);
-			if ((wl_resource*)data == im->pendCb) im->pendCb = nullptr;
-			wl_list_remove(&l->link);
+			wl_list* l = wl_resource_get_link(cb);
+			wl_list_remove(l);
+			wl_list_init(l);
 		}
 
 		// ---- xdg-shell ----------------------------------------------------------------------------------------------
@@ -846,6 +837,9 @@ namespace banana
 			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
 			Impl* im = s->im;
 			wl_resource* cb = wl_resource_create(c, &wl_callback_interface, wl_resource_get_version(res), id);
+			if (!cb) { wl_client_post_no_memory(c); return; }
+			wl_list_init(wl_resource_get_link(cb));	// wl_resource_create leaves it zeroed
+			wl_resource_set_implementation(cb, nullptr, nullptr, cbUnlink);
 			if (im->top() && im->top() != s)
 			{
 				// not the surface on screen: nothing will pace it, and SDL waits on this before its next swap
@@ -855,9 +849,7 @@ namespace banana
 				wl_resource_destroy(cb);
 				return;
 			}
-			if (im->pendCb) wl_resource_destroy(im->pendCb);	// its destroy handler nulls the slot and unlinks
-			im->pendCb = cb;
-			wl_resource_add_destroy_listener(cb, &im->pendCbGone);
+			wl_list_insert(im->pendCbs.prev, wl_resource_get_link(cb));
 		}
 		void surfRegion(wl_client*, wl_resource*, wl_resource*) {}
 		void surfCommit(wl_client*, wl_resource* res)
@@ -910,13 +902,7 @@ namespace banana
 						if (turn > im->f3TurnMax) im->f3TurnMax = turn;
 					}
 				}
-				if (im->pendCb)
-				{
-					wl_resource* cb = im->pendCb;
-					im->pendCb = nullptr;
-					wl_list_remove(&im->pendCbGone.link);
-					im->putPendingCb(cb);
-				}
+				im->putPendingCbs();
 			}
 			im->frame();
 		}
@@ -1305,9 +1291,9 @@ namespace banana
 		im->clientCreated.notify = onClientCreated;
 		im->clientGone.notify = onClientGone;
 		im->childGone.notify = onChildGone;
-		im->pendCbGone.notify = cbGonePend;
-		im->pendingCbGone.notify = cbGonePending;
-		im->inflightCbGone.notify = cbGoneInflight;
+		wl_list_init(&im->pendCbs);
+		wl_list_init(&im->pendingCbs);
+		wl_list_init(&im->inflightCbs);
 
 		wl_display_add_client_created_listener(im->wl, &im->clientCreated);
 		wl_global_create(im->wl, &wl_compositor_interface, 4, im, compositorBind);
@@ -1395,7 +1381,7 @@ namespace banana
 		if (im->onScreen) { im->bufferDrop(im->onScreen); im->onScreen = nullptr; }
 		if (im->under) { im->bufferDrop(im->under); im->under = nullptr; }
 		im->dropLastShown();
-		im->pendingCb = im->inflightCb = im->pendCb = nullptr;
+		// the frame callbacks still listed unlink themselves as wl_display_destroy_clients destroys them
 		wl_display_destroy_clients(im->wl);
 		im->focusClear();
 		if (im->xkbState) { xkb_state_unref(im->xkbState); im->xkbState = nullptr; }
