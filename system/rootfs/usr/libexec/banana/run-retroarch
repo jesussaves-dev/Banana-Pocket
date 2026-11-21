@@ -226,16 +226,23 @@ vk=
 grep -qa 'qcom,sm4450' /proc/device-tree/compatible 2>/dev/null && vk=1
 if [ -n "$vk" ]; then drv=vulkan; ctx=vk_wayland; else drv=glcore; ctx=wayland; fi
 rot=0
-# Dreamcast: Flycast is the one core this handheld cannot quite hold, and its renderer is what paces it. Sampled on
-# the unit, the emulation thread sits in Flycast's own render-thread wait (a futex) while the GPU is already at its
-# top step and the console runs 55-60 fps -- and the sound comes out choppy, with no ALSA underrun at all. ROCKNIX
-# runs this SoC on glcore (freedreno's GLES) rather than Turnip for exactly this, and Flycast keeps a GLES renderer
-# when the frontend asks for GL instead of Vulkan, so this one system gets glcore. glcore's shader backend is GLSL,
-# not Slang, so the Slang preset Banana applies cannot load under it: the shader is turned off for it below (the
-# enable flag only -- the preset file is left alone).
-glc=
-case $c in flycast) glc=1 ;; esac
-if [ -n "$glc" ]; then drv=glcore; ctx=wayland; fi
+# Dreamcast runs on Vulkan like the rest. It used to get glcore: with banana-ui turning every frame on the GPU,
+# that pass waited for Flycast's frame and the two together missed vblanks (choppy sound, 55-60 fps). With the frame
+# turned by RetroArch and scanned out as it is (below), Turnip holds Flycast at 60 -- but only rendering straight to
+# memory: with the a613's default tiled GMEM rendering Crazy Taxi fell to ~13 fps (flips 72-75 ms), with sysmem it
+# runs 16.4-16.7 ms a frame.
+case $c in flycast) TU_DEBUG=$TU_DEBUG,sysmem; export TU_DEBUG ;; esac
+# Turned by RetroArch itself: on the handheld, a Vulkan RetroArch draws its frame already turned for the panel
+# (rot 3 = 270; patch 0010 turns its menu, 0017 lays its OSD and widgets out turned) and banana-ui puts that
+# buffer on the display plane as it is, with no rotate pass on the GPU. That pass had to wait for the game's own
+# frame to finish, so at Flycast's 2x the two together missed a vblank most seconds. glcore keeps banana-ui's turn:
+# gl3 has no OSD/widget turn (0017 is Vulkan's), and the N64 core's GLideN64 forces glcore under a vulkan config.
+# banana-ui reads /run/banana/upright when RetroArch's window appears, and only for the retroarch executable.
+UP=/run/banana/upright
+rm -f $UP
+if [ -n "$vk" ] && [ "$drv" = vulkan ]; then
+    case $c in mupen64plus_next) ;; *) rot=3; echo $rot > $UP ;; esac
+fi
 set_cfg video_driver $drv
 set_cfg video_context_driver $ctx
 set_cfg video_rotation $rot
@@ -348,8 +355,6 @@ if [ -n "$BANANA_SHADER" ]; then
 else
     ours $GP && rm -f $GP
 fi
-# A system on glcore (Dreamcast, above) cannot run the Slang preset: leave the shader off for it, the file untouched.
-[ -n "$glc" ] && set_cfg video_shader_enable false
 # Screen frames are banana-ui's own now: the compositor draws them on the overlay plane and sizes this window to the
 # frame's hole, so nothing here turns an overlay on. Two things are left. The Game Boys used to run with RetroArch's
 # overlay, and a config an older image or a crash left behind must not draw it over the new frame. And the Banana
@@ -501,6 +506,6 @@ fi
 # the menu toggle the pause menu moved for this launch (above): the card's own value, or none (the autoconfig's)
 if [ -n "$R_MTB" ]; then set_cfg input_menu_toggle_btn "$R_MTB"; else sed -i '/^ *input_menu_toggle_btn *=/d' $CFG; fi
 /usr/libexec/banana/ra-secrets scrub; rm -f $RA
-exec 3>&-; rm -f $FIFO
+exec 3>&-; rm -f $FIFO $UP
 set_cfg stdin_cmd_enable false
 exit $S

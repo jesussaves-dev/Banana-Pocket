@@ -8,6 +8,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <sys/ioctl.h>
+#include <time.h>
+#include <linux/sync_file.h>
 #include <unistd.h>
 #include <vector>
 #include <drm_fourcc.h>
@@ -31,7 +34,12 @@ namespace banana
 {
 	namespace
 	{
-
+		uint64_t monoNs()
+		{
+			timespec ts;
+			clock_gettime(CLOCK_MONOTONIC, &ts);
+			return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+		}
 		void logf(const char* fmt, ...)
 		{
 			va_list ap;
@@ -82,6 +90,8 @@ namespace banana
 			GLuint tex = 0, fbo = 0;
 			State state = Free;
 			bool flipPending = false;
+			int timingFd = -1;		// 3F trace: a dup of this frame's sync file, read at flip time
+			uint64_t submitNs = 0;	// 3F trace: CLOCK_MONOTONIC when the pass was flushed
 		};
 
 		Display* d = nullptr;
@@ -100,7 +110,14 @@ namespace banana
 		bool fenceOk = false;	// 3F: EGL_ANDROID_native_fence_sync is available (else glFinish)
 		bool shmOk = false;		// GL_EXT_texture_format_BGRA8888: wl_shm's byte order can be uploaded as it is
 		int fenceFd = -1;		// the rendered slot's GPU sync file, taken by the compositor
+		// 3F trace: the rotate pass's GPU completion (fence signal - flush) and its slack to the flip event
+		bool traceOn = false;
+		unsigned tN = 0, tLate = 0;
+		double tPassSum = 0, tPassMax = 0, tSlackMin = 1e9;
 		GLuint program = 0, vbo = 0;
+		GLuint vboUp = 0;		// the quad without the turn, for a pre-rotated source that cannot be scanned out
+		uint32_t scanFb = 0;	// a client's own framebuffer: the one scanout() returned last
+		uint32_t shownFb = 0;	// ... and the one presentedScanout() put on the plane (0: a slot or nothing)
 		GLint aPos = -1, aUv = -1, uTex = -1;
 		Slot slot[3];
 		Slot* current = nullptr;
@@ -109,6 +126,7 @@ namespace banana
 		std::string dumpPath;
 		bool dumpDone = false;
 		bool allowRmfb = false;		// set by quiesce() when the primary no longer scans a slot
+		std::vector<uint32_t> deadFbs;	// client framebuffers forgotten while on the plane: removed after a flip
 		unsigned frames = 0;
 		int sw = 0, sh = 0;	// the panel: 1080x1240
 		uint32_t lastW = 0, lastH = 0;	// the last source size, to log a size change once
@@ -390,6 +408,7 @@ namespace banana
 		im->ctx = eglCreateContext(im->edpy, im->cfg, EGL_NO_CONTEXT, ctxAttrs);
 		if (im->ctx == EGL_NO_CONTEXT) { err = "eglCreateContext failed"; return false; }
 		const char* eglExt = eglQueryString(im->edpy, EGL_EXTENSIONS);
+		im->traceOn = access("/run/banana/3f-trace", F_OK) == 0;
 		bool surfaceless = hasExt(eglExt, "EGL_KHR_surfaceless_context");
 		if (surfaceless)
 		{
@@ -455,6 +474,16 @@ namespace banana
 		glGenBuffers(1, &im->vbo);
 		glBindBuffer(GL_ARRAY_BUFFER, im->vbo);
 		glBufferData(GL_ARRAY_BUFFER, sizeof verts, verts, GL_STATIC_DRAW);
+		// a pre-rotated source is already panel-oriented: target pixel (px, py) samples source (px, py)
+		const float vertsUp[] = {
+			-1, -1, 0, 0,
+			 1, -1, 1, 0,
+			-1,  1, 0, 1,
+			 1,  1, 1, 1,
+		};
+		glGenBuffers(1, &im->vboUp);
+		glBindBuffer(GL_ARRAY_BUFFER, im->vboUp);
+		glBufferData(GL_ARRAY_BUFFER, sizeof vertsUp, vertsUp, GL_STATIC_DRAW);
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
 
 		if (!im->addSlot(err)) return false;
@@ -473,6 +502,9 @@ namespace banana
 			               im->pbuffer == EGL_NO_SURFACE ? EGL_NO_SURFACE : im->pbuffer, im->ctx);
 		for (auto& s : im->sources) if (im->edpy != EGL_NO_DISPLAY && im->destroyImage) im->destroySource(s);
 		im->sources.clear();
+		for (uint32_t fb : im->deadFbs)
+			if (im->d->drmFd() >= 0 && (im->allowRmfb || fb != im->shownFb)) drmModeRmFB(im->d->drmFd(), fb);
+		im->deadFbs.clear();
 		for (auto& s : im->slot)
 		{
 			if (s.fbo) glDeleteFramebuffers(1, &s.fbo);
@@ -481,10 +513,13 @@ namespace banana
 			if (s.fb && im->d->drmFd() >= 0 && (im->allowRmfb || s.state != Impl::Current))
 				drmModeRmFB(im->d->drmFd(), s.fb);	// never while the plane may still scan it
 			if (s.bo) gbm_bo_destroy(s.bo);
+			if (s.timingFd >= 0) close(s.timingFd);
+			s.timingFd = -1;
 			s.fb = 0;
 		}
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		if (im->vbo) glDeleteBuffers(1, &im->vbo);
+		if (im->vboUp) glDeleteBuffers(1, &im->vboUp);
 		if (im->program) glDeleteProgram(im->program);
 		if (im->edpy != EGL_NO_DISPLAY)
 		{
@@ -500,7 +535,43 @@ namespace banana
 
 	void EglPresenter::quiesce(bool scanoutCleared) { if (impl) impl->allowRmfb = scanoutCleared; }
 
-	bool EglPresenter::scanning() const { return impl && impl->current; }
+	bool EglPresenter::scanning() const { return impl && (impl->current || impl->shownFb); }
+
+	bool EglPresenter::scanout(ClientBuffer& b, uint32_t& fb, std::string& err)
+	{
+		Impl* im = impl;
+		if (!im) { err = "EGL presenter is stopped"; return false; }
+		if (b.shmSource) { err = "a wl_shm source has no framebuffer"; return false; }
+		if (!b.fb)
+		{
+			// the dma-buf stays open: if the plane ever refuses this buffer, render() still imports it
+			int fd = im->d->drmFd();
+			if (fd < 0 || b.fd < 0) { err = "no DRM fd"; return false; }
+			uint32_t handle = 0;
+			if (drmPrimeFDToHandle(fd, b.fd, &handle)) { err = std::string("drmPrimeFDToHandle: ") + strerror(errno); return false; }
+			uint32_t handles[4] = { handle }, pitches[4] = { b.stride }, offsets[4] = { b.off };
+			uint64_t mods[4] = { b.modifier };
+			int ret = drmModeAddFB2WithModifiers(fd, b.w, b.h, b.format, handles, pitches, offsets, mods, &b.fb, DRM_MODE_FB_MODIFIERS);
+			drmCloseBufferHandle(fd, handle);
+			if (ret) { b.fb = 0; err = std::string("AddFB2WithModifiers: ") + strerror(errno); return false; }
+			logf("scanout: %ux%u fmt=%.4s mod=0x%016llx fb=%u (pre-rotated, no GPU pass)", b.w, b.h,
+			     (const char*)&b.format, (unsigned long long)b.modifier, b.fb);
+		}
+		im->scanFb = b.fb;
+		fb = b.fb;
+		return true;
+	}
+
+	void EglPresenter::presentedScanout()
+	{
+		if (!impl) return;
+		Impl* im = impl;
+		im->rendered = nullptr;
+		// the slot that was on screen is replaced at this flip; frame() renders nothing until it completes
+		if (im->current) im->current->state = Impl::Free;
+		im->current = nullptr;
+		im->shownFb = im->scanFb;
+	}
 
 	bool EglPresenter::acceptsShm() const { return impl && impl->shmOk; }
 
@@ -526,7 +597,14 @@ namespace banana
 		glClear(GL_COLOR_BUFFER_BIT);
 		// any source size: letterboxed into the frame's hole, or the 1240x1080 logical output, then turned (ui/src/rotate.h)
 		uint32_t vx, vy, vw, vh;
-		if (im->holeW)
+		if (b.upright)
+		{
+			if (im->holeW)
+				fitUprightHole(b.w, b.h, (uint32_t)im->sh, (uint32_t)im->sw, (uint32_t)im->holeX, (uint32_t)im->holeY,
+				               (uint32_t)im->holeW, (uint32_t)im->holeH, vx, vy, vw, vh);
+			else fitUprightHole(b.w, b.h, (uint32_t)im->sh, (uint32_t)im->sw, 0, 0, (uint32_t)im->sh, (uint32_t)im->sw, vx, vy, vw, vh);
+		}
+		else if (im->holeW)
 			fitRotatedHole(b.w, b.h, (uint32_t)im->sh, (uint32_t)im->sw, (uint32_t)im->holeX, (uint32_t)im->holeY,
 			               (uint32_t)im->holeW, (uint32_t)im->holeH, vx, vy, vw, vh);
 		else fitRotated(b.w, b.h, (uint32_t)im->sh, (uint32_t)im->sw, vx, vy, vw, vh);
@@ -541,7 +619,7 @@ namespace banana
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, src->tex);
 		glUniform1i(im->uTex, 0);
-		glBindBuffer(GL_ARRAY_BUFFER, im->vbo);
+		glBindBuffer(GL_ARRAY_BUFFER, b.upright ? im->vboUp : im->vbo);
 		glEnableVertexAttribArray(im->aPos);
 		glVertexAttribPointer(im->aPos, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
 		glEnableVertexAttribArray(im->aUv);
@@ -559,6 +637,12 @@ namespace banana
 				im->fenceFd = im->dupFence(im->edpy, sync);
 				im->destroySync(im->edpy, sync);
 				fenced = im->fenceFd >= 0;
+				if (fenced && im->traceOn)
+				{
+					if (s->timingFd >= 0) close(s->timingFd);
+					s->timingFd = fcntl(im->fenceFd, F_DUPFD_CLOEXEC, 0);
+					s->submitNs = monoNs();
+				}
 			}
 		}
 		if (!fenced) glFinish();
@@ -599,6 +683,7 @@ namespace banana
 		if (!impl || !impl->rendered) return;
 		Impl::Slot* s = impl->rendered;
 		impl->rendered = nullptr;
+		impl->shownFb = 0;
 		if (impl->current && impl->current != s) impl->current->state = Impl::Free;
 		s->state = Impl::Current;
 		s->flipPending = true;
@@ -614,7 +699,45 @@ namespace banana
 
 	void EglPresenter::flipDone()
 	{
-		if (impl && impl->current) impl->current->flipPending = false;
+		if (!impl) return;
+		for (size_t i = 0; i < impl->deadFbs.size();)
+		{
+			if (impl->deadFbs[i] == impl->shownFb) { i++; continue; }
+			if (impl->d->drmFd() >= 0) drmModeRmFB(impl->d->drmFd(), impl->deadFbs[i]);
+			impl->deadFbs[i] = impl->deadFbs.back();
+			impl->deadFbs.pop_back();
+		}
+		if (!impl->current) return;
+		Impl::Slot* s = impl->current;
+		s->flipPending = false;
+		if (s->timingFd < 0) return;
+		// the flip has completed, so the fence the plane waited on has signalled; its timestamp is CLOCK_MONOTONIC
+		const uint64_t now = monoNs();
+		sync_fence_info fi;
+		memset(&fi, 0, sizeof fi);
+		sync_file_info info;
+		memset(&info, 0, sizeof info);
+		info.num_fences = 1;
+		info.sync_fence_info = (uint64_t)(uintptr_t)&fi;
+		if (ioctl(s->timingFd, SYNC_IOC_FILE_INFO, &info) == 0 && fi.status == 1 && fi.timestamp_ns >= s->submitNs)
+		{
+			Impl* im = impl;
+			const double pass = (double)(fi.timestamp_ns - s->submitNs) / 1e6;
+			const double slack = now >= fi.timestamp_ns ? (double)(now - fi.timestamp_ns) / 1e6 : 0.0;
+			im->tPassSum += pass;
+			if (pass > im->tPassMax) im->tPassMax = pass;
+			if (slack < im->tSlackMin) im->tSlackMin = slack;
+			if (pass > 8.0) im->tLate++;
+			if (++im->tN == 60)
+			{
+				logf("3f-gpu: n=60 pass %.2f/%.2f >8ms %u signal->flip min %.2f", im->tPassSum / im->tN, im->tPassMax, im->tLate, im->tSlackMin);
+				im->tN = im->tLate = 0;
+				im->tPassSum = im->tPassMax = 0;
+				im->tSlackMin = 1e9;
+			}
+		}
+		close(s->timingFd);
+		s->timingFd = -1;
 	}
 
 	void EglPresenter::detached()
@@ -622,6 +745,7 @@ namespace banana
 		if (!impl) return;
 		if (impl->current) impl->current->state = Impl::Free;
 		impl->current = nullptr;
+		impl->shownFb = 0;
 	}
 
 	void EglPresenter::forget(ClientBuffer& b)
@@ -636,5 +760,17 @@ namespace banana
 			}
 		b.eglImage = nullptr;
 		b.tex = 0;
+		if (b.fb)
+		{
+			// a pre-rotated buffer's own framebuffer; never removed while the plane may still scan it
+			if (impl->d->drmFd() >= 0)
+			{
+				if (impl->allowRmfb || b.fb != impl->shownFb) drmModeRmFB(impl->d->drmFd(), b.fb);
+				else impl->deadFbs.push_back(b.fb);	// flipDone() removes it once another frame replaced it
+			}
+			if (b.fb == impl->shownFb) impl->shownFb = 0;
+			if (b.fb == impl->scanFb) impl->scanFb = 0;
+			b.fb = 0;
+		}
 	}
 }

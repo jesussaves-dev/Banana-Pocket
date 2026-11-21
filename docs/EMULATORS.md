@@ -176,13 +176,12 @@ it starts.
 and Game Gear are not Flycast: they share the Mega Drive's Genesis Plus GX core (`systems.conf`'s `[mastersystem]`
 and `[gamegear]`). Four things are Banana Pocket's rather than the core's:
 
-- **glcore, not Vulkan (Dreamcast only).** Flycast is the one core this handheld cannot quite hold: sampled on the
-  unit, its emulation thread spends most of its time in Flycast's own render-thread wait (a futex) with the GPU
-  already at its top step, the console runs 55-60 fps, and the sound comes out choppy -- with no ALSA underrun at all,
-  because the renderer is what paces the emulation. ROCKNIX runs this SoC on `glcore` (freedreno's GLES) for the same
-  reason, and Flycast keeps a GLES renderer when the frontend asks for GL instead of Vulkan, so `run-retroarch` gives
-  this one system `glcore`. glcore's shader backend is GLSL rather than Slang, so the Slang preset Banana Pocket would apply
-  cannot load under it and the shader is left off for Dreamcast (the preset file is untouched).
+- **Vulkan, rendered straight to memory, scanned out as drawn.** Flycast is the heaviest core here. It runs on
+  Vulkan (Turnip) like the rest, with two things of its own. `run-retroarch` sets `TU_DEBUG=sysmem` for it: with
+  the a613's default tiled (GMEM) rendering Crazy Taxi at 1280x960 fell to ~13 fps, and rendering straight to memory
+  holds it at 60. And like every Vulkan core, RetroArch draws the frame already turned for the panel, so banana-ui
+  puts it on the display plane with no rotate pass. That pass waited for Flycast's frame, and the two together missed
+  vblanks (choppy sound, 55-60 fps). That is why Dreamcast used to run on `glcore`, as ROCKNIX runs it on this SoC.
 - **The triggers are on the shoulders.** The Dreamcast's L/R are analogue *triggers* (Crazy Taxi's brake and
   accelerator), and Flycast reads them from the RetroPad's **L2/R2**, not its L/R -- which it reads as the Dreamcast's
   digital C/Z (`shell/libretro/libretro.cpp`, `lt[port] = get_analog_trigger(..., RETRO_DEVICE_ID_JOYPAD_L2)`).
@@ -195,8 +194,8 @@ and `[gamegear]`). Four things are Banana Pocket's rather than the core's:
   "Analog to Digital", `input_player1_analog_dpad_mode=1`, which `run-retroarch` sets), and **F + B** toggles it while
   a game runs -- bananad writes `TOGGLE_ANALOG_DPAD` to RetroArch's command FIFO, the command the RetroArch patch
   adds.
-- `Flycast.opt` (`/usr/share/banana/cores/`, written once by `run-retroarch` into the core's own config) is ROCKNIX's
-  for this SoC: native 640x480, no texture upscaling, the fast alpha sorting, no anisotropic filtering, the renderer
+- `Flycast.opt` (`/usr/share/banana/cores/`, written once by `run-retroarch` into the core's own config) is mostly
+  ROCKNIX's for this SoC: 1280x960 (twice native), no texture upscaling, the fast alpha sorting, no anisotropic filtering, the renderer
   on its own thread, and **auto skip frame on** (`some`) so a frame the a613 cannot draw is dropped rather than
   stalling the emulation thread.
 

@@ -18,6 +18,7 @@ namespace banana
 		void* eglImage = nullptr;		// EglPresenter: the EGLImage of this source
 		unsigned tex = 0;			// EglPresenter: the GL texture made from it
 		uint64_t serial = 0;			// trace identity of this wl_buffer
+		bool upright = false;			// committed by a pre-rotated surface: panel-oriented, never turned again
 		// A wl_shm source (mpv's software output): no dma-buf, so the presenter uploads the pixels to its texture.
 		wl_shm_buffer* shm = nullptr;		// null once the client destroys the wl_buffer
 		bool shmSource = false;			// stays true after shm goes null: the texture still holds the frame

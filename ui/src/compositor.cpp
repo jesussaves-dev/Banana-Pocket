@@ -12,6 +12,7 @@
 #include "dmabuf.h"
 #include "egl_presenter.h"
 #include "presenter.h"
+#include "rotate.h"
 #include <algorithm>
 #include <cerrno>
 #include <cstdarg>
@@ -77,6 +78,8 @@ namespace banana
 			wl_resource* top = nullptr;	// xdg_toplevel
 			wl_client* owner = nullptr;
 			bool configured = false;
+			bool upright = false;		// RetroArch turning its own frame for the panel (uprightClient): configured
+							// portrait and scanned out as it is, with no GPU pass
 			Buffer* pend = nullptr;		// attached, not committed
 		};
 
@@ -108,11 +111,17 @@ namespace banana
 		bool hidMenu = false;			// presentGame() is on screen and the overlay is off
 		uint32_t overlayFb = 0;			// the 3D card buffer (ARGB), shown above the client when non-zero
 		uint32_t lastFb = 0, lastW = 0, lastH = 0;	// the primary currently on screen, for an overlay-only commit
+		uint32_t lastDx = 0, lastDy = 0, lastDw = 0, lastDh = 0;	// ... and where it is on the panel (lastDw 0: all of it)
+		bool inflightScanned = false;	// the frame in flight is the client's own buffer on the plane
+		Buffer* held = nullptr;		// a scanned-out frame on screen: its release waits until another frame replaces it
+		Buffer* retired = nullptr;	// the held frame the menu's commit replaces: released when that flip completes
+		bool noScanout = false;		// the plane refused a pre-rotated frame: the GPU draws them until the menu is back
 		uint32_t shownOverlay = 0;	// the overlay fb the last game commit carried (overlayFb can be ahead of it)
 		uint32_t frameFb = 0;		// a game's screen frame (ARGB): on the overlay whenever no card is up
 		int holeX = 0, holeY = 0, holeW = 0, holeH = 0;	// where the client goes; holeW == 0 is the whole output
 		int cfgW = 0, cfgH = 0;		// the size the client was last configured at
 		bool cfgRepeated = false;	// that size was sent again after a frame came back the wrong size
+		bool saidNoScanout = false;	// a pre-rotated frame could not go on the plane (logged once)
 		Buffer* lastShown = nullptr;	// the newest frame presented, to re-place a frozen game in a new hole
 		bool reframeDue = false;	// a new hole arrived during a flip
 		bool touchOutside = false;	// this touch began on the frame: the client never hears of it
@@ -169,6 +178,52 @@ namespace banana
 			if (b->res) wl_buffer_send_release(b->res);
 			bufferDrop(b);
 		}
+		bool presentLast()
+		{
+			return d->presentGame(lastFb, lastW, lastH, shownLayer(), -1, lastDx, lastDy, lastDw, lastDh);
+		}
+		void releaseHeld()
+		{
+			if (held) bufferRelease(held);
+			held = nullptr;
+		}
+		// The configure size: the hole (or the logical output), turned for a pre-rotated client.
+		void wantSize(const Surface* s, int& w, int& h) const
+		{
+			w = holeW ? holeW : kClientFormatW;
+			h = holeW ? holeH : kClientFormatH;
+			if (s && s->upright) std::swap(w, h);
+		}
+		// One client frame onto a scanout framebuffer. A pre-rotated one is the client's own buffer on the plane
+		// (scanned), placed in the hole's panel rectangle; anything else goes through the presenter's render().
+		bool place(Buffer& b, uint32_t& fb, uint32_t& pw, uint32_t& ph, uint32_t (&dst)[4], bool& scanned, std::string& err)
+		{
+			dst[0] = dst[1] = dst[2] = dst[3] = 0;
+			scanned = false;
+			presenter->setHole(holeX, holeY, holeW, holeH);
+			if (b.upright && presenter->rotated() && !noScanout)
+			{
+				std::string serr;
+				if (presenter->scanout(b, fb, serr))
+				{
+					const uint32_t W = (uint32_t)d->panelHeight(), H = (uint32_t)d->panelWidth();	// the logical output
+					if (holeW) fitUprightHole(b.w, b.h, W, H, (uint32_t)holeX, (uint32_t)holeY, (uint32_t)holeW, (uint32_t)holeH,
+					                          dst[0], dst[1], dst[2], dst[3]);
+					else fitUprightHole(b.w, b.h, W, H, 0, 0, W, H, dst[0], dst[1], dst[2], dst[3]);
+					pw = b.w;
+					ph = b.h;
+					scanned = true;
+					return true;
+				}
+				if (!saidNoScanout) { saidNoScanout = true; logf("pre-rotated frame drawn by the GPU: %s", serr.c_str()); }
+			}
+			if (!presenter->render(b, fb, err)) return false;
+			// the EGL path produces the panel-sized scanout buffer (1:1); the direct fallback passes the client size
+			scanned = !presenter->rotated();
+			pw = presenter->rotated() ? (uint32_t)d->panelWidth() : b.w;
+			ph = presenter->rotated() ? (uint32_t)d->panelHeight() : b.h;
+			return true;
+		}
 		void dropLastShown()
 		{
 			if (lastShown) bufferDrop(lastShown);
@@ -182,7 +237,8 @@ namespace banana
 			// fullscreen, as a kiosk compositor says: SDL2 ignores the size of a non-resizable window's configure unless the
 			// state is fullscreen (BananaTube stayed 1024x768 without it)
 			if (uint32_t* st = (uint32_t*)wl_array_add(&states, sizeof *st)) *st = XDG_TOPLEVEL_STATE_FULLSCREEN;
-			int w = holeW ? holeW : kClientFormatW, h = holeW ? holeH : kClientFormatH;
+			int w = 0, h = 0;
+			wantSize(s, w, h);
 			if (w != cfgW || h != cfgH) cfgRepeated = false;
 			cfgW = w;
 			cfgH = h;
@@ -196,24 +252,25 @@ namespace banana
 		{
 			reframeDue = false;
 			if (!lastShown || !lastFb || !presenter || !presenter->rotated() || pending || inflight) return;
-			uint32_t fb = 0;
+			uint32_t fb = 0, pw = 0, ph = 0, dst[4];
+			bool scanned = false;
 			std::string err;
-			presenter->setHole(holeX, holeY, holeW, holeH);
-			if (!presenter->render(*lastShown, fb, err))
+			if (!place(*lastShown, fb, pw, ph, dst, scanned, err))
 			{
 				logf("reframe: %s", err.c_str());
 				presenter->abandon();
 				return;
 			}
 			int fenceFd = presenter->takeFenceFd();
-			uint32_t pw = (uint32_t)d->panelWidth(), ph = (uint32_t)d->panelHeight();
-			bool ok = d->presentGame(fb, pw, ph, shownLayer(), fenceFd);
+			bool ok = d->presentGame(fb, pw, ph, shownLayer(), fenceFd, dst[0], dst[1], dst[2], dst[3]);
 			if (fenceFd >= 0) close(fenceFd);
 			if (!ok) { presenter->abandon(); return; }
-			presenter->presented();
+			if (scanned) presenter->presentedScanout();
+			else presenter->presented();
 			lastFb = fb;
 			lastW = pw;
 			lastH = ph;
+			lastDx = dst[0]; lastDy = dst[1]; lastDw = dst[2]; lastDh = dst[3];
 			shownOverlay = shownLayer();
 		}
 		void dropPending()
@@ -259,14 +316,15 @@ namespace banana
 			// (ui/src/rotate.h fitRotated), so a port or video window that is not 1240x1080 stays upright.
 			// RetroArch picks its first size itself, after the first configure, and only a later one moves it: say it
 			// once more, and a client that still will not change is letterboxed into the hole
-			if (holeW && !cfgRepeated && top() && top()->top && ((int)b->w != cfgW || (int)b->h != cfgH))
+			if (!cfgRepeated && top() && top()->top && (holeW || top()->upright) && ((int)b->w != cfgW || (int)b->h != cfgH))
 			{
 				cfgRepeated = true;
 				sendConfigure(top());
 			}
 			double ft0 = f3On ? msNow() : 0;
-			if (presenter) presenter->setHole(holeX, holeY, holeW, holeH);
-			if (!presenter || !presenter->render(*b, fb, err))
+			uint32_t pw = 0, ph = 0, dst[4];
+			bool scanned = false;
+			if (!presenter || !place(*b, fb, pw, ph, dst, scanned, err))
 			{
 				logf("render: %s", err.empty() ? "no presenter" : err.c_str());
 				if (presenter) presenter->abandon();
@@ -275,16 +333,21 @@ namespace banana
 			}
 			double ft1 = f3On ? msNow() : 0;
 			int fenceFd = presenter->takeFenceFd();
-			// the EGL path produces the panel-sized scanout buffer (1:1); the direct fallback passes the client size
-			uint32_t pw = presenter->rotated() ? (uint32_t)d->panelWidth() : b->w;
-			uint32_t ph = presenter->rotated() ? (uint32_t)d->panelHeight() : b->h;
-			if (frames < 3) logf("commit: fb=%u src=%ux%u", fb, pw, ph);
-			if (!d->presentGame(fb, pw, ph, shownLayer(), fenceFd))
+			if (frames < 3) logf("commit: fb=%u src=%ux%u dst=%u,%u %ux%u%s", fb, pw, ph, dst[0], dst[1], dst[2], dst[3],
+			                     scanned ? " (scanout)" : "");
+			if (!d->presentGame(fb, pw, ph, shownLayer(), fenceFd, dst[0], dst[1], dst[2], dst[3]))
 			{
 				if (fenceFd >= 0) close(fenceFd);
 				presenter->abandon();
 				if (!d->flipPending())
 				{
+					// the plane refused the client's own buffer: the next frames go through the GPU instead of
+					// failing the same way every frame
+					if (scanned && presenter->rotated() && !noScanout)
+					{
+						noScanout = true;
+						logf("the plane refused a pre-rotated frame; the GPU draws them from now on");
+					}
 					logf("presenting a client frame failed; dropped it");
 					dropPending();
 					fireCbs(pendingCbs);	// the dropped frame's callbacks, or the client waits for them
@@ -293,7 +356,8 @@ namespace banana
 			}
 			if (fenceFd >= 0) close(fenceFd);	// the kernel holds its own reference
 			double ft2 = f3On ? msNow() : 0;
-			presenter->presented();
+			if (scanned && presenter->rotated()) presenter->presentedScanout();
+			else presenter->presented();
 			if (f3On)
 			{
 				double interval = f3LastPresent > 0 ? ft0 - f3LastPresent : 0;
@@ -324,6 +388,8 @@ namespace banana
 			lastFb = fb;
 			lastW = pw;
 			lastH = ph;
+			lastDx = dst[0]; lastDy = dst[1]; lastDw = dst[2]; lastDh = dst[3];
+			inflightScanned = scanned;
 			shownOverlay = shownLayer();
 			if (lastShown != b)
 			{
@@ -361,11 +427,21 @@ namespace banana
 				f3FlipSum += flip;
 				if (flip > f3FlipMax) f3FlipMax = flip;
 			}
+			if (retired && !d->flipPending())
+			{
+				bufferRelease(retired);	// the menu's flip has completed: the display no longer reads it
+				retired = nullptr;
+			}
 			if (inflight && !d->flipPending())
 			{
 				Buffer* b = inflight;
 				inflight = nullptr;
-				bufferRelease(b);
+				// the frame that was on screen until this flip goes back to the client now; a scanned-out frame is
+				// still being read by the display, so it is held until the next flip replaces it
+				releaseHeld();
+				if (inflightScanned) held = b;
+				else bufferRelease(b);
+				inflightScanned = false;
 				if (f3On) f3ReleaseAt = msNow();	// the client can render its next frame now
 				fireCbs(inflightCbs);
 			}
@@ -380,7 +456,7 @@ namespace banana
 			// a card changed while a flip was in flight and no client frame follows (a paused or SIGSTOPped game,
 			// under the pause menu): re-commit the frame on screen with the overlay it should carry now
 			if (!restoreMenu && lastFb && shownLayer() != shownOverlay && d->isOpen() && !d->flipPending() &&
-			    d->presentGame(lastFb, lastW, lastH, shownLayer()))
+			    presentLast())
 				shownOverlay = shownLayer();
 		}
 		void surfaceGone(Surface* s)
@@ -407,6 +483,14 @@ namespace banana
 				hidMenu = false;
 				lastFb = 0;	// the menu owns the primary again: no overlay-only commits over it
 				dropLastShown();
+				// the menu's commit replaces it on the plane at the next vblank; until then the display still reads it
+				if (held)
+				{
+					if (retired) bufferRelease(retired);
+					retired = held;
+					held = nullptr;
+				}
+				noScanout = false;
 				if (presenter) presenter->detached();
 				if (onScreen) { bufferDrop(onScreen); onScreen = nullptr; }
 			}
@@ -580,11 +664,22 @@ namespace banana
 				if (touchOutside) { if (action == 2) touchOutside = false; return; }
 				x = std::min(std::max(x - holeX, 0), holeW - 1);
 				y = std::min(std::max(y - holeY, 0), holeH - 1);
-				if (lastShown && lastShown->w && lastShown->h)
+				if (lastShown && lastShown->w && lastShown->h && !lastShown->upright)
 				{
 					x = (int)((int64_t)x * lastShown->w / holeW);
 					y = (int)((int64_t)y * lastShown->h / holeH);
 				}
+			}
+			if (lastShown && lastShown->upright && lastShown->w && lastShown->h)
+			{
+				// a pre-rotated client: logical (x, y) is on the panel at (lh-1-y, x) of the hole (ui/src/rotate.h)
+				const int lw = holeW ? holeW : kClientFormatW, lh = holeW ? holeH : kClientFormatH;
+				x = std::min(std::max(x, 0), lw - 1);
+				y = std::min(std::max(y, 0), lh - 1);
+				const int cx = (int)((int64_t)(lh - 1 - y) * lastShown->w / lh);
+				const int cy = (int)((int64_t)x * lastShown->h / lw);
+				x = cx;
+				y = cy;
 			}
 			struct timespec ts;
 			clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -640,7 +735,12 @@ namespace banana
 			if (onScreen) { bufferDrop(onScreen); onScreen = nullptr; }
 			dropLastShown();
 			reframeDue = false;
+			releaseHeld();
+			if (retired) { bufferRelease(retired); retired = nullptr; }
+			noScanout = false;
+			inflightScanned = false;
 			lastFb = lastW = lastH = 0;
+			lastDx = lastDy = lastDw = lastDh = 0;
 			hidMenu = false;
 			restoreMenu = false;
 			overlayFb = 0;
@@ -738,6 +838,26 @@ namespace banana
 			if (s && s->xdg == res) s->xdg = nullptr;
 			wl_resource_destroy(res);
 		}
+		// RetroArch turns its own frame for the panel (video_rotation, patches 0005/0010/0011) when run-retroarch says
+		// so in /run/banana/upright: its toplevel is then configured portrait and its frames are scanned out with no
+		// GPU pass. Only a client whose executable is retroarch gets it, so a flag left by a crashed launcher cannot
+		// turn BananaTube or a port sideways.
+		bool uprightClient(wl_client* c)
+		{
+			if (access("/run/banana/upright", F_OK) != 0) return false;
+			pid_t pid = 0;
+			uid_t uid = 0;
+			gid_t gid = 0;
+			wl_client_get_credentials(c, &pid, &uid, &gid);
+			if (pid <= 0) return false;
+			char path[64], exe[256];
+			snprintf(path, sizeof path, "/proc/%d/exe", (int)pid);
+			ssize_t n = readlink(path, exe, sizeof exe - 1);
+			if (n <= 0) return false;
+			exe[n] = 0;
+			const char* base = strrchr(exe, '/');
+			return strcmp(base ? base + 1 : exe, "retroarch") == 0;
+		}
 		void xdgSurfToplevel(wl_client* c, wl_resource* res, uint32_t id)
 		{
 			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
@@ -745,6 +865,8 @@ namespace banana
 			if (s->top) { wl_resource_post_error(res, XDG_SURFACE_ERROR_ALREADY_CONSTRUCTED, "a second toplevel"); return; }
 			s->top = wl_resource_create(c, &xdg_toplevel_interface, wl_resource_get_version(res), id);
 			wl_resource_set_implementation(s->top, &toplevelImpl, s, nullptr);
+			s->upright = s->im->presenter && s->im->presenter->rotated() && uprightClient(c);
+			if (s->upright) logf("toplevel: pre-rotated client (portrait configure, scanout)");
 		}
 		void xdgSurfPopup(wl_client*, wl_resource* res, uint32_t, wl_resource*, wl_resource*)
 		{
@@ -867,6 +989,7 @@ namespace banana
 				}
 				return;
 			}
+			if (s->pend) s->pend->upright = s->upright;
 			Impl::Surface*& slot = s->owner == im->child ? im->cover : im->surf;
 			if (s->pend && slot && slot != s)
 			{
@@ -951,11 +1074,17 @@ namespace banana
 		const struct wl_output_interface outputImpl = { .release = outputRelease };
 		void outputBind(wl_client* c, void* data, uint32_t version, uint32_t id)
 		{
-			(void)data;
+			Impl* im = (Impl*)data;
 			wl_resource* r = wl_resource_create(c, &wl_output_interface, version < 3 ? version : 3, id);
+			if (!r) { wl_client_post_no_memory(c); return; }
 			wl_resource_set_implementation(r, &outputImpl, nullptr, nullptr);
 			wl_output_send_geometry(r, 0, 0, 0, 0, WL_OUTPUT_SUBPIXEL_UNKNOWN, "Banana", "Retroid Pocket Classic", WL_OUTPUT_TRANSFORM_NORMAL);
-			wl_output_send_mode(r, WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED, kClientFormatW, kClientFormatH, 60000);
+			// RetroArch sizes a fullscreen window from the output mode, not the configure: a pre-rotated one sees the
+			// output portrait
+			const bool up = im && im->presenter && im->presenter->rotated() && uprightClient(c);
+			wl_output_send_mode(r, WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED, up ? kClientFormatH : kClientFormatW,
+			                    up ? kClientFormatW : kClientFormatH, 60000);
+			if (up) logf("output: portrait mode for a pre-rotated client");
 			if (version >= 2) wl_output_send_scale(r, 1);
 			if (version >= 2) wl_output_send_done(r);
 		}
@@ -1432,7 +1561,7 @@ namespace banana
 		// A client that is not committing (paused) must still show/hide the card: re-commit the frame that is on
 		// screen with the new overlay. A commit already in flight picks the new overlay up on the next frame.
 		if (impl->lastFb && impl->d->isOpen() && !impl->d->flipPending() && !impl->restoreMenu &&
-		    impl->d->presentGame(impl->lastFb, impl->lastW, impl->lastH, impl->shownLayer()))
+		    impl->presentLast())
 			impl->shownOverlay = impl->shownLayer();
 	}
 
@@ -1447,7 +1576,7 @@ namespace banana
 		if (!im->lastFb || im->restoreMenu || !im->d->isOpen()) return;	// nothing of a client's on screen yet
 		if (im->d->flipPending()) { im->reframeDue = moved; return; }	// vblank() commits what changed
 		if (moved) im->reframe();
-		else if (im->d->presentGame(im->lastFb, im->lastW, im->lastH, im->shownLayer()))
+		else if (im->presentLast())
 			im->shownOverlay = im->shownLayer();
 	}
 
@@ -1455,8 +1584,9 @@ namespace banana
 	{
 		if (!impl || !impl->top() || !impl->top()->top || !impl->top()->configured) return;
 		Impl* im = impl;
-		if (im->cfgW != (im->holeW ? im->holeW : kClientFormatW) || im->cfgH != (im->holeW ? im->holeH : kClientFormatH))
-			im->sendConfigure(im->top());
+		int w = 0, h = 0;
+		im->wantSize(im->top(), w, h);
+		if (im->cfgW != w || im->cfgH != h) im->sendConfigure(im->top());
 	}
 
 	bool Compositor::gameActive() const
@@ -1469,7 +1599,7 @@ namespace banana
 		if (!impl) return false;
 		Impl* im = impl;
 		if (!im->lastFb || im->restoreMenu || !im->d->isOpen() || im->d->flipPending()) return false;
-		if (!im->d->presentGame(im->lastFb, im->lastW, im->lastH, im->shownLayer())) return false;
+		if (!im->presentLast()) return false;
 		im->shownOverlay = im->shownLayer();
 		return true;
 	}

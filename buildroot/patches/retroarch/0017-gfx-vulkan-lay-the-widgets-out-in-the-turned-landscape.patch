@@ -1,0 +1,269 @@
+From: Banana <bananalinux@proton.me>
+Date: Sat, 21 Nov 2026 18:00:00 +0000
+Subject: [PATCH] gfx/vulkan: lay the widgets out in the turned landscape
+
+Under banana-ui's compositor a Vulkan RetroArch on the Retroid Pocket Classic
+now draws its frame already turned for the panel (video_rotation 3 into a
+1080x1240 portrait window that is scanned out as it is). RGUI comes out upright
+(patch 0010 blits it with mvp_menu), but every notification, achievement card
+and Banana's volume card read sideways, laid out in the portrait swapchain.
+
+Patch 0011 handed the widgets mvp_menu, but that cannot be enough: the Vulkan
+display driver draws each quad with the *viewport* set to the quad's own
+rectangle in the swapchain's unturned pixels, so the matrix only spins the
+contents inside a box that is still placed and shaped for portrait, and the
+text goes through vulkan_font_flush with vk->mvp, which the font path sets
+with rotation off.
+
+So, for an odd user video_rotation on the Vulkan driver:
+
+- gfx_widgets lays out in the landscape the user looks at: the size it is
+  given in gfx_widgets_iterate and video_info for gfx_widgets_frame are swapped
+  (and put back after the frame).
+- gfx_display_vk_draw draws a quad over the whole swapchain, its vertices at
+  its place in that landscape, normalized, and mvp_menu turns it there.
+- the scissor rect is mapped through mvp_menu itself, so it can never turn the
+  other way from what it clips.
+- vulkan_font_render_msg places glyphs in the landscape's pixels over the whole
+  swapchain and vulkan_font_flush draws them with mvp_menu.
+
+The other drivers do not turn widgets and keep the swapchain's size. With an
+even rotation nothing changes.
+
+Upstream-Status: Inappropriate [Banana-specific: a frontend drawing pre-turned for a panel]
+Signed-off-by: Banana <bananalinux@proton.me>
+---
+diff --color -ruN pa/gfx/drivers/vulkan.c pb/gfx/drivers/vulkan.c
+--- a/gfx/drivers/vulkan.c
++++ b/gfx/drivers/vulkan.c
+@@ -1380,9 +1380,30 @@
+ }
+ #endif
+ 
++/* The interface turned with the panel (patches 0010/0011): an odd user video_rotation. The widgets then lay out
++ * in the landscape the user is looking at (gfx_widgets swaps the size it is given) and every draw goes through
++ * mvp_menu, the matrix the RGUI menu is blitted with, over the whole swapchain. */
++static bool vulkan_ui_turned(void)
++{
++   settings_t *settings = config_get_ptr();
++   return settings && (settings->uints.video_rotation & 1);
++}
++
++/* A point of the turned interface, normalized top-down over the landscape, to the swapchain's normalized
++ * top-down space, through mvp_menu itself so the two can never disagree on the direction. */
++static void vulkan_ui_map(const vk_t *vk, float u, float v, float *fx, float *fy)
++{
++   const math_matrix_4x4 *m = &vk->mvp_menu;
++   float cx = MAT_ELEM_4X4(*m, 0, 0) * u + MAT_ELEM_4X4(*m, 0, 1) * v + MAT_ELEM_4X4(*m, 0, 3);
++   float cy = MAT_ELEM_4X4(*m, 1, 0) * u + MAT_ELEM_4X4(*m, 1, 1) * v + MAT_ELEM_4X4(*m, 1, 3);
++   *fx      = (cx + 1.0f) * 0.5f;
++   *fy      = (cy + 1.0f) * 0.5f;
++}
++
+ static void gfx_display_vk_draw(gfx_display_ctx_draw_t *draw,
+       void *data, unsigned video_width, unsigned video_height)
+ {
++   bool turned;
+    unsigned i;
+    struct vk_buffer_range range;
+    struct vk_texture *texture    = NULL;
+@@ -1411,10 +1432,23 @@
+    if (!color)
+       color                       = &vk_colors[0];
+ 
+-   vk->vk_vp.x                    = draw->x;
+-   vk->vk_vp.y                    = vk->context->swapchain_height - draw->y - draw->height;
+-   vk->vk_vp.width                = draw->width;
+-   vk->vk_vp.height               = draw->height;
++   /* Turned, a quad cannot be its own viewport (that rect is in the swapchain's unturned pixels): it is drawn
++    * over the whole swapchain at its place in the landscape, normalized, and mvp_menu turns it there. */
++   turned                         = vulkan_ui_turned() && video_width && video_height;
++   if (turned)
++   {
++      vk->vk_vp.x                 = 0.0f;
++      vk->vk_vp.y                 = 0.0f;
++      vk->vk_vp.width             = vk->context->swapchain_width;
++      vk->vk_vp.height            = vk->context->swapchain_height;
++   }
++   else
++   {
++      vk->vk_vp.x                 = draw->x;
++      vk->vk_vp.y                 = vk->context->swapchain_height - draw->y - draw->height;
++      vk->vk_vp.width             = draw->width;
++      vk->vk_vp.height            = draw->height;
++   }
+    vk->vk_vp.minDepth             = 0.0f;
+    vk->vk_vp.maxDepth             = 1.0f;
+ 
+@@ -1429,9 +1463,20 @@
+    pv = (struct vk_vertex*)range.data;
+    for (i = 0; i < draw->coords->vertices; i++, pv++)
+    {
+-      pv->x       = *vertex++;
+-      /* Y-flip. Vulkan is top-left clip space */
+-      pv->y       = 1.0f - (*vertex++);
++      if (turned)
++      {
++         /* draw->y is bottom-up, as is the vertex's own y */
++         float vx = *vertex++;
++         float vy = *vertex++;
++         pv->x    = (draw->x + vx * draw->width) / (float)video_width;
++         pv->y    = 1.0f - (draw->y + vy * draw->height) / (float)video_height;
++      }
++      else
++      {
++         pv->x    = *vertex++;
++         /* Y-flip. Vulkan is top-left clip space */
++         pv->y    = 1.0f - (*vertex++);
++      }
+       pv->tex_x   = *tex_coord++;
+       pv->tex_y   = *tex_coord++;
+       pv->color.r = *color++;
+@@ -1515,6 +1560,27 @@
+ {
+    vk_t *vk                          = (vk_t*)data;
+ 
++   if (vulkan_ui_turned() && video_width && video_height)
++   {
++      /* the rect is the landscape's (top-down pixels): its corners through mvp_menu to the swapchain's */
++      float ax, ay, bx, by, x0, y0, x1, y1;
++      float sw = vk->context->swapchain_width, sh = vk->context->swapchain_height;
++      vulkan_ui_map(vk, (float)x / video_width, (float)y / video_height, &ax, &ay);
++      vulkan_ui_map(vk, (float)(x + (int)width) / video_width, (float)(y + (int)height) / video_height, &bx, &by);
++      x0 = (ax < bx ? ax : bx) * sw;
++      x1 = (ax < bx ? bx : ax) * sw;
++      y0 = (ay < by ? ay : by) * sh;
++      y1 = (ay < by ? by : ay) * sh;
++      if (x0 < 0.0f) x0 = 0.0f;
++      if (y0 < 0.0f) y0 = 0.0f;
++      if (x1 > sw) x1 = sw;
++      if (y1 > sh) y1 = sh;
++      x      = (int)roundf(x0);
++      y      = (int)roundf(y0);
++      width  = x1 > x0 ? (unsigned)roundf(x1 - x0) : 0;
++      height = y1 > y0 ? (unsigned)roundf(y1 - y0) : 0;
++   }
++
+    vk->tracker.scissor.offset.x      = x;
+    vk->tracker.scissor.offset.y      = y;
+    vk->tracker.scissor.extent.width  = width;
+@@ -1802,7 +1868,8 @@
+    call.pipeline     = vk->pipelines.font;
+    call.texture      = &font->texture_optimal;
+    call.sampler      = vk->samplers.mipmap_linear;
+-   call.uniform      = &vk->mvp;
++   /* turned, the text is laid out over the landscape (vulkan_font_render_msg) and turned with the menu */
++   call.uniform      = vulkan_ui_turned() ? &vk->mvp_menu : &vk->mvp;
+    call.uniform_size = sizeof(vk->mvp);
+    call.vbo          = &font->range;
+    call.vertices     = font->vertices;
+@@ -1878,7 +1945,8 @@
+ {
+    float color[4];
+    int drop_x, drop_y;
+-   bool full_screen;
++   bool full_screen, turned_vp;
++   unsigned saved_w = 0, saved_h = 0;
+    size_t max_glyphs;
+    unsigned width, height;
+    enum text_alignment text_align;
+@@ -1937,6 +2005,10 @@
+       color[3]    = 1.0f;
+    }
+ 
++   turned_vp = vulkan_ui_turned();
++   if (turned_vp)
++      full_screen = true; /* the whole swapchain, turned by mvp_menu at the flush */
++
+    vulkan_set_viewport(vk, width, height, full_screen, false);
+ 
+    max_glyphs = strlen(msg);
+@@ -1950,6 +2022,15 @@
+    font->vertices   = 0;
+    font->pv         = (struct vk_vertex*)font->range.data;
+ 
++   /* the glyphs are placed in the landscape's pixels: its width is the swapchain's height */
++   if (turned_vp)
++   {
++      saved_w        = vk->vp.width;
++      saved_h        = vk->vp.height;
++      vk->vp.width   = saved_h;
++      vk->vp.height  = saved_w;
++   }
++
+    if (drop_x || drop_y)
+    {
+       float color_dark[4];
+@@ -1965,6 +2046,11 @@
+ 
+    vulkan_font_render_message(vk, font, msg, scale,
+          color, x, y, text_align);
++   if (turned_vp)
++   {
++      vk->vp.width   = saved_w;
++      vk->vp.height  = saved_h;
++   }
+    vulkan_font_flush(vk, font);
+ }
+ 
+diff --color -ruN pa/gfx/gfx_widgets.c pb/gfx/gfx_widgets.c
+--- a/gfx/gfx_widgets.c
++++ b/gfx/gfx_widgets.c
+@@ -905,6 +905,15 @@
+    }
+ }
+ 
++/* The Vulkan driver turns its interface with the panel for an odd user video_rotation (patches 0010/0011):
++ * the widgets are then laid out in the landscape the user is looking at, the swapchain's size swapped, and the
++ * driver maps them onto the swapchain. The other drivers do not turn widgets, so they keep the swapchain's size. */
++static bool gfx_widgets_turned(settings_t *settings)
++{
++   return settings && (settings->uints.video_rotation & 1)
++      && string_is_equal(settings->arrays.video_driver, "vulkan");
++}
++
+ void gfx_widgets_iterate(
+       void *data_disp,
+       void *settings_data,
+@@ -925,6 +934,12 @@
+    volatile float scale_factor      = 0.0f;
+    gfx_display_t *p_disp            = (gfx_display_t*)data_disp;
+    settings_t *settings             = (settings_t*)settings_data;
++   if (gfx_widgets_turned(settings))
++   {
++      unsigned w = width;
++      width      = height;
++      height     = w;
++   }
+ #ifdef HAVE_XMB
+    enum menu_driver_id_type type    = p_disp->menu_driver_id;
+    if (type == MENU_DRIVER_ID_XMB)
+@@ -1728,8 +1743,28 @@
+    }
+ }
+ 
++static void gfx_widgets_frame_laid_out(void *data);
++
+ void gfx_widgets_frame(void *data)
+ {
++   video_frame_info_t *video_info = (video_frame_info_t*)data;
++   unsigned w;
++   if (!video_info || !gfx_widgets_turned(config_get_ptr()))
++   {
++      gfx_widgets_frame_laid_out(data);
++      return;
++   }
++   /* every widget reads its canvas from video_info: the landscape for this frame, then put back */
++   w                  = video_info->width;
++   video_info->width  = video_info->height;
++   video_info->height = w;
++   gfx_widgets_frame_laid_out(data);
++   video_info->height = video_info->width;
++   video_info->width  = w;
++}
++
++static void gfx_widgets_frame_laid_out(void *data)
++{
+    size_t i;
+    video_frame_info_t *video_info   = (video_frame_info_t*)data;
+    gfx_display_t            *p_disp = (gfx_display_t*)video_info->disp_userdata;
