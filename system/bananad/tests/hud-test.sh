@@ -43,6 +43,6 @@ has "$HERE/../../ui/src/main.cpp" 'unlink("/run/banana/hud-live");'
 # a language change must reach the daemon now, not at the next boot: the reload block re-reads it, and the menu pokes
 [ "$(grep -c 'load_lang();' "$HERE/bananad.c")" -ge 2 ] \
 	|| { echo "FAIL: the reload block does not call load_lang()" >&2; fail=1; }
-has "$HERE/../../ui/src/settings.cpp" 'if (it.key == "lang") { i18nSet(it.values[at]); poke("bananad"); return CHANGED; }'
+has "$HERE/../../ui/src/settings.cpp" 'if (it.key == "lang") { i18nSet(it.values[at]); poke("bananad"); return THEME; }'
 [ "$fail" = 0 ] && echo "hud-test: all checks passed"
 exit "$fail"

@@ -236,6 +236,18 @@
   ". Left and right pick yours; Finish again to keep UTC.": ". Links und rechts wählen deine; noch einmal Fertig, um UTC zu behalten.",
   "The account's name, as on retroachievements.org.": "Der Kontoname wie auf retroachievements.org.",
   "Plug in the charger (or the USB cable) first: a scrape runs a long time and must not flatten the battery.": "Erst das Ladegerät (oder USB-Kabel) anschließen: Das Laden der Cover dauert lange und darf den Akku nicht leeren.",
-  "Wi-Fi is off: switch it on in Network first.": "WLAN ist aus: erst unter Netzwerk einschalten."
+  "Wi-Fi is off: switch it on in Network first.": "WLAN ist aus: erst unter Netzwerk einschalten.",
+  "Time": "Zeit",
+  "Batt": "Akku",
+  "Closed": "Geschlossen",
+  "Last played: {sys.resumeTitle}": "Zuletzt gespielt: {sys.resumeTitle}",
+  "Last {game.last}": "Zuletzt {game.last}",
+  "Last: {sys.resumeTitle}": "Zuletzt: {sys.resumeTitle}",
+  "No achievements yet": "Noch keine Erfolge",
+  "Receipt": "Beleg",
+  "Starting {game.title}": "{game.title} startet",
+  "Systems": "Systeme",
+  "{game.plays} plays  {game.time}": "{game.plays} Spiele  {game.time}",
+  "{page.achWon} / {page.achCount} achievements": "{page.achWon} / {page.achCount} Erfolge"
 }
 }

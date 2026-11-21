@@ -68,9 +68,9 @@
   "screens": {
     "all": { "top": [
       // the era's HUD: yellow labels, white values, outlined in black
-      { "type": "text", "size": 12, "x": 8, "y": 6, "text": "TIME", "color": "=label", "outline": { "width": 1, "color": "=void" } },
+      { "type": "text", "size": 12, "x": 8, "y": 6, "text": "Time", "upper": true, "color": "=label", "outline": { "width": 1, "color": "=void" } },
       { "type": "text", "size": 12, "x": 40, "y": 6, "text": "{clock}", "color": "=ink", "outline": { "width": 1, "color": "=void" } },
-      { "type": "text", "size": 12, "right": 34, "y": 6, "w": 30, "align": "right", "text": "BATT", "color": "=label",
+      { "type": "text", "size": 12, "right": 34, "y": 6, "w": 30, "align": "right", "text": "Batt", "upper": true, "color": "=label",
         "outline": { "width": 1, "color": "=void" }, "visible": "=battery >= 0" },
       { "type": "text", "size": 12, "right": 6, "y": 6, "w": 26, "align": "right", "text": "{battery}%",
         "color": "=battery < 20 && !charging ? '#ff2400' : charging ? cyan : ink", "outline": { "width": 1, "color": "=void" },
@@ -231,9 +231,9 @@
         { "type": "text", "size": 12, "x": 8, "y": 160, "w": 294, "text": "{page.desc}", "color": "=dim", "wrap": true, "maxLines": 2,
           "visible": "=page.desc != ''" },
 
-        { "type": "text", "size": 12, "x": 8, "y": 188, "w": 294, "text": "{page.achWon} / {page.achCount} ACHIEVEMENTS", "color": "=label",
+        { "type": "text", "size": 12, "x": 8, "y": 188, "w": 294, "text": "{page.achWon} / {page.achCount} achievements", "upper": true, "color": "=label",
           "visible": "=page.achCount > 0" },
-        { "type": "text", "size": 12, "x": 8, "y": 188, "w": 294, "text": "NO ACHIEVEMENTS YET", "color": "=dim", "visible": "=page.achCount == 0" },
+        { "type": "text", "size": 12, "x": 8, "y": 188, "w": 294, "text": "No achievements yet", "upper": true, "color": "=dim", "visible": "=page.achCount == 0" },
         { "type": "list", "source": "achievements", "direction": "column", "x": 8, "y": 201, "w": 294, "h": 52, "itemH": 13, "gap": 0,
           "scrollMode": "edge", "clip": true,
           "item": { "type": "group", "w": 294, "h": 13, "children": [

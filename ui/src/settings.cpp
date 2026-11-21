@@ -898,7 +898,7 @@ namespace banana
 			setVariant(it.values[at]);
 			return THEME;
 		}
-		if (it.key == "lang") { i18nSet(it.values[at]); poke("bananad"); return CHANGED; }
+		if (it.key == "lang") { i18nSet(it.values[at]); poke("bananad"); return THEME; }
 		return CHANGED;
 	}
 

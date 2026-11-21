@@ -1,4 +1,5 @@
 #include "layout.h"
+#include "i18n.h"
 #include "library.h"
 #include <algorithm>
 #include <cmath>
@@ -151,7 +152,8 @@ namespace banana
 			case JVal::ARR: for (size_t k = 0; k < v.arr.size(); k++) flatten(prefix + "." + std::to_string(k), *v.arr[k], out, where); break;
 			case JVal::STR:
 			{
-				Prop p = Prop::parse(v.s);
+				// a text node's template is the catalog key (placeholders intact); "=expr" text is code and stays as written
+				Prop p = Prop::parse(prefix == "text" && !v.s.empty() && v.s[0] != '=' ? tr(v.s) : v.s);
 				if (!p.error.empty()) err(where + "." + prefix + ": " + p.error);
 				out[prefix] = p;
 				break;

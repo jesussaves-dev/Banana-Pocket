@@ -236,6 +236,18 @@
   ". Left and right pick yours; Finish again to keep UTC.": ". Izquierda y derecha eligen la tuya; Terminar otra vez para dejar UTC.",
   "The account's name, as on retroachievements.org.": "El nombre de la cuenta, como en retroachievements.org.",
   "Plug in the charger (or the USB cable) first: a scrape runs a long time and must not flatten the battery.": "Conecta antes el cargador (o el cable USB): una descarga de carátulas dura mucho y no debe vaciar la batería.",
-  "Wi-Fi is off: switch it on in Network first.": "El Wi-Fi está apagado: actívalo antes en Red."
+  "Wi-Fi is off: switch it on in Network first.": "El Wi-Fi está apagado: actívalo antes en Red.",
+  "Time": "Hora",
+  "Batt": "Bat",
+  "Closed": "Cerrado",
+  "Last played: {sys.resumeTitle}": "Última partida: {sys.resumeTitle}",
+  "Last {game.last}": "Última vez {game.last}",
+  "Last: {sys.resumeTitle}": "Última: {sys.resumeTitle}",
+  "No achievements yet": "Aún no hay logros",
+  "Receipt": "Recibo",
+  "Starting {game.title}": "Iniciando {game.title}",
+  "Systems": "Sistemas",
+  "{game.plays} plays  {game.time}": "{game.plays} partidas  {game.time}",
+  "{page.achWon} / {page.achCount} achievements": "{page.achWon} / {page.achCount} logros"
 }
 }

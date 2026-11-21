@@ -8,7 +8,30 @@
 #   - every en key must still appear in ui/src (reworded English would otherwise silently fall back forever);
 #   - a missing translation is coverage, not a failure (the menu falls back to English);
 #   - a catalog must have a "name" and string values, or the row and the loader would show nothing.
-import glob, json, os, re, sys
+import glob, importlib.util, json, os, re, sys
+
+def theme_texts(root):
+    """Every translatable "text" literal in the shipped themes: not "=expr" code, and with some prose outside its {placeholders}."""
+    spec = importlib.util.spec_from_file_location("check_themes", os.path.join(root, "tools", "check-themes.py"))
+    ct = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ct)
+    out = {}
+    def walk(o, f):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k == "text" and isinstance(v, str) and not v.startswith("=") and re.search(r"[A-Za-z]{2}", re.sub(r"\{[^}]*\}", "", v)):
+                    out.setdefault(v, f)
+                walk(v, f)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v, f)
+    for f in glob.glob(os.path.join(root, "system", "rootfs", "usr", "share", "banana", "themes", "**", "*.json"), recursive=True):
+        try:
+            with open(f, encoding="utf-8") as fh:
+                walk(json.loads(ct.strip_comments(fh.read())), os.path.basename(f))
+        except ValueError:
+            pass    # check-themes reports unparsable themes
+    return out
 
 def load(path):
     with open(path, encoding="utf-8") as f:
@@ -22,6 +45,7 @@ def main(argv):
     if not files:
         print("check-lang: no catalogs in %s" % langdir)
         return 2
+    themes = theme_texts(root)
     errors, catalogs = [], {}
     for path in files:
         code = os.path.splitext(os.path.basename(path))[0]
@@ -45,7 +69,7 @@ def main(argv):
     for k, v in en.items():
         if v != k:
             errors.append("en: %r maps to %r; en.json must map each key to itself" % (k, v))
-        if k not in src and k.replace('"', '\\"') not in src:
+        if k not in src and k.replace('"', '\\"') not in src and k not in themes:
             errors.append("en: %r is not in ui/src any more (reworded? update the catalogs)" % k)
     for code, (name, strings) in sorted(catalogs.items()):
         if code == "en":
@@ -62,6 +86,9 @@ def main(argv):
     for lit in sorted(set(re.findall(r'(?<![A-Za-z0-9_])tr\(\s*"((?:[^"\\]|\\.)*)"', src))):
         if lit not in en:
             errors.append("ui/src: tr(\"%s\") is not a key in en.json" % lit)
+    for lit, f in sorted(themes.items()):
+        if lit not in en:
+            errors.append("themes/%s: text \"%s\" is not a key in en.json (layout runs a text node through tr())" % (f, lit))
     for e in errors:
         print("FAIL " + e)
     print("check-lang: %d catalog(s), %d problem(s)" % (len(catalogs), len(errors)))

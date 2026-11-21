@@ -245,6 +245,18 @@
   ". Left and right pick yours; Finish again to keep UTC.": ". Left and right pick yours; Finish again to keep UTC.",
   "The account's name, as on retroachievements.org.": "The account's name, as on retroachievements.org.",
   "Plug in the charger (or the USB cable) first: a scrape runs a long time and must not flatten the battery.": "Plug in the charger (or the USB cable) first: a scrape runs a long time and must not flatten the battery.",
-  "Wi-Fi is off: switch it on in Network first.": "Wi-Fi is off: switch it on in Network first."
+  "Wi-Fi is off: switch it on in Network first.": "Wi-Fi is off: switch it on in Network first.",
+  "Time": "Time",
+  "Batt": "Batt",
+  "Closed": "Closed",
+  "Last played: {sys.resumeTitle}": "Last played: {sys.resumeTitle}",
+  "Last {game.last}": "Last {game.last}",
+  "Last: {sys.resumeTitle}": "Last: {sys.resumeTitle}",
+  "No achievements yet": "No achievements yet",
+  "Receipt": "Receipt",
+  "Starting {game.title}": "Starting {game.title}",
+  "Systems": "Systems",
+  "{game.plays} plays  {game.time}": "{game.plays} plays  {game.time}",
+  "{page.achWon} / {page.achCount} achievements": "{page.achWon} / {page.achCount} achievements"
 }
 }

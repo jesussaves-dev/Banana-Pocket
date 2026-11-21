@@ -44,6 +44,13 @@ row's list in `ui/src/settings.cpp` (its values are the codes). A card catalog c
 offers; new codes come with an update. Plural forms, right-to-left scripts and a CJK font are not handled yet — Spanish
 and German needed none of that.
 
+## Theme text
+
+A theme's `text` literal goes through `tr()` before its `{placeholders}` are expanded, so the whole template is the catalog
+key (`"{game.plays} plays  {game.time}"`) and the placeholders stay intact. `tools/check-lang.py` requires every such
+literal in `en.json`. Cased variants share one key: write `"No achievements yet"` and add `"upper": true`. A user theme in
+`/data/banana/themes/` is translated too when its text matches a key. Changing the language reloads the theme.
+
 ## What is not translated yet
 
 - The menu's own chrome (home screen, splash, OSD) and the sub-pages of Settings (Network, Update, Setup, States).
