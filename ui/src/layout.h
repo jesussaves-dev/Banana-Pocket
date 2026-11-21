@@ -36,6 +36,7 @@ namespace banana
 		int gameIndex() const override { return mGame; }
 		bool press(Button b) override;
 		bool openPage() override;
+		void returnToPage() override { if (mFromPage) { mFromPage = false; openPage(); } }
 		void jumpTo(int game) override;
 		bool touch(float x, float y, bool down) override;
 		bool touchMove(float x, float y) override;
@@ -60,6 +61,8 @@ namespace banana
 		View mView = Menu::HOME;
 		int mSys = 0, mGame = 0;
 		bool mDown = false;
+		bool mFromPage = false;	// the running game was launched from its page
+
 		float downX = 0, downY = 0;
 		std::function<void()> mQueued, mFinished;
 		std::function<void(const std::string&)> mLog;

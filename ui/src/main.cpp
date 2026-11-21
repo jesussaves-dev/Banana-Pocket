@@ -1065,6 +1065,7 @@ int main(int argc, char** argv)
 		}
 		ui->dataChanged();
 		ui->setLibrary(lib.currentShelf(), game);
+		ui->returnToPage();	// the page it was started from, with the new play time and unlocks
 		sound.setBgm(settings["bgm"] != "off");	// the ambient loop comes back with the menu
 		sound.warm();				// the game handed the DSP frontend back: have it open before the next press
 		// a game that ended because it was quit goes back to a menu the next boot should show too; one a shutdown

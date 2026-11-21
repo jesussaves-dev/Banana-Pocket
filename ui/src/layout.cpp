@@ -1581,6 +1581,7 @@ namespace banana
 		};
 		auto launch = [&](int game)
 		{
+			mFromPage = mView == Menu::GAME;
 			d->launchGame = game;
 			d->launchAt = d->now;
 			d->cuesDone = 0;
