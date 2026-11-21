@@ -23,6 +23,11 @@ namespace banana
 		// implementation calls glFinish or the direct path has no GPU read); the caller commits fb and then calls
 		// presented() or abandon(). The source buffer is still referenced by the caller.
 		virtual bool render(ClientBuffer& b, uint32_t& fb, std::string& err) = 0;
+		// A pre-rotated client frame (ClientBuffer::upright): the client's own buffer as the scanout framebuffer, no
+		// GPU pass. On true the caller commits fb and then calls presentedScanout() or abandon(); fb lives until
+		// forget(). False (a wl_shm source, a format the plane refuses) leaves render() to draw it unturned.
+		virtual bool scanout(ClientBuffer& b, uint32_t& fb, std::string& err) { (void)b; (void)fb; err = "no scanout"; return false; }
+		virtual void presentedScanout() { presented(); }
 		// 3F: the sync file for the scanout buffer's GPU writes (owned by the caller, close it after the commit),
 		// -1 when render() completed synchronously (glFinish) or the path has no GPU writes. Take once per render.
 		virtual int takeFenceFd() { return -1; }
@@ -50,6 +55,7 @@ namespace banana
 		bool start(std::string& err) override;
 		void stop() override {}
 		bool render(ClientBuffer& b, uint32_t& fb, std::string& err) override;
+		bool scanout(ClientBuffer& b, uint32_t& fb, std::string& err) override { return render(b, fb, err); }
 		void presented() override {}
 		void abandon() override {}
 		void flipDone() override {}

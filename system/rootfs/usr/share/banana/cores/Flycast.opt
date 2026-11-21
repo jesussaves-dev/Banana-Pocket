@@ -1,12 +1,12 @@
 # Banana: Flycast's defaults for the Retroid Pocket Classic: written once into
 # /data/retroarch/config/Flycast/Flycast.opt by run-retroarch (its marker is /data/retroarch/.banana-dreamcast-1).
-# A change made in RetroArch's own Core Options afterwards is kept. The values are ROCKNIX's for this SoC's
-# flycast-lr: native resolution and a native texture upscale (the a613 through freedreno GLES is the bottleneck for
-# Dreamcast: 1280x960 stuttered badly in Crazy Taxi on this handheld where 640x480 ran smooth; the picture still fills
-# the screen, RetroArch scales it up because integer scale is off for this core, run-retroarch), the fast alpha sorting, no anisotropic
-# filtering, the renderer on its own thread, auto skip frame (Normal: a frame the a613 cannot draw is dropped rather
-# than stalling the emulation thread, which measured as 55-60 fps and choppy sound), and a real BIOS (HLE BIOS off;
-# put dc_boot.bin and dc_flash.bin in banana/bios). Delete the marker to write these again.
+# A change made in RetroArch's own Core Options afterwards is kept. Mostly ROCKNIX's values for this SoC's flycast-lr:
+# twice the native resolution (1280x960: Turnip renders it straight to memory and banana-ui scans RetroArch's
+# pre-turned frame out as it is, so Crazy Taxi holds 60 fps; on freedreno GLES behind a rotate pass it stuttered, which
+# is why this used to be 640x480), a native texture upscale, the fast alpha sorting, no anisotropic filtering, the
+# renderer on its own thread, auto skip frame (Normal: a frame the a613 cannot draw is dropped rather than stalling the
+# emulation thread), and a real BIOS (HLE BIOS off; put dc_boot.bin and dc_flash.bin in banana/bios). Delete the
+# marker to write these again.
 flycast_allow_service_buttons = "disabled"
 flycast_alpha_sorting = "per-strip (fast, least accurate)"
 flycast_analog_stick_deadzone = "15%"
@@ -31,7 +31,7 @@ flycast_force_wince = "disabled"
 flycast_frame_skipping = "disabled"
 flycast_gdrom_fast_loading = "disabled"
 flycast_hle_bios = "disabled"
-flycast_internal_resolution = "640x480"
+flycast_internal_resolution = "1280x960"
 flycast_language = "English"
 flycast_mipmapping = "enabled"
 flycast_native_depth_interpolation = "disabled"

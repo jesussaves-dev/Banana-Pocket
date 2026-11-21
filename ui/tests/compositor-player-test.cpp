@@ -31,7 +31,7 @@ static int rendered = 0, menus = 0;
 // ---- the faked halves ---------------------------------------------------------------------------------------------
 namespace banana
 {
-	bool Display::presentGame(uint32_t, uint32_t, uint32_t, uint32_t, int) { pending = 1; return true; }
+	bool Display::presentGame(uint32_t, uint32_t, uint32_t, uint32_t, int, uint32_t, uint32_t, uint32_t, uint32_t) { pending = 1; return true; }
 	bool Display::showMenu() { menus++; return true; }
 	void Display::handleEvents() { pending = 0; }
 	bool Display::blank() { return true; }
@@ -52,6 +52,8 @@ namespace banana
 	void EglPresenter::flipDone() {}
 	void EglPresenter::detached() {}
 	void EglPresenter::forget(ClientBuffer&) {}
+	bool EglPresenter::scanout(ClientBuffer&, uint32_t&, std::string& err) { err = "no scanout"; return false; }
+	void EglPresenter::presentedScanout() {}
 	bool EglPresenter::render(ClientBuffer& b, uint32_t& fb, std::string& err)
 	{
 		if (b.shmDirty)

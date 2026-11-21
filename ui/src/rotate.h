@@ -41,6 +41,26 @@ namespace banana
 		y = hx + (hw - vh) / 2;
 	}
 
+	// A pre-rotated (panel-oriented) w x h source in the same hole: the hole's own target rectangle, and the source
+	// letterboxed into it without a turn. Same coordinates as fitRotatedHole.
+	inline void fitUprightHole(uint32_t w, uint32_t h, uint32_t W, uint32_t H, uint32_t hx, uint32_t hy, uint32_t hw, uint32_t hh,
+	                           uint32_t& x, uint32_t& y, uint32_t& vw, uint32_t& vh)
+	{
+		uint32_t rx, ry, rw, rh;
+		fitRotatedHole(hw, hh, W, H, hx, hy, hw, hh, rx, ry, rw, rh);	// the hole, turned: its target rectangle
+		vw = rw;
+		vh = rh;
+		if (w && h)
+		{
+			if ((uint64_t)w * rh > (uint64_t)h * rw) vh = (uint32_t)(((uint64_t)h * rw + w / 2) / w);
+			else vw = (uint32_t)(((uint64_t)w * rh + h / 2) / h);
+			if (!vw) vw = 1;
+			if (!vh) vh = 1;
+		}
+		x = rx + (rw - vw) / 2;
+		y = ry + (rh - vh) / 2;
+	}
+
 	// the same with no frame: the whole output is the hole
 	inline void fitRotated(uint32_t w, uint32_t h, uint32_t W, uint32_t H, uint32_t& x, uint32_t& y, uint32_t& vw, uint32_t& vh)
 	{
