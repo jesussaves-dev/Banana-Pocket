@@ -71,12 +71,17 @@ banana-ui: $(SRC) $(WL_O) $(WL_H) $(wildcard src/*.h src/wayland/*.xml)
 banana-scrape: src/scrape.cpp
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $< -lpthread -ldl
 
+# the app store's helper: fetch, verify (size, sha256, manifest, minBanana) and install an app
+banana-store: src/store.cpp src/json.cpp
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ -ldl
+
 host:
 	$(MAKE) ALSA=0 banana-ui
 
 install:
 	install -D -m 755 banana-ui $(DESTDIR)/usr/bin/banana-ui
 	install -D -m 755 banana-scrape $(DESTDIR)/usr/bin/banana-scrape
+	install -D -m 755 banana-store $(DESTDIR)/usr/bin/banana-store
 	# (the folders' contents: "cp -r dir dst" into a dst that is there from a build before nests a copy in it, and
 	# the files in use were never replaced)
 	mkdir -p $(DESTDIR)/usr/share/banana/rnds $(DESTDIR)/usr/share/banana/splash $(DESTDIR)/usr/share/banana/banana $(DESTDIR)/usr/share/banana/lang
@@ -86,7 +91,7 @@ install:
 	cp -r assets/banana/. $(DESTDIR)/usr/share/banana/banana/	# (fonts/: Inter, the layout themes' "inter" faces)
 
 clean:
-	rm -f banana-ui banana-scrape
+	rm -f banana-ui banana-scrape banana-store
 	rm -rf build
 
 .PHONY: host install clean

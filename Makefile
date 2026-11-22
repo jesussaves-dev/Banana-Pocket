@@ -119,6 +119,7 @@ test: ui bananad probe check-kver
 	system/tests/run-backup-test.sh
 	system/tests/sound-config-test.sh
 	system/tests/web-test.sh
+	system/tests/store-test.sh
 	system/bananad/tests/hud-test.sh
 	ui/tests/run.sh
 

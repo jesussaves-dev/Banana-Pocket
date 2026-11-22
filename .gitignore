@@ -2,6 +2,7 @@
 /.buildroot/
 /ui/banana-ui
 /ui/banana-scrape
+/ui/banana-store
 /ui/tests/out/
 /system/bananad/bananad
 /app/bananatube/banana-tube

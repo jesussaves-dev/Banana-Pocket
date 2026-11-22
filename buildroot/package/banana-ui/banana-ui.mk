@@ -13,7 +13,7 @@ BANANA_UI_DEPENDENCIES = freetype libdrm alsa-lib zlib host-pkgconf host-wayland
 
 define BANANA_UI_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) -B -C $(@D) CXX="$(TARGET_CXX)" PKG_CONFIG="$(PKG_CONFIG_HOST_BINARY)" \
-		CXXFLAGS="$(TARGET_CXXFLAGS) -O2" LDFLAGS="$(TARGET_LDFLAGS)" banana-ui banana-scrape
+		CXXFLAGS="$(TARGET_CXXFLAGS) -O2" LDFLAGS="$(TARGET_LDFLAGS)" banana-ui banana-scrape banana-store
 endef
 
 define BANANA_UI_INSTALL_TARGET_CMDS
