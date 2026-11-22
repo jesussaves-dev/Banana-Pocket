@@ -7,16 +7,21 @@ Linux host and two of its cores; the Banana side is only the package, the manife
 F left to Banana's quick menu) and audio work, at 60 fps with `POCKET_NO_VSYNC=1`. The quick menu's `menu_keys` rows are
 built but not yet checked on the unit. The image's SDL2 has no dummy video driver, so there is no headless run.
 
-## What is in the image
+## Where it lives
+
+PokeDaisy is a Store app (apps repo, `pokedaisy`), no longer in the image: the defconfig leaves
+`BR2_PACKAGE_POKEDAISY` off. The package stays in `buildroot/package/pokedaisy/` (pins upstream at `79bd00e`) so the
+Store tarball can be built from it. An install lives in `/data/apps/pokedaisy/`:
 
 | | |
 |---|---|
-| `buildroot/package/pokedaisy/` | `BR2_PACKAGE_POKEDAISY` (on in the RPC Classic defconfig). Pins upstream at `79bd00e`. |
-| `/usr/bin/pokedaisy-linux` | The SDL2 host. Needs only SDL2, libm and libc. |
-| `/usr/lib/pokedaisy/pokedaisy_gbc_libretro.so` | GB / GBC core (mGBA). |
-| `/usr/lib/pokedaisy/pokedaisy_gba_libretro.so` | GBA core (armGBA). |
-| `/usr/share/banana/apps/pokedaisy/` | `app.json`, the `PokeDaisy.app` marker, and upstream's `NOTICE`. |
-| `/usr/libexec/banana/run-pokedaisy` | The launcher (source: `system/rootfs/usr/libexec/banana/run-pokedaisy`). |
+| `pokedaisy-linux` | The SDL2 host. Needs only SDL2, libm and libc. |
+| `lib/pokedaisy_gbc_libretro.so`, `lib/pokedaisy_gba_libretro.so` | GB / GBC core (mGBA) and GBA core (armGBA). |
+| `app.json`, `PokeDaisy.app`, `LICENSE`, `NOTICE` | Manifest, marker and upstream's licence files. |
+| `run-pokedaisy` | The launcher (source: `app/pokedaisy/run-pokedaisy`). |
+
+To pack a release: add `BR2_PACKAGE_POKEDAISY=y` to a scratch copy of the defconfig (do not commit it), build with
+`make pokedaisy-retroid-pocket-classic`, then `tools/pack-pokedaisy.sh <version>` and `tools/store-entry.sh`.
 
 The DS core is not built.
 
@@ -29,8 +34,7 @@ zlib) as tarballs at the commits upstream pins, via `POKEDAISY_EXTRA_DOWNLOADS`,
 every version bump.
 
 ```
-make pokedaisy-retroid-pocket-classic     # the package alone
-make retroid-pocket-classic               # the image
+make pokedaisy-retroid-pocket-classic     # the package alone (needs the symbol on, see above)
 ```
 
 Bumping upstream means updating `POKEDAISY_VERSION` and the three submodule SHAs together; read them from upstream's
@@ -39,7 +43,7 @@ Bumping upstream means updating `POKEDAISY_VERSION` and the three submodule SHAs
 ## On the menu
 
 Like BananaTube (docs/BANANATUBE.md), it is an app, not a line in `systems.conf`: `banana-ui` scans
-`/usr/share/banana/apps` and shows a tile. `app.json` sets `perf: balanced` and accent `#ff7aa8`. The tile uses the
+`/data/apps` and shows a tile. `app.json` sets `perf: balanced` and accent `#ff7aa8`. The tile uses the
 default app icon until an override is added (docs/THEMES.md, docs/ICONS.md).
 
 ## Launch
@@ -48,7 +52,7 @@ default app icon until an override is added (docs/THEMES.md, docs/ICONS.md).
 `XDG_RUNTIME_DIR=/run/banana/wayland`), SDL video `wayland`, SDL audio `alsa` (PipeWire's `default`), and the
 `/etc/banana/sdl-pad.map` controller mapping. It sets:
 
-- `POCKET_CORE_DIR=/usr/lib/pokedaisy`
+- `POCKET_CORE_DIR=/data/apps/pokedaisy/lib`
 - `POCKET_FULLSCREEN=1`
 - `POCKET_ROM_DIRS=/data/roms/gba:/data/roms/gbc:/data/roms/gb`, the card folders of the `gba`, `gbc` and `gb` systems (a system's folder defaults to its id under `/data/roms`).
 

@@ -61,8 +61,6 @@ BR2_PACKAGE_RETROARCH=y
 # BananaTube: the YouTube client (an app on the menu's Apps shelf). It brings mpv (with ffmpeg) for playback and
 # yt-dlp for the search and for resolving a video (banana-tube passes mpv the direct stream URLs it gets).
 BR2_PACKAGE_BANANA_TUBE=y
-# PokeDaisy: GB / GBC / GBA frontend with a Pokemon companion (an app on the Apps shelf).
-BR2_PACKAGE_POKEDAISY=y
 BR2_PACKAGE_MPV=y
 BR2_PACKAGE_FFMPEG=y
 BR2_PACKAGE_YT_DLP=y
