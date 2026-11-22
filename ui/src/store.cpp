@@ -434,7 +434,7 @@ namespace
 
 int main(int argc, char** argv)
 {
-	INDEX_URL = env("BANANA_STORE_INDEX", "https://jesussaves-dev.github.io/Banana-Pocket/store/index.json");
+	INDEX_URL = env("BANANA_STORE_INDEX", "https://jesussaves-dev.github.io/Banana-Pocket-Apps/index.json");
 	APPS = env("BANANA_APPS", "/data/apps");
 	APPDATA = env("BANANA_APPDATA", "/data/banana/appdata");
 	CACHE = env("BANANA_CACHE", "/data/banana/cache");

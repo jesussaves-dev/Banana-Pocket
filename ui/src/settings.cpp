@@ -2742,6 +2742,7 @@ namespace banana
 	void Settings::buildStoreActs()
 	{
 		storeActs.clear();
+		actSel = 0;
 		ssel2 = std::min(ssel2, std::max(0, (int)storeApps.size() - 1));
 		if (storeApps.empty()) return;
 		const StoreApp& a = storeApps[ssel2];

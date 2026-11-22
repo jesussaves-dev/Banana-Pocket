@@ -689,6 +689,9 @@ namespace banana
 
 	void Library::scan()
 	{
+		// the app folders are read again too: one the Store installed, updated or removed is seen without a restart
+		defs.erase(std::remove_if(defs.begin(), defs.end(), [](const SystemDef& d) { return d.app; }), defs.end());
+		scanApps();
 		loadState();
 		shelves.clear();
 		appShelves.clear();
