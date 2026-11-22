@@ -47,7 +47,6 @@ extern "C" {
 
 static volatile sig_atomic_t g_stop = 0;
 static void onStopSignal(int) { g_stop = 1; }
-
 namespace
 {
 	const int RATE = 48000;
@@ -577,6 +576,22 @@ namespace
 			if (reopen) openTrack(pp, pos());
 			cv.notify_all();
 		}
+		bool dead() const { return dev && SDL_GetAudioDeviceStatus(dev) == SDL_AUDIO_STOPPED; }
+		// after a suspend: close the dead PCM and open a new one, keeping the paused state; false until the sink is back
+		bool reopen()
+		{
+			if (access("/usr/libexec/banana/sound-server", X_OK) == 0 && access("/run/banana/sound-ready", F_OK) != 0) return false;
+			SDL_AudioSpec want, have;
+			SDL_zero(want);
+			want.freq = RATE; want.format = AUDIO_S16SYS; want.channels = 2;
+			want.samples = 4096;
+			want.callback = &Engine::callback; want.userdata = this;
+			if (dev) { SDL_CloseAudioDevice(dev); dev = 0; }
+			dev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+			if (!dev) return false;
+			SDL_PauseAudioDevice(dev, devPaused ? 1 : 0);
+			return true;
+		}
 		std::string takeFailed() { std::lock_guard<std::mutex> lk(m); return failedPath; }
 		double pos()
 		{
@@ -778,6 +793,7 @@ namespace
 
 		Engine eng;
 		bool audioOk = false;
+		double reopenAt = 0;	// set when the device died (a suspend): retry opening the sound device from then on, every 100 ms
 		std::vector<Track> queue, queueOrig;
 		int qi = -1;
 		bool shuffle = false;
@@ -1943,10 +1959,18 @@ namespace
 			while (!quit && !g_stop)
 			{
 				double now = nowSec();
-				int timeout = screenOff ? 400 : animating() ? 30 : 250;
+				int timeout = reopenAt ? 50 : screenOff ? 400 : animating() ? 30 : 250;
 				SDL_Event e;
 				if (SDL_WaitEventTimeout(&e, timeout)) { handle(e); while (SDL_PollEvent(&e)) handle(e); }
 				now = nowSec();
+				// a suspend kills the sound server's stream under us (run-jukebox puts the player in its own session, so
+				// bananad's SIGSTOP/SIGCONT never reach it): SDL's ALSA write fails and the device goes STOPPED for good
+				if (audioOk && !reopenAt && eng.dead()) { reopenAt = now; logLine("audio device lost, reopening"); }
+				if (reopenAt && now >= reopenAt)
+				{
+					if (eng.reopen()) { reopenAt = 0; logLine("audio reopened after the wake"); }
+					else reopenAt = now + 0.1;
+				}
 				tick(now);
 				if (screenOff) continue;
 				if (qi >= 0 && (int)eng.pos() != lastSecDrawn && (playing || screen == Screen::NOW)) dirty = true;
