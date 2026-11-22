@@ -1,6 +1,6 @@
 #!/bin/sh
 # Print one index.json entry for a release tarball: tools/store-entry.sh <tarball> <url> <minBanana> <version>
-# The tarball holds the app folder's contents (app.json at its top). Paste the output into site/store/index.json.
+# The tarball holds the app folder's contents (app.json at its top). Paste the output into the index.json of the Banana-Pocket-Apps repo.
 set -e
 [ $# -eq 4 ] || { echo "usage: $0 <tarball> <url> <minBanana> <version>" >&2; exit 2; }
 t=$1

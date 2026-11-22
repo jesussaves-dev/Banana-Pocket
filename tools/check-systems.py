@@ -153,6 +153,10 @@ def main():
                 errors.append("app %s: run has no %%ROM%%: %s" % (app, run))
             prog = run.split()[0]
             fs = os.path.join(ROOTFS, prog.lstrip("/"))
+            # a Store app installs to /data/apps/<id>/ (its tarball ships the launcher from app/<id>/), not the rootfs
+            pre = "/data/apps/%s/" % app
+            if prog.startswith(pre):
+                fs = os.path.join(apps_dir, app, prog[len(pre):])
             if not (os.path.isfile(fs) and os.access(fs, os.X_OK)):
                 errors.append("app %s: launcher missing or not executable: %s" % (app, prog))
                 continue

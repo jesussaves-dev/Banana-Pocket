@@ -19,7 +19,7 @@ SCAN_EXT = (".md", ".html", ".c", ".h", ".cpp", ".py", ".sh", ".mk", ".in", ".co
 SCAN_DIRS = ("ui/src/", "system/", "tools/", "app/", "buildroot/package/", "site/", "docs/", ".github/")
 SKIP = ("docs/reports/", "ui/tests/golden/")
 # build outputs and local-only notes: named on purpose, never tracked
-ALLOW = ("ui/banana-ui", "ui/tests/out", "tools/drm-plane-probe", "tools/route-probe", "tools/rpc-gpu-probe",
+ALLOW = ("ui/banana-ui", "ui/tests/out", "app/jukebox/jukebox", "tools/drm-plane-probe", "tools/route-probe", "tools/rpc-gpu-probe",
          "docs/superpowers/", "output/",
          "app/src/main/res/")  # JorreFog/helios's tree, credited in THIRD_PARTY.md
 
