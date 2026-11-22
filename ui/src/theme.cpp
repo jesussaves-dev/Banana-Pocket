@@ -3,6 +3,7 @@
 #include "../third_party/stb_image.h"
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <dirent.h>
 #include <fstream>
@@ -349,10 +350,65 @@ namespace banana
 	static bool sCrisp = false;
 	bool themeCrisp() { return sCrisp; }
 
+	// What the apps outside banana-ui (BananaTube) read to look like the active theme: /run/banana/theme, key=value lines
+	// of the semantic palette, resolved here from whichever of colors.* / vars.* the theme has (a missing key = the
+	// reader's own default). BANANA_THEME_EXPORT points elsewhere (the headless test).
+	static std::string exportPath() { const char* e = getenv("BANANA_THEME_EXPORT"); return e && *e ? e : "/run/banana/theme"; }
+	static void exportTheme(const std::map<std::string, std::string>& kv, const std::string& base)
+	{
+		std::string path = exportPath();
+		auto get = [&](const std::string& k, uint32_t& out)
+		{
+			auto it = kv.find(k);
+			if (it == kv.end()) return false;
+			std::string v = it->second;
+			if (!v.empty() && v[0] == '=')	// one level of "=name" into vars
+			{
+				auto r = kv.find("vars." + v.substr(1));
+				if (r == kv.end()) return false;
+				v = r->second;
+			}
+			return parseColor(v, out);
+		};
+		auto pick = [&](std::initializer_list<const char*> keys, uint32_t& out)
+		{
+			for (const char* k : keys) if (get(k, out)) { out &= 0xffffff; return true; }
+			return false;
+		};
+		std::string style = kv.count("style") ? kv.at("style") : "classic";
+		uint32_t bg = 0, v;
+		if (!pick({ "colors.screenBg", "vars.bg", "vars.void", "vars.hudLo" }, bg)) return;	// plain Dark/Light: no palette
+		auto style_ink = style == "snes" ? "vars.paper" : "vars.ink";
+		struct Out { const char* name; uint32_t c; };
+		std::vector<Out> o;
+		o.push_back({ "bg", bg });
+		o.push_back({ "panel", pick({ "colors.panelBody", "vars.panel" }, v) ? v : mix(bg, 0xffffff, 0.05f) });
+		o.push_back({ "card", pick({ "colors.bubbleBody", "vars.card", "vars.tile" }, v) ? v : mix(bg, 0xffffff, 0.1f) });
+		o.push_back({ "line", pick({ "colors.line", "vars.line", "vars.dk" }, v) ? v : mix(bg, 0xffffff, 0.2f) });
+		o.push_back({ "edge", pick({ "colors.edge", "vars.edge", "vars.goldDeep", "vars.chrome3" }, v) ? v : mix(bg, 0xffffff, 0.45f) });
+		o.push_back({ "ink", pick({ "colors.ink", style_ink }, v) ? v : 0xffffff });
+		o.push_back({ "soft", pick({ "colors.muted", "vars.soft", "vars.paperLo", "vars.dim" }, v) ? v : mix(bg, 0xffffff, 0.65f) });
+		o.push_back({ "bezel", pick({ "vars.bezel" }, v) ? v : mix(bg, 0, 0.45f) });
+		o.push_back({ "ring", pick({ "vars.ring" }, v) ? v : mix(bg, 0xffffff, 0.08f) });
+		o.push_back({ "dot", pick({ "vars.dot" }, v) ? v : mix(bg, 0xffffff, 0.04f) });
+		o.push_back({ "gold", rnds::accent.base });
+		o.push_back({ "goldHi", pick({ "colors.slotOn", "vars.goldHi" }, v) && style != "genesis" ? v : mix(rnds::accent.base, 0xffffff, 0.4f) });
+		std::string tmp = path + ".tmp";
+		{
+			std::ofstream f(tmp);
+			if (!f) return;
+			f << "base=" << base << "\nstyle=" << style << "\ncrisp=" << (sCrisp ? 1 : 0) << "\n";
+			for (auto& x : o) { char b[32]; snprintf(b, sizeof b, "%s=#%06x\n", x.name, x.c & 0xffffff); f << b; }
+			if (!f.good()) return;
+		}
+		if (rename(tmp.c_str(), path.c_str()) != 0) remove(tmp.c_str());
+	}
+
 	std::string applyTheme(const std::string& value, const std::string& accentName, std::string* why)
 	{
 		rnds::themeColors.clear();
 		rnds::themeFiles = rnds::ThemeFiles();
+		remove(exportPath().c_str());	// (a theme without a palette leaves the apps their own)
 		sCrisp = false;	// (a plain Dark/Light, or a theme that can't be read, keeps the rounded boxes)
 		rnds::setAccent(accentName);
 		std::string path = themePath(value);
@@ -403,6 +459,7 @@ namespace banana
 				else { std::string p = themeFile(dir, e.second); if (!p.empty()) f.sounds[e.first.substr(7)] = p; }
 			}
 		}
+		exportTheme(kv, base);
 		return base;
 	}
 

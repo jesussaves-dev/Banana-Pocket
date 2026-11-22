@@ -53,6 +53,8 @@
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <fstream>
+#include <ctime>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -412,16 +414,49 @@ struct App
 		SDL_Color bg, bezel, ring, panel, card, line, edge, ink, soft, gold, goldHi, dot;
 		int bw;
 	};
+	// The active theme's palette: banana-ui exports it to /run/banana/theme (ui/src/theme.cpp exportTheme) whenever
+	// the theme is applied. A missing file or key leaves the Pocket colours; the file is re-read when it changes.
+	static int& skinGenRef() { static int g = 0; return g; }	// bumped when the palette file changed: the baked backdrop is stale
 	static Skin skin(int W)
 	{
 		int bw = std::max(2, W / 310);
-		return { { 0x17, 0x14, 0x0d, 255 }, { 0x0b, 0x09, 0x06, 255 }, { 0x34, 0x2c, 0x19, 255 },
+		Skin k = { { 0x17, 0x14, 0x0d, 255 }, { 0x0b, 0x09, 0x06, 255 }, { 0x34, 0x2c, 0x19, 255 },
 			{ 0x20, 0x1b, 0x11, 255 }, { 0x2a, 0x23, 0x15, 255 }, { 0x4a, 0x3d, 0x18, 255 },
 			{ 0x8c, 0x73, 0x28, 255 }, { 0xff, 0xef, 0xb2, 255 }, { 0xbf, 0xa9, 0x63, 255 },
 			{ 0xff, 0xd2, 0x1e, 255 }, { 0xff, 0xe8, 0x73, 255 }, { 0x24, 0x1f, 0x14, 255 }, bw };
+		const char* e = getenv("BANANA_THEME_EXPORT");
+		const char* path = e && *e ? e : "/run/banana/theme";
+		static Skin cached;
+		static struct timespec seen = { -1, 0 };
+		static bool have = false;
+		struct stat st;
+		bool there = !stat(path, &st);
+		struct timespec mt = there ? st.st_mtim : timespec { -2, 0 };
+		if (have && mt.tv_sec == seen.tv_sec && mt.tv_nsec == seen.tv_nsec) { cached.bw = bw; return cached; }
+		seen = mt;
+		have = true;
+		skinGenRef()++;
+		std::ifstream f(path);
+		std::string line;
+		while (std::getline(f, line))
+		{
+			size_t eq = line.find('=');
+			if (eq == std::string::npos || line.size() != eq + 8 || line[eq + 1] != '#') continue;
+			char* end = nullptr;
+			unsigned long v = strtoul(line.c_str() + eq + 2, &end, 16);
+			if (!end || *end) continue;
+			SDL_Color c = { (Uint8)(v >> 16), (Uint8)(v >> 8), (Uint8)v, 255 };
+			std::string key = line.substr(0, eq);
+			if (key == "bg") k.bg = c; else if (key == "bezel") k.bezel = c; else if (key == "ring") k.ring = c;
+			else if (key == "panel") k.panel = c; else if (key == "card") k.card = c; else if (key == "line") k.line = c;
+			else if (key == "edge") k.edge = c; else if (key == "ink") k.ink = c; else if (key == "soft") k.soft = c;
+			else if (key == "gold") k.gold = c; else if (key == "goldHi") k.goldHi = c; else if (key == "dot") k.dot = c;
+		}
+		cached = k;
+		return k;
 	}
 	SDL_Texture* backdrop = nullptr;	// the frame and dot grid, baked once per output size
-	int backdropW = 0, backdropH = 0;
+	int backdropW = 0, backdropH = 0, backdropGen = -1;
 	SDL_Texture* logo = nullptr;		// the OS banana mark beside the wordmark
 
 	Mode mode = Mode::KEYS;
@@ -1799,6 +1834,17 @@ struct App
 		nextShown = false;
 		if (captions && !it.local) capStart(it.id);
 		std::string url = urls[0];
+		// the OSD and captions wear the active theme (ink on the ground, the panel behind)
+		auto mpvHex = [](const char* opt, SDL_Color c)
+		{
+			char b[64];
+			snprintf(b, sizeof b, "--%s=#%02x%02x%02x", opt, c.r, c.g, c.b);
+			return std::string(b);
+		};
+		Skin themeSk = skin(1240);
+		std::string osdColor = mpvHex("osd-color", themeSk.ink), osdBorder = mpvHex("osd-border-color", themeSk.bg),
+			osdBack = mpvHex("osd-back-color", themeSk.panel), subColor = mpvHex("sub-color", themeSk.ink),
+			subBorder = mpvHex("sub-border-color", themeSk.bg);
 		const char* argv[] = {
 			"mpv",
 			"--no-config", "--no-terminal", "--input-default-bindings=no",
@@ -1816,11 +1862,11 @@ struct App
 			// libass here is built without fontconfig ("can't find selected font provider"), so the OSD needs the
 			// libass provider and an explicit fonts dir + family. Pixelify Sans is BananaOS's own face; mpv falls
 			// back to its default when the family is not installed.
-			"--osd-color=#ffefb2", "--osd-border-color=#17140d", "--osd-back-color=#201b11",
+			osdColor.c_str(), osdBorder.c_str(), osdBack.c_str(),
 			"--osd-font-provider=none", "--osd-fonts-dir=/usr/share/banana/rnds/fonts", "--osd-font=Pixelify Sans",
 			// captions arrive later, over IPC (capTick); the same face as the OSD, and libass needs the same help
 			"--sub-font-provider=none", "--sub-fonts-dir=/usr/share/banana/rnds/fonts", "--sub-font=Pixelify Sans",
-			"--sub-font-size=44", "--sub-color=#ffefb2", "--sub-border-color=#17140d", "--sub-auto=no",
+			"--sub-font-size=44", subColor.c_str(), subBorder.c_str(), "--sub-auto=no",
 			"--fullscreen", "--keep-open=no", "--force-window=yes",
 			"--msg-level=all=warn",
 		};
@@ -2897,7 +2943,7 @@ struct App
 	// The frame and dot grid never change: bake them into one texture so a dirty frame costs a single copy (A1).
 	void ensureBackdrop(int W, int H, const Skin& sk)
 	{
-		if (backdrop && W == backdropW && H == backdropH) return;
+		if (backdrop && W == backdropW && H == backdropH && backdropGen == skinGenRef()) return;
 		if (backdrop) { SDL_DestroyTexture(backdrop); backdrop = nullptr; }
 		SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ARGB8888);
 		if (!s) { logLine("no backdrop surface"); return; }
@@ -2926,6 +2972,7 @@ struct App
 		if (!backdrop) { logLine("no backdrop texture"); return; }
 		backdropW = W;
 		backdropH = H;
+		backdropGen = skinGenRef();
 	}
 	void loadLogo()
 	{
