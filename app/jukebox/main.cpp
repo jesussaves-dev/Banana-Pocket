@@ -810,6 +810,15 @@ namespace
 		Fft fft;
 		float bars[BANDS] = {}, peaks[BANDS] = {};
 		double lastFrame = 0;
+		bool animations = true;			// the selftest turns them off so its pictures are still
+		float vScroll = 0, vAScroll = 0;	// the eased positions that scroll / aScroll (whole rows) are chasing
+		int lastCtx = -1;
+		double marqT0 = 0;				// a long line waits, slides once to its end, waits, and snaps back; any key press restarts it
+		bool marqBusy = false;
+		Screen lastScreen = Screen::LIB;
+		SDL_Texture* xfTex = nullptr;	// the screen we just left, faded out over the new one
+		double xfT0 = 0;
+		bool xfActive = false;
 		int held[NBTN] = {};
 		double heldAt[NBTN] = {}, heldNext[NBTN] = {};
 		bool screenOff = false;
@@ -903,6 +912,24 @@ namespace
 			if (!t.t) return 0;
 			SDL_Rect d = { align == 1 ? x - t.w / 2 : align == 2 ? x - t.w : x, y, t.w, t.h };
 			SDL_RenderCopy(ren, t.t, nullptr, &d);
+			return t.h;
+		}
+		// A line that fits is drawn as is; a long one slides sideways once (with ellipsis only when animations are off).
+		int marquee(TTF_Font* f, const std::string& s, SDL_Color c, int x, int y, int w)
+		{
+			Tx t = text(f, s, c, 0, 0);
+			if (!t.t) return 0;
+			if (t.w <= w || !animations) return drawText(f, s, c, x, y, w);
+			double hold = 1.2, speed = u * 10, over = t.w - w, run = over / speed;
+			double tt = nowSec() - marqT0, cyc = hold + run + 1.0, off = 0;
+			if (tt < cyc) { marqBusy = true; off = tt < hold ? 0 : tt < hold + run ? (tt - hold) * speed : over; }
+			SDL_Rect clip = { x, y, w, t.h }, old = { 0, 0, 0, 0 };
+			bool had = SDL_RenderIsClipEnabled(ren) == SDL_TRUE;
+			if (had) { SDL_RenderGetClipRect(ren, &old); if (!SDL_IntersectRect(&clip, &old, &clip)) return t.h; }
+			SDL_RenderSetClipRect(ren, &clip);
+			SDL_Rect d = { x - (int)off, y, t.w, t.h };
+			SDL_RenderCopy(ren, t.t, nullptr, &d);
+			SDL_RenderSetClipRect(ren, had ? &old : nullptr);
 			return t.h;
 		}
 		TTF_Font* titleFont(const std::string& s) { return fontHas(fBig, s) ? fBig : iBig; }
@@ -1148,6 +1175,7 @@ namespace
 			CoverTex& c = cover(t.path, 512);
 			if (c.tex || c.none) palTarget = c.pal;
 			dirty = true;
+			marqT0 = nowSec();
 			prefetch();
 		}
 		// ---- gapless: tell the engine which song follows, and follow it when it gets there ----
@@ -1189,7 +1217,7 @@ namespace
 				lyrics = loadLyrics(cur.path);
 				CoverTex& c = cover(cur.path, 512);
 				if (c.tex || c.none) palTarget = c.pal;
-				dirty = true;
+				dirty = true; marqT0 = nowSec();
 				pfIdx = nextIdx();
 				saveState();
 			}
@@ -1325,13 +1353,14 @@ namespace
 				if (held[b] && now >= heldNext[b]) { heldNext[b] = now + 0.085; press((Btn)b, true); }
 			if (now > toastUntil && !toast.empty()) { toast.clear(); dirty = true; }
 		}
+		static bool closeCol(SDL_Color a, SDL_Color b) { return std::abs(a.r - b.r) <= 5 && std::abs(a.g - b.g) <= 5 && std::abs(a.b - b.b) <= 5; }
 		bool animating()
 		{
 			if (screenOff) return false;
 			if (playing && screen == Screen::NOW) return true;
-			if (eng.fading()) return true;
-			auto close = [](SDL_Color a, SDL_Color b) { return std::abs(a.r - b.r) + std::abs(a.g - b.g) + std::abs(a.b - b.b) < 6; };
-			if (!close(accA, palTarget.a) || !close(accB, palTarget.b)) return true;
+			if (eng.fading() || marqBusy || xfActive) return true;
+			if (std::fabs((float)scroll - vScroll) > 0.004f || std::fabs((float)aScroll - vAScroll) > 0.004f) return true;
+			if (!closeCol(accA, palTarget.a) || !closeCol(accB, palTarget.b)) return true;
 			for (int i = 0; i < BANDS; i++) if (bars[i] > 0.01f) return true;
 			return !toast.empty();
 		}
@@ -1353,6 +1382,7 @@ namespace
 		void press(Btn b, bool repeating = false)
 		{
 			dirty = true;
+			marqT0 = nowSec();
 			pollGapless();
 			if (b == BSELECT) { cycleSleep(); return; }
 			if (b == BX) { toggleShuffle(); return; }
@@ -1638,12 +1668,16 @@ namespace
 		{
 			int ts = tileSize(), gap = (int)(2 * u), x0 = cx + (int)(4 * u), rows = gridRows();
 			int total = albumCount();
-			for (int r = 0; r < rows; r++)
+			int base = (int)std::floor(vScroll);
+			float frac = vScroll - (float)base;
+			SDL_Rect gclip = { cx, gridTop() - (int)u, cw, rows * (ts + gap) + (int)u };
+			SDL_RenderSetClipRect(ren, &gclip);
+			for (int r = 0; r <= rows; r++)
 				for (int c = 0; c < gridCols(); c++)
 				{
-					int i = (scroll + r) * gridCols() + c;
+					int i = (base + r) * gridCols() + c;
 					if (i >= total) break;
-					int x = x0 + c * (ts + gap), y = gridTop() + r * (ts + gap);
+					int x = x0 + c * (ts + gap), y = gridTop() + (int)((r - frac) * (ts + gap));
 					bool on = i == sel;
 					if (i == 0)
 					{
@@ -1654,34 +1688,41 @@ namespace
 					else drawCover(lib->albums[(size_t)i - 1].artPath, 192, x, y, ts, accB, on);
 					if (on) frame(x - (int)(u * 0.6f), y - (int)(u * 0.6f), ts + (int)(u * 1.2f), ts + (int)(u * 1.2f), std::max(2, (int)(u * 0.6f)), CREAM);
 				}
+			SDL_RenderSetClipRect(ren, nullptr);
 			// the caption for the selected tile
 			int cy = gridTop() + rows * (ts + gap) + (int)(u * 0.5f);
-			if (sel == 0) { drawText(fMed, "Shuffle everything", CREAM, x0, cy, cw - (int)(u * 8)); drawText(fSmall, std::to_string(lib->tracks.size()) + " songs", mix(CREAM, INK, 0.35f), x0, cy + (int)(u * 4.3f)); }
+			if (sel == 0) { marquee(fMed, "Shuffle everything", CREAM, x0, cy, cw - (int)(u * 8)); drawText(fSmall, std::to_string(lib->tracks.size()) + " songs", mix(CREAM, INK, 0.35f), x0, cy + (int)(u * 4.3f)); }
 			else
 			{
 				const Album& a = lib->albums[(size_t)sel - 1];
-				drawText(titleFont(a.name) == fBig ? fMed : fMed, a.name, CREAM, x0, cy, cw - (int)(u * 8));
+				marquee(fMed, a.name, CREAM, x0, cy, cw - (int)(u * 8));
 				std::string sub = a.artist + (a.year ? ", " + std::to_string(a.year) : "") + ", " + std::to_string(a.tracks.size()) + (a.tracks.size() == 1 ? " song" : " songs");
-				drawText(fSmall, sub, mix(CREAM, INK, 0.3f), x0, cy + (int)(u * 4.3f), cw - (int)(u * 8));
+				marquee(fSmall, sub, mix(CREAM, INK, 0.3f), x0, cy + (int)(u * 4.3f), cw - (int)(u * 8));
 			}
 		}
 		void drawSongs()
 		{
 			int rh = songRowH(), rows = songRows(), x0 = cx + (int)(4 * u), w = cw - (int)(8 * u);
-			for (int r = 0; r < rows; r++)
+			int base = (int)std::floor(vScroll);
+			float frac = vScroll - (float)base;
+			SDL_Rect sclip = { cx, gridTop(), cw, rows * rh };
+			SDL_RenderSetClipRect(ren, &sclip);
+			for (int r = 0; r <= rows; r++)
 			{
-				int i = scroll + r;
+				int i = base + r;
 				if (i >= (int)lib->tracks.size()) break;
 				const Track& t = lib->tracks[(size_t)i];
-				int y = gridTop() + r * rh;
+				int y = gridTop() + (int)((r - frac) * rh);
 				bool on = i == sel, now = qi >= 0 && cur.path == t.path;
 				if (on) { fill(x0, y, w, rh - (int)(u * 0.5f), accA, 70); fill(x0, y, (int)(u * 0.7f), rh - (int)(u * 0.5f), accA); }
 				int tx = x0 + (int)(u * 2.2f);
 				if (now) triangle((float)(x0 + u * 1.0f), (float)(y + rh / 2 - u * 0.3f), u * 1.6f, accB);
-				drawText(fMed, t.title, CREAM, tx + (int)(u * 1.2f), y + (int)(u * 0.5f), w - (int)(u * 14));
+				if (on) marquee(fMed, t.title, CREAM, tx + (int)(u * 1.2f), y + (int)(u * 0.5f), w - (int)(u * 14));
+				else drawText(fMed, t.title, CREAM, tx + (int)(u * 1.2f), y + (int)(u * 0.5f), w - (int)(u * 14));
 				drawText(fTiny, t.artist, mix(CREAM, INK, 0.4f), tx + (int)(u * 1.2f), y + (int)(u * 4.2f), w - (int)(u * 14));
 				if (t.dur > 0) drawText(fSmall, clock(t.dur), mix(CREAM, INK, 0.4f), x0 + w - (int)(u * 1), y + (int)(u * 1.6f), 0, 0, 2);
 			}
+			SDL_RenderSetClipRect(ren, nullptr);
 		}
 		void drawAlbum()
 		{
@@ -1699,19 +1740,25 @@ namespace
 			if (a.year) sub = std::to_string(a.year) + ", " + sub;
 			drawText(fSmall, sub, mix(CREAM, INK, 0.35f), tx, y + (int)(u * 4.6f), tw);
 			int rh = albumRowH(), top = (int)(u * 28), rows = albumRows(), w = cw - (int)(8 * u);
-			for (int r = 0; r < rows; r++)
+			int base = (int)std::floor(vAScroll);
+			float frac = vAScroll - (float)base;
+			SDL_Rect aclip = { cx, top, cw, rows * rh };
+			SDL_RenderSetClipRect(ren, &aclip);
+			for (int r = 0; r <= rows; r++)
 			{
-				int i = aScroll + r;
+				int i = base + r;
 				if (i >= (int)a.tracks.size()) break;
 				const Track& t = lib->tracks[(size_t)a.tracks[(size_t)i]];
-				int yy = top + r * rh;
+				int yy = top + (int)((r - frac) * rh);
 				bool on = i == aSel, now = qi >= 0 && cur.path == t.path;
 				if (on) { fill(x0, yy, w, rh - (int)(u * 0.4f), accA, 70); fill(x0, yy, (int)(u * 0.7f), rh - (int)(u * 0.4f), accA); }
 				if (now) triangle((float)(x0 + u * 1.3f), (float)(yy + rh / 2 - u * 0.2f), u * 1.6f, accB);
 				else drawText(fSmall, t.no > 0 ? std::to_string(t.no) : std::to_string(i + 1), mix(CREAM, INK, 0.45f), x0 + (int)(u * 3.4f), yy + (int)(u * 1.1f), 0, 0, 2);
-				drawText(fMed, t.title, CREAM, x0 + (int)(u * 5.4f), yy + (int)(u * 0.9f), w - (int)(u * 16));
+				if (on) marquee(fMed, t.title, CREAM, x0 + (int)(u * 5.4f), yy + (int)(u * 0.9f), w - (int)(u * 16));
+				else drawText(fMed, t.title, CREAM, x0 + (int)(u * 5.4f), yy + (int)(u * 0.9f), w - (int)(u * 16));
 				if (t.dur > 0) drawText(fSmall, clock(t.dur), mix(CREAM, INK, 0.4f), x0 + w - (int)u, yy + (int)(u * 1.2f), 0, 0, 2);
 			}
+			SDL_RenderSetClipRect(ren, nullptr);
 			miniPlayer();
 		}
 		int currentLyric(double pos)
@@ -1733,12 +1780,14 @@ namespace
 			TTF_Font* tf = titleFont(cur.title);
 			SDL_Rect clip = { tx, ty, tw, (int)(cs * 0.64f) };
 			SDL_RenderSetClipRect(ren, &clip);
-			ty += drawText(tf, cur.title, CREAM, tx, ty, 0, tw);
+			Tx wrapped = text(tf, cur.title, CREAM, 0, tw);
+			if (animations && wrapped.t && wrapped.h > clip.h) ty += marquee(tf, cur.title, CREAM, tx, ty, tw);	// too tall to wrap: slide one line
+			else ty += drawText(tf, cur.title, CREAM, tx, ty, 0, tw);
 			SDL_RenderSetClipRect(ren, nullptr);
 			ty = std::max(ty, y0 + (int)(u * 8));
 			ty = std::min(ty, y0 + (int)(cs * 0.64f)) + (int)(u * 0.8f);
-			ty += drawText(fMed, cur.artist, accA, tx, ty, tw) + (int)(u * 0.6f);
-			if (!cur.album.empty()) drawText(fSmall, cur.album, mix(CREAM, INK, 0.3f), tx, ty, tw);
+			ty += marquee(fMed, cur.artist, accA, tx, ty, tw) + (int)(u * 0.6f);
+			if (!cur.album.empty()) marquee(fSmall, cur.album, mix(CREAM, INK, 0.3f), tx, ty, tw);
 			// lyrics when the song has them, else the visualizer gets the room
 			int bandTop = y0 + cs + (int)(u * 4), barY = H - (int)(u * 11);
 			bool hasLyr = !lyrics.empty();
@@ -1777,19 +1826,61 @@ namespace
 			if (sleepAt > 0) st += "Sleep in " + std::to_string((int)std::ceil((sleepAt - nowSec()) / 60.0)) + " min";
 			if (!st.empty()) drawText(fTiny, st, accB, cx + cw / 2, by + bh + (int)(u * 1.7f), 0, 0, 1);
 		}
+		// the screen we are leaving, drawn once into a texture that render() then fades out over the new one
+		void buildXfade(Screen old, double now)
+		{
+			int tw = 0, th = 0;
+			if (xfTex) SDL_QueryTexture(xfTex, nullptr, nullptr, &tw, &th);
+			if (xfTex && (tw != W || th != H)) { SDL_DestroyTexture(xfTex); xfTex = nullptr; }
+			if (!xfTex)
+			{
+				xfTex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, W, H);
+				if (xfTex) SDL_SetTextureBlendMode(xfTex, SDL_BLENDMODE_BLEND);
+			}
+			if (!xfTex || SDL_SetRenderTarget(ren, xfTex) != 0) return;
+			background();
+			if (old == Screen::LIB) drawLibrary(); else if (old == Screen::ALBUM) drawAlbum(); else drawNow();
+			SDL_SetRenderTarget(ren, nullptr);
+			xfT0 = now; xfActive = true;
+		}
 		void render()
 		{
 			double now = nowSec();
 			double dt = lastFrame > 0 ? std::min(0.2, now - lastFrame) : 0.033;
+			double since = lastFrame > 0 ? now - lastFrame : 1e9;
 			lastFrame = now;
+			marqBusy = false;
+			if (screen != lastScreen)
+			{
+				if (animations && since < 0.5) buildXfade(lastScreen, now);
+				lastScreen = screen;
+			}
+			// ease the list positions toward their rows; a new list (screen, tab, album) starts in place
+			int ctx = (int)screen + 4 * tab + 8 * (albumIdx + 1);
+			if (ctx != lastCtx || !animations) { vScroll = (float)scroll; vAScroll = (float)aScroll; lastCtx = ctx; }
+			else
+			{
+				float ks = 1.f - (float)std::pow(1e-5, dt);
+				vScroll += ((float)scroll - vScroll) * ks; vAScroll += ((float)aScroll - vAScroll) * ks;
+				if (std::fabs((float)scroll - vScroll) < 0.004f) vScroll = (float)scroll;
+				if (std::fabs((float)aScroll - vAScroll) < 0.004f) vAScroll = (float)aScroll;
+			}
 			// ease the accents toward the cover's
 			float k = 1.f - (float)std::pow(0.0004, dt);
 			accA = mix(accA, palTarget.a, k); accB = mix(accB, palTarget.b, k);
+			if (closeCol(accA, palTarget.a)) accA = palTarget.a;	// integer easing stalls a few units short, which kept the loop awake for good
+			if (closeCol(accB, palTarget.b)) accB = palTarget.b;
 			analyse(dt);
 			background();
 			if (screen == Screen::LIB) drawLibrary();
 			else if (screen == Screen::ALBUM) drawAlbum();
 			else drawNow();
+			if (xfActive)
+			{
+				double xt = (now - xfT0) / 0.15;
+				if (xt >= 1.0 || !xfTex) xfActive = false;
+				else { SDL_SetTextureAlphaMod(xfTex, (Uint8)(255 * (1.0 - xt))); SDL_RenderCopy(ren, xfTex, nullptr, nullptr); }
+			}
 			if (!toast.empty())
 			{
 				Tx t = text(fMed, toast, CREAM);
@@ -1839,6 +1930,7 @@ namespace
 			quitting = true;
 			jobCv.notify_all();
 			eng.closeTrack();
+			if (xfTex) { SDL_DestroyTexture(xfTex); xfTex = nullptr; }
 			if (scanTh.joinable()) scanTh.join();
 			if (coverTh.joinable()) coverTh.join();
 		}
@@ -1883,6 +1975,7 @@ namespace
 		int selftest(const std::string& dir)
 		{
 			if (!setup(true)) return 1;
+			animations = false;
 			int fails = 0;
 			auto check = [&](bool ok, const std::string& what) { printf("%s %s\n", ok ? "ok  " : "FAIL", what.c_str()); if (!ok) fails++; };
 			for (int i = 0; i < 400 && (scanning || !lib); i++) settle(0.05);
@@ -1920,6 +2013,33 @@ namespace
 				check(shot(dir, "5-now-lyrics.png"), "now playing with lyrics");
 			}
 
+			// ---- motion: every effect has to run, then settle so the idle poll rate comes back ----
+			{
+				animations = true;
+				if (playing) togglePlay();
+				settle(2.0);
+				screen = Screen::LIB; tab = 1; sel = 0; scroll = 0; render();
+				scroll = 3; lastFrame = nowSec(); render();
+				check(vScroll > 0.f && vScroll < 2.5f && animating(), "scroll eases toward its row (" + std::to_string(vScroll) + " of 3)");
+				settle(1.5);
+				check(vScroll == 3.f && !animating(), "scroll settles and the loop goes idle (" + std::to_string(vScroll) + ")");
+				if (qi >= 0)
+				{
+					press(BSTART); lastFrame = nowSec(); render();
+					check(screen == Screen::NOW && xfActive && animating(), "screen change starts a cross-fade");
+					settle(0.4);
+					check(!xfActive && !animating(), "cross-fade ends and the loop goes idle");
+				}
+				else check(false, "motion test needs a loaded song");
+				std::string longTitle(200, 'W');
+				marqT0 = nowSec(); marqBusy = false; marquee(fMed, longTitle, CREAM, 0, 0, 100);
+				check(marqBusy, "a long line starts its slide");
+				marqT0 = nowSec() - 120; marqBusy = false; marquee(fMed, longTitle, CREAM, 0, 0, 100);
+				check(!marqBusy, "the slide ends and stays still");
+				marqBusy = false; marquee(fMed, "short", CREAM, 0, 0, 400);
+				check(!marqBusy, "a line that fits never moves");
+				animations = false;
+			}
 			// ---- engine, off the audio device: the callback is pulled by hand, so the output can be inspected ----
 			{
 				auto gapFile = [&](const char* n) { return dir + "/gap/" + n; };
@@ -1998,10 +2118,10 @@ namespace
 					o.clear(); g.setPaused(true); pump(g, 4096, o);
 					int pf = peak(o, 0, 256), pe = peak(o, 3900, 4096);
 					check(pf > 2000 && pe == 0, "fades: pause ramps to silence (" + std::to_string(pf) + " -> " + std::to_string(pe) + ")");
-					size_t fillBefore; { std::lock_guard<std::mutex> lk(g.m); fillBefore = g.fill; }
+					uint64_t playedBefore; { std::lock_guard<std::mutex> lk(g.m); playedBefore = g.playedAbs; }
 					o.clear(); pump(g, 8192, o);
-					size_t fillAfter; { std::lock_guard<std::mutex> lk(g.m); fillAfter = g.fill; }
-					check(peak(o, 0, 8192) == 0 && fillBefore == fillAfter, "fades: paused output is silent and the song does not move");
+					uint64_t playedAfter; { std::lock_guard<std::mutex> lk(g.m); playedAfter = g.playedAbs; }
+					check(peak(o, 0, 8192) == 0 && playedBefore == playedAfter, "fades: paused output is silent and the song does not move");
 					o.clear(); g.setPaused(false); pump(g, 6144, o);
 					int p0 = peak(o, 0, 96), p1 = peak(o, 4400, 6144);
 					check(p0 < 400 && p1 > 2750, "fades: resume ramps in (" + std::to_string(p0) + " -> " + std::to_string(p1) + ")");
