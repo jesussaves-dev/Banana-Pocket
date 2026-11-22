@@ -553,6 +553,7 @@ int main(int argc, char** argv)
 	std::string shaderMaskSet, shaderColorSet;	// what the panel has, so a slider move stays one integer
 	MaskGeom shaderGeom;		// the mask's cell for what is on screen: a game's, or the default in the menu
 	bool shaderChordOff = false;	// MENU + Select took the mask away for this game, unsaved
+	bool gameIsApp = false;		// the running game is an app (LÖVE, BananaTube, ...): it draws its own look, no mask
 	FrameHole shaderHole;		// the frame on screen's hole, to hand back to the compositor after a re-bake
 	auto shaderMaskOf = [](const std::string& m) {
 		return m == "crt240" ? SHADER_MASK_CRT_240P : m == "aperture" ? SHADER_MASK_APERTURE_GRILLE :
@@ -704,7 +705,9 @@ int main(int argc, char** argv)
 				if (v.find("true") != std::string::npos) integer = maskIntegerHole(id.c_str(), W, H, mx, my, mw);
 			}
 			shaderGeom = maskGeomFor(id.c_str(), mx, my, mw, integer);
-			if (shaderMaskSet != "off" && !shaderChordOff)
+			if (gameIsApp)
+				disp.shaderSetMask(SHADER_MASK_OFF, shaderGeom);
+			else if (shaderMaskSet != "off" && !shaderChordOff)
 			{
 				disp.shaderSetMask(shaderMaskOf(shaderMaskSet), shaderGeom);
 				logf("shader: %s, cell %d at %d,%d", id.c_str(), shaderGeom.rowPeriod, shaderGeom.originX, shaderGeom.originY);
@@ -890,7 +893,7 @@ int main(int argc, char** argv)
 			if (pause.pending && ev.type == InputEvent::PRESS && ev.key == Key::SELECT)
 			{
 				pause.pending = false;
-				if (shaderMaskSet != "off")
+				if (shaderMaskSet != "off" && !gameIsApp)
 				{
 					shaderChordOff = !shaderChordOff;
 					disp.shaderSetMask(shaderChordOff ? SHADER_MASK_OFF : shaderMaskOf(shaderMaskSet), shaderGeom);
@@ -1078,6 +1081,7 @@ int main(int argc, char** argv)
 		gameIndex = -1;
 		gameRA = false;
 		gameFramable = false;
+		gameIsApp = false;
 		frameKind = applyFrame("", FrameKind::None);
 	};
 
@@ -1103,6 +1107,7 @@ int main(int argc, char** argv)
 		rep.key = Key::NONE;
 		// before the fork: the game's first configure has to be the hole's size
 		gameFramable = lib.framable(game);
+		gameIsApp = sd.app;
 		frameKind = gameFramable ? resolveFrame(frameMaster(), lib.overrideOf(sd.id, lib.gameAt(game).rel).frame,
 		                                        getConfValue(o.data + "/settings.conf", "frame." + sd.id, ""), frameHasArt(sd.id))
 		                         : FrameKind::None;
@@ -1120,6 +1125,7 @@ int main(int argc, char** argv)
 		{
 			// the panel, input and sound were handed over above: take them back rather than pretend a game ran
 			logf("fork failed: %s", strerror(errno));
+			gameIsApp = false;
 			frameKind = applyFrame(sd.id, FrameKind::None);
 			be.invalidate();
 			sound.setBgm(settings["bgm"] != "off");
