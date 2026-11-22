@@ -25,6 +25,10 @@ tone "$M/Deep End/01.mp3" 110 12 "Pressure" "Marlowe" "Deep End" 1 blue
 tone "$M/Deep End/02.mp3" 147 12 "Sonnenschein ☀ und Mondlicht" "Marlowe" "Deep End" 2 blue
 tone "$M/Mono/a.mp3" 440 12 "Greyscale" "Static Choir" "Mono" 1 grey
 ffmpeg -v error -y -f lavfi -i "sine=f=523:d=10" -c:a flac "$M/loose/untagged song.flac" 2>/dev/null || { mkdir -p "$M/loose"; ffmpeg -v error -y -f lavfi -i "sine=f=523:d=10" "$M/loose/untagged song.flac"; }
+mkdir -p "$OUT/gap"
+ffmpeg -v error -y -f lavfi -i "sine=f=440:d=1.5:r=48000" -metadata replaygain_track_gain="-6.00 dB" "$OUT/gap/a.flac"
+ffmpeg -v error -y -f lavfi -i "sine=f=660:d=1.5:r=48000" "$OUT/gap/b.flac"
+echo "not audio" > "$OUT/gap/bad.flac"
 cat > "$M/Sunset Drive/01.lrc" <<'LRC'
 [ti:Neon Boulevard]
 [00:00.50]Headlights pull the horizon in

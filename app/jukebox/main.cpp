@@ -35,10 +35,12 @@ extern "C" {
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <random>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -377,9 +379,54 @@ namespace
 		}
 	};
 
+	// ---- loudness (ReplayGain / R128 tags; nothing is analysed on the device) ---------------------------------------
+	struct RG { double trackDb = 0, albumDb = 0, trackPeak = 0, albumPeak = 0; bool hasTrack = false, hasAlbum = false; };
+	bool parseDb(const std::string& s, double& out)
+	{
+		if (s.empty()) return false;
+		char* e = nullptr;
+		double v = strtod(s.c_str(), &e);
+		if (e == s.c_str() || !std::isfinite(v)) return false;
+		out = v;
+		return true;
+	}
+	double r128ToDb(double q78) { return q78 / 256.0 + 5.0; }
+	RG readRG(AVFormatContext* fc, int si)
+	{
+		RG r;
+		double v;
+		if (parseDb(tag(fc, si, "replaygain_track_gain"), v)) { r.trackDb = v; r.hasTrack = true; }
+		if (parseDb(tag(fc, si, "replaygain_album_gain"), v)) { r.albumDb = v; r.hasAlbum = true; }
+		if (parseDb(tag(fc, si, "replaygain_track_peak"), v) && v > 0) r.trackPeak = v;
+		if (parseDb(tag(fc, si, "replaygain_album_peak"), v) && v > 0) r.albumPeak = v;
+		// Opus carries R128_*_GAIN in Q7.8 dB against -23 LUFS; ReplayGain's reference is -18 LUFS
+		if (!r.hasTrack && parseDb(tag(fc, si, "r128_track_gain"), v)) { r.trackDb = r128ToDb(v); r.hasTrack = true; }
+		if (!r.hasAlbum && parseDb(tag(fc, si, "r128_album_gain"), v)) { r.albumDb = r128ToDb(v); r.hasAlbum = true; }
+		return r;
+	}
+	// mode 0 off, 1 track, 2 album (falls back to the track gain). A boost never goes past the peak, or past unity when the peak is unknown.
+	float rgLinear(const RG& r, int mode)
+	{
+		if (mode == 0) return 1.f;
+		bool album = mode == 2 && r.hasAlbum;
+		if (!album && !r.hasTrack) return 1.f;
+		double db = album ? r.albumDb : r.trackDb;
+		double peak = album ? r.albumPeak : r.trackPeak;
+		double g = std::pow(10.0, db / 20.0);
+		g = std::min(g, peak > 0 ? 1.0 / peak : 1.0);
+		return (float)std::max(0.03, std::min(g, 4.0));
+	}
+
 	// ---- audio engine ----------------------------------------------------------------------------------------------
+	// One decoder thread feeds a PCM ring. At the end of a file it opens the queue's next entry (setNext) and keeps writing
+	// into the same ring, leaving a marker where the new song starts; the callback flips position and gain at that frame.
 	struct Engine
 	{
+		static constexpr float FADE_LONG = 1.f / (0.08f * RATE);	// pause / resume: 80 ms
+		static constexpr float FADE_SHORT = 1.f / (0.01f * RATE);	// seek / song start: 10 ms
+		struct Marker { uint64_t at; std::string path; RG rg; };
+		struct Src { AVFormatContext* fc = nullptr; AVCodecContext* cc = nullptr; SwrContext* swr = nullptr; int si = -1; RG rg; };
+
 		SDL_AudioDeviceID dev = 0;
 		std::mutex m;
 		std::condition_variable cv;
@@ -388,17 +435,31 @@ namespace
 		std::thread th;
 		std::atomic<bool> stop{ false }, eof{ false }, ended{ false }, paused{ true };
 		std::atomic<double> seekReq{ -1 };
-		std::atomic<float> gain{ 1.f };
+		std::atomic<float> gain{ 1.f };	// the sleep timer's fade
+		std::atomic<int> rgMode{ 1 };
+		std::atomic<int> switched{ 0 }, nextFailed{ 0 };
+		std::atomic<bool> rampReset{ false }, pauseReady{ false };
+		std::atomic<float> mulTarget{ 1.f }, mulStep{ FADE_SHORT };
+		float mul = 0.f;	// the callback's pause/seek ramp (only the callback writes it)
+		bool fresh = false, devPaused = true;	// main thread
 		double startSec = 0;
 		uint64_t consumed = 0;	// frames the callback has taken since startSec
+		uint64_t playedAbs = 0, writtenAbs = 0;	// ring frames in and out since the track was opened
+		std::deque<Marker> markers;
+		std::string playPath, nextPath, badPath, failedPath;	// under m
+		RG playRg;	// under m: the song being heard
 		float viz[VIZ_N];
 		std::atomic<unsigned> vizPos{ 0 };
 		bool open_ = false;
 
-		bool init()
+		void initBuffers()
 		{
 			ring.assign((size_t)RATE * 4 * 2, 0);
 			memset(viz, 0, sizeof viz);
+		}
+		bool init()
+		{
+			initBuffers();
 			SDL_AudioSpec want, have;
 			SDL_zero(want);
 			want.freq = RATE; want.format = AUDIO_S16SYS; want.channels = 2;
@@ -409,36 +470,62 @@ namespace
 			if (have.format != AUDIO_S16SYS || have.channels != 2 || have.freq != RATE)
 				logLine("audio spec differs: " + std::to_string(have.freq) + " Hz, " + std::to_string(have.channels) + " ch");
 			SDL_PauseAudioDevice(dev, 1);
+			devPaused = true;
 			return true;
 		}
 		static void callback(void* ud, Uint8* out, int len)
 		{
 			Engine* e = (Engine*)ud;
-			size_t n;
+			int frames = len / 4;
+			if (e->rampReset.exchange(false)) e->mul = 0.f;
+			bool hold = e->paused.load() && e->mul <= 0.f;	// faded out and paused: play silence and leave the ring alone
+			size_t n = 0;
+			int bi = frames + 1;	// the frame where a new song's gain takes over
+			float rgA, rgB;
 			{
 				std::lock_guard<std::mutex> lk(e->m);
-				n = std::min((size_t)len, e->fill);
-				size_t first = std::min(n, e->ring.size() - e->rd);
-				memcpy(out, &e->ring[e->rd], first);
-				if (n > first) memcpy(out + first, &e->ring[0], n - first);
-				e->rd = (e->rd + n) % e->ring.size();
-				e->fill -= n;
-				e->consumed += n / 4;
-				if (n < (size_t)len && e->eof.load() && e->fill == 0 && e->open_) e->ended = true;
+				int mode = e->rgMode.load();
+				rgA = rgB = rgLinear(e->playRg, mode);
+				if (!hold)
+				{
+					n = std::min((size_t)len, e->fill);
+					size_t first = std::min(n, e->ring.size() - e->rd);
+					memcpy(out, &e->ring[e->rd], first);
+					if (n > first) memcpy(out + first, &e->ring[0], n - first);
+					e->rd = (e->rd + n) % e->ring.size();
+					e->fill -= n;
+					uint64_t before = e->playedAbs, got = n / 4;
+					e->playedAbs += got;
+					e->consumed += got;
+					while (!e->markers.empty() && e->playedAbs >= e->markers.front().at)
+					{
+						const Marker& mk = e->markers.front();
+						bi = (int)std::min(mk.at > before ? mk.at - before : 0, (uint64_t)frames);
+						e->startSec = 0; e->consumed = e->playedAbs - mk.at;
+						e->playPath = mk.path; e->playRg = mk.rg;
+						e->switched++;
+						e->markers.pop_front();
+					}
+					rgB = rgLinear(e->playRg, mode);
+					if (n < (size_t)len && e->eof.load() && e->fill == 0 && e->open_) e->ended = true;
+				}
 			}
-			e->cv.notify_all();
+			if (!hold) e->cv.notify_all();
 			if (n < (size_t)len) memset(out + n, 0, (size_t)len - n);
 			int16_t* s = (int16_t*)out;
-			int frames = len / 4;
-			float g = e->gain.load();
+			float tgt = e->mulTarget.load(), st = e->mulStep.load(), gs = e->gain.load(), mul = e->mul;
 			unsigned wp = e->vizPos.load(std::memory_order_relaxed);
 			for (int i = 0; i < frames; i++)
 			{
-				float l = s[2 * i], r = s[2 * i + 1];
-				if (g < 0.999f) { l *= g; r *= g; s[2 * i] = (int16_t)l; s[2 * i + 1] = (int16_t)r; }
+				if (mul < tgt) mul = std::min(tgt, mul + st); else if (mul > tgt) mul = std::max(tgt, mul - st);
+				float g = gs * mul * (i < bi ? rgA : rgB);
+				float l = std::max(-32768.f, std::min(32767.f, s[2 * i] * g)), r = std::max(-32768.f, std::min(32767.f, s[2 * i + 1] * g));
+				s[2 * i] = (int16_t)l; s[2 * i + 1] = (int16_t)r;
 				e->viz[(wp + (unsigned)i) & (VIZ_N - 1)] = (l + r) * (0.5f / 32768.f);
 			}
+			e->mul = mul;
 			e->vizPos.store(wp + (unsigned)frames, std::memory_order_release);
+			if (e->paused.load() && mul <= 0.f) e->pauseReady = true;
 		}
 
 		void closeTrack()
@@ -448,24 +535,66 @@ namespace
 			if (th.joinable()) th.join();
 			std::lock_guard<std::mutex> lk(m);
 			rd = wr = fill = 0; consumed = 0; open_ = false;
-			eof = false; ended = false; stop = false; seekReq = -1;
+			playedAbs = writtenAbs = 0; markers.clear(); playRg = RG(); failedPath.clear();
+			eof = false; ended = false; stop = false; seekReq = -1; switched = 0; nextFailed = 0;
 		}
 		void openTrack(const std::string& path, double start)
 		{
 			closeTrack();
 			{
 				std::lock_guard<std::mutex> lk(m);
-				startSec = start; consumed = 0; open_ = true;
+				startSec = start; consumed = 0; open_ = true; playPath = path;
 			}
+			fresh = true; mulStep = FADE_SHORT; rampReset = true;
 			th = std::thread([this, path, start] { decode(path, start); });
 		}
-		void seek(double t) { seekReq = std::max(0.0, t); cv.notify_all(); }
+		void seek(double t)
+		{
+			std::string pp;
+			bool reopen;
+			{
+				std::lock_guard<std::mutex> lk(m);
+				reopen = !markers.empty();	// the decoder already moved on to the next song: go back to this one
+				pp = playPath;
+			}
+			if (reopen) { openTrack(pp, std::max(0.0, t)); return; }
+			seekReq = std::max(0.0, t);
+			cv.notify_all();
+		}
+		// What to play after this song ("" for nothing). Anything but a repeat of the standing choice drops a song already prefetched.
+		void setNext(const std::string& p)
+		{
+			bool reopen = false;
+			std::string pp;
+			{
+				std::lock_guard<std::mutex> lk(m);
+				bool pending = !markers.empty();	// the decoder already took its next song
+				if (pending && markers.back().path == p) nextPath.clear();
+				else { nextPath = p; reopen = pending; }
+				if (p != badPath) badPath.clear();
+				pp = playPath;
+			}
+			if (reopen) openTrack(pp, pos());
+			cv.notify_all();
+		}
+		std::string takeFailed() { std::lock_guard<std::mutex> lk(m); return failedPath; }
 		double pos()
 		{
 			std::lock_guard<std::mutex> lk(m);
 			return startSec + (double)consumed / RATE;
 		}
-		void setPaused(bool p) { paused = p; if (dev) SDL_PauseAudioDevice(dev, p ? 1 : 0); }
+		void setPaused(bool p)
+		{
+			paused = p;
+			if (p) { mulTarget = 0.f; mulStep = FADE_LONG; return; }	// the device stops once the fade has run out (tickAudio)
+			mulTarget = 1.f; mulStep = fresh ? FADE_SHORT : FADE_LONG; fresh = false;
+			if (dev) { SDL_PauseAudioDevice(dev, 0); devPaused = false; }
+		}
+		void tickAudio()
+		{
+			if (pauseReady.exchange(false) && paused && dev && !devPaused) { SDL_PauseAudioDevice(dev, 1); devPaused = true; }
+		}
+		bool fading() const { return dev && paused && !devPaused; }
 		bool push(const uint8_t* d, size_t n)
 		{
 			size_t done = 0;
@@ -479,41 +608,84 @@ namespace
 				size_t first = std::min(c, ring.size() - wr);
 				memcpy(&ring[wr], d + done, first);
 				if (c > first) memcpy(&ring[0], d + done + first, c - first);
-				wr = (wr + c) % ring.size(); fill += c; done += c;
+				wr = (wr + c) % ring.size(); fill += c; done += c; writtenAbs += c / 4;
 			}
 			return true;
 		}
-		void decode(std::string path, double start)
+		static void closeSrc(Src& s)
 		{
-			AVFormatContext* fc = nullptr;
-			AVCodecContext* cc = nullptr;
-			SwrContext* swr = nullptr;
-			AVPacket* pk = av_packet_alloc();
-			AVFrame* fr = av_frame_alloc();
-			std::vector<uint8_t> buf;
-			bool ok = false;
-			int si = -1;
-			if (avformat_open_input(&fc, path.c_str(), nullptr, nullptr) >= 0 && avformat_find_stream_info(fc, nullptr) >= 0)
+			if (s.swr) swr_free(&s.swr);
+			if (s.cc) avcodec_free_context(&s.cc);
+			if (s.fc) avformat_close_input(&s.fc);
+			s = Src();
+		}
+		static bool openSrc(const std::string& path, Src& s)
+		{
+			if (avformat_open_input(&s.fc, path.c_str(), nullptr, nullptr) >= 0 && avformat_find_stream_info(s.fc, nullptr) >= 0)
 			{
 				const AVCodec* codec = nullptr;
-				si = av_find_best_stream(fc, AVMEDIA_TYPE_AUDIO, -1, -1, &codec, 0);
-				if (si >= 0 && codec && (cc = avcodec_alloc_context3(codec)) && avcodec_parameters_to_context(cc, fc->streams[si]->codecpar) >= 0 &&
-					avcodec_open2(cc, codec, nullptr) >= 0)
+				s.si = av_find_best_stream(s.fc, AVMEDIA_TYPE_AUDIO, -1, -1, &codec, 0);
+				if (s.si >= 0 && codec && (s.cc = avcodec_alloc_context3(codec)) && avcodec_parameters_to_context(s.cc, s.fc->streams[s.si]->codecpar) >= 0 &&
+					avcodec_open2(s.cc, codec, nullptr) >= 0)
 				{
 					AVChannelLayout out;
 					av_channel_layout_default(&out, 2);
-					if (swr_alloc_set_opts2(&swr, &out, AV_SAMPLE_FMT_S16, RATE, &cc->ch_layout, cc->sample_fmt, cc->sample_rate, 0, nullptr) >= 0 && swr_init(swr) >= 0)
-						ok = true;
+					if (swr_alloc_set_opts2(&s.swr, &out, AV_SAMPLE_FMT_S16, RATE, &s.cc->ch_layout, s.cc->sample_fmt, s.cc->sample_rate, 0, nullptr) >= 0 && swr_init(s.swr) >= 0)
+					{
+						s.rg = readRG(s.fc, s.si);
+						return true;
+					}
 				}
 			}
+			closeSrc(s);
+			return false;
+		}
+		void decode(std::string path, double start)
+		{
+			Src s;
+			AVPacket* pk = av_packet_alloc();
+			AVFrame* fr = av_frame_alloc();
+			std::vector<uint8_t> buf;
+			bool ok = openSrc(path, s);
 			if (!ok) { logLine("cannot decode " + path); eof = true; }
+			else { std::lock_guard<std::mutex> lk(m); playRg = s.rg; }
 			auto doSeek = [&](double t)
 			{
-				av_seek_frame(fc, -1, (int64_t)(t * AV_TIME_BASE), AVSEEK_FLAG_BACKWARD);
-				avcodec_flush_buffers(cc);
-				swr_init(swr);
+				av_seek_frame(s.fc, -1, (int64_t)(t * AV_TIME_BASE), AVSEEK_FLAG_BACKWARD);
+				avcodec_flush_buffers(s.cc);
+				swr_init(s.swr);
+				{
+					std::lock_guard<std::mutex> lk(m);
+					rd = wr = fill = 0; startSec = t; consumed = 0; eof = false; ended = false;
+					writtenAbs = playedAbs; markers.clear();
+				}
+				if (mulTarget.load() > 0.5f) mulStep = FADE_SHORT;
+				rampReset = true;
+			};
+			// the file ran out: continue straight into the queue's next song, if there is one and it opens
+			auto tryNext = [&]() -> bool
+			{
+				std::string np;
+				{
+					std::lock_guard<std::mutex> lk(m);
+					np = nextPath;
+					if (np.empty() || np == badPath) return false;
+				}
+				Src n;
+				if (!openSrc(np, n))
+				{
+					logLine("cannot decode " + np);
+					std::lock_guard<std::mutex> lk(m);
+					badPath = np; failedPath = np; nextFailed++;
+					return false;
+				}
+				closeSrc(s);
+				s = n;
 				std::lock_guard<std::mutex> lk(m);
-				rd = wr = fill = 0; startSec = t; consumed = 0; eof = false; ended = false;
+				markers.push_back({ writtenAbs, np, s.rg });
+				nextPath.clear();	// taken: whatever follows this song is the App's next word
+				eof = false; ended = false;
+				return true;
 			};
 			if (ok && start > 0.05) doSeek(start);
 			bool atEnd = false;
@@ -521,28 +693,35 @@ namespace
 			{
 				double sr = seekReq.exchange(-1);
 				if (sr >= 0) { doSeek(sr); atEnd = false; continue; }
-				if (atEnd) { std::unique_lock<std::mutex> lk(m); cv.wait_for(lk, std::chrono::milliseconds(60)); continue; }	// parked at the end: a seek may still come
-				int r = av_read_frame(fc, pk);
+				if (atEnd)	// parked at the end: a seek, or a next song, may still come
+				{
+					if (tryNext()) { atEnd = false; continue; }
+					std::unique_lock<std::mutex> lk(m);
+					cv.wait_for(lk, std::chrono::milliseconds(60));
+					continue;
+				}
+				int r = av_read_frame(s.fc, pk);
 				bool flushing = r < 0;
-				if (!flushing && pk->stream_index != si) { av_packet_unref(pk); continue; }
-				if (avcodec_send_packet(cc, flushing ? nullptr : pk) < 0 && !flushing) { av_packet_unref(pk); continue; }
+				if (!flushing && pk->stream_index != s.si) { av_packet_unref(pk); continue; }
+				if (avcodec_send_packet(s.cc, flushing ? nullptr : pk) < 0 && !flushing) { av_packet_unref(pk); continue; }
 				av_packet_unref(pk);
 				bool interrupted = false;
-				while (!stop && avcodec_receive_frame(cc, fr) >= 0)
+				while (!stop && avcodec_receive_frame(s.cc, fr) >= 0)
 				{
-					int cap = swr_get_out_samples(swr, fr->nb_samples);
+					int cap = swr_get_out_samples(s.swr, fr->nb_samples);
 					buf.resize((size_t)cap * 4);
 					uint8_t* o = buf.data();
-					int got = swr_convert(swr, &o, cap, (const uint8_t**)fr->extended_data, fr->nb_samples);
+					int got = swr_convert(s.swr, &o, cap, (const uint8_t**)fr->extended_data, fr->nb_samples);
 					av_frame_unref(fr);
 					if (got > 0 && !push(buf.data(), (size_t)got * 4)) { interrupted = true; break; }
 				}
 				if (interrupted) continue;	// a seek (or a stop) arrived mid-frame
-				if (flushing) { atEnd = true; std::lock_guard<std::mutex> lk(m); eof = true; }
+				if (flushing)
+				{
+					if (!tryNext()) { atEnd = true; std::lock_guard<std::mutex> lk(m); eof = true; }
+				}
 			}
-			if (swr) swr_free(&swr);
-			if (cc) avcodec_free_context(&cc);
-			if (fc) avformat_close_input(&fc);
+			closeSrc(s);
 			av_packet_free(&pk);
 			av_frame_free(&fr);
 		}
@@ -604,6 +783,9 @@ namespace
 		bool shuffle = false;
 		int repeat = 0;			// 0 off, 1 all, 2 one
 		int vizStyle = 0;
+		int loudness = 1;		// 0 off, 1 track, 2 album (ReplayGain tags)
+		int pfIdx = -1;			// the queue entry the engine has been told to play after this one
+		std::set<std::string> badPaths;	// songs that would not open
 		bool playing = false;
 		Track cur;
 		std::vector<Lyric> lyrics;
@@ -921,7 +1103,7 @@ namespace
 		{
 			FILE* f = fopen(statePath().c_str(), "w");
 			if (!f) return;
-			fprintf(f, "path=%s\npos=%.1f\nshuffle=%d\nrepeat=%d\nviz=%d\n", qi >= 0 ? cur.path.c_str() : "", qi >= 0 ? eng.pos() : 0.0, shuffle ? 1 : 0, repeat, vizStyle);
+			fprintf(f, "path=%s\npos=%.1f\nshuffle=%d\nrepeat=%d\nviz=%d\nloud=%d\n", qi >= 0 ? cur.path.c_str() : "", qi >= 0 ? eng.pos() : 0.0, shuffle ? 1 : 0, repeat, vizStyle, loudness);
 			fclose(f);
 			lastSaved = nowSec();
 		}
@@ -941,6 +1123,7 @@ namespace
 				if (k == "path") path = v; else if (k == "pos") pos = atof(v.c_str());
 				else if (k == "shuffle") shuffle = v == "1"; else if (k == "repeat") repeat = std::max(0, std::min(2, atoi(v.c_str())));
 				else if (k == "viz") vizStyle = std::max(0, std::min(2, atoi(v.c_str())));
+				else if (k == "loud") { loudness = std::max(0, std::min(2, atoi(v.c_str()))); eng.rgMode = loudness; }
 			}
 			fclose(f);
 			if (!path.empty() && fileExists(path))
@@ -965,6 +1148,51 @@ namespace
 			CoverTex& c = cover(t.path, 512);
 			if (c.tex || c.none) palTarget = c.pal;
 			dirty = true;
+			prefetch();
+		}
+		// ---- gapless: tell the engine which song follows, and follow it when it gets there ----
+		int nextIdx()
+		{
+			if (qi < 0 || queue.empty()) return -1;
+			if (repeat == 2) return qi;
+			int n = (int)queue.size();
+			for (int k = 1; k <= n; k++)
+			{
+				int i = qi + k;
+				if (i >= n) { if (repeat != 1) return -1; i %= n; }
+				if (!badPaths.count(queue[(size_t)i].path)) return i;
+			}
+			return -1;
+		}
+		void prefetch()
+		{
+			pfIdx = nextIdx();
+			if (audioOk) eng.setNext(pfIdx >= 0 ? queue[(size_t)pfIdx].path : std::string());
+		}
+		void pollGapless()
+		{
+			if (!audioOk) return;
+			if (eng.nextFailed.exchange(0) > 0)
+			{
+				std::string fp = eng.takeFailed();
+				badPaths.insert(fp);
+				std::string name = clean(stem(fp));
+				for (const Track& t : queue) if (t.path == fp) name = t.title;
+				say("Skipped: " + name);
+				prefetch();
+			}
+			int n = eng.switched.exchange(0);
+			for (int k = 0; k < n && qi >= 0; k++)
+			{
+				if (pfIdx < 0 || pfIdx >= (int)queue.size()) break;
+				qi = pfIdx; cur = queue[(size_t)qi]; curDur = cur.dur;
+				lyrics = loadLyrics(cur.path);
+				CoverTex& c = cover(cur.path, 512);
+				if (c.tex || c.none) palTarget = c.pal;
+				dirty = true;
+				pfIdx = nextIdx();
+				saveState();
+			}
 		}
 		void playQueue(std::vector<Track> q, int start)
 		{
@@ -1000,11 +1228,19 @@ namespace
 					for (size_t i = 0; i < queue.size(); i++) if (queue[i].path == cur.path) qi = (int)i;
 				}
 			}
+			prefetch();
 			say(shuffle ? "Shuffle on" : "Shuffle off");
+		}
+		void cycleLoudness()
+		{
+			loudness = (loudness + 1) % 3;
+			eng.rgMode = loudness;
+			say(loudness == 0 ? "Loudness: off" : loudness == 1 ? "Loudness: track" : "Loudness: album");
 		}
 		void cycleRepeat()
 		{
 			repeat = (repeat + 1) % 3;
+			prefetch();
 			say(repeat == 0 ? "Repeat off" : repeat == 1 ? "Repeat all" : "Repeat one");
 		}
 		void togglePlay()
@@ -1019,10 +1255,16 @@ namespace
 		void advance(bool autoEnd)
 		{
 			if (qi < 0) return;
-			if (autoEnd && repeat == 2) { startTrack(queue[(size_t)qi], 0, true); return; }
+			if (autoEnd)	// the song ended with nothing prefetched (or the prefetch failed)
+			{
+				int n = nextIdx();
+				if (n >= 0) { qi = n; startTrack(queue[(size_t)qi], 0, true); }
+				else { playing = false; eng.setPaused(true); startTrack(queue[(size_t)qi], 0, false); }	// the queue ran out: cued at the top of the last song
+				saveState();
+				return;
+			}
 			if (qi + 1 < (int)queue.size()) { qi++; startTrack(queue[(size_t)qi], 0, true); }
-			else if (repeat == 1 || !autoEnd) { qi = 0; startTrack(queue[0], 0, autoEnd ? true : playing); }
-			else { playing = false; eng.setPaused(true); startTrack(queue[(size_t)qi], 0, false); }	// the queue ran out: cued at the top of the last song
+			else { qi = 0; startTrack(queue[0], 0, playing); }
 			saveState();
 		}
 		void previous()
@@ -1051,6 +1293,8 @@ namespace
 				std::lock_guard<std::mutex> lk(libM);
 				if (pendingLib) { lib = std::move(pendingLib); sel = std::min(sel, (int)lib->albums.size()); dirty = true; }
 			}
+			pollGapless();
+			eng.tickAudio();
 			if (audioOk && eng.ended.exchange(false) && playing) advance(true);
 			if (sleepAt > 0)
 			{
@@ -1085,6 +1329,7 @@ namespace
 		{
 			if (screenOff) return false;
 			if (playing && screen == Screen::NOW) return true;
+			if (eng.fading()) return true;
 			auto close = [](SDL_Color a, SDL_Color b) { return std::abs(a.r - b.r) + std::abs(a.g - b.g) + std::abs(a.b - b.b) < 6; };
 			if (!close(accA, palTarget.a) || !close(accB, palTarget.b)) return true;
 			for (int i = 0; i < BANDS; i++) if (bars[i] > 0.01f) return true;
@@ -1108,6 +1353,7 @@ namespace
 		void press(Btn b, bool repeating = false)
 		{
 			dirty = true;
+			pollGapless();
 			if (b == BSELECT) { cycleSleep(); return; }
 			if (b == BX) { toggleShuffle(); return; }
 			if (b == BY) { cycleRepeat(); return; }
@@ -1117,7 +1363,7 @@ namespace
 				{
 				case BA: togglePlay(); break;
 				case BB: screen = albumIdx >= 0 && lib ? Screen::ALBUM : Screen::LIB; break;
-				case BSTART: screen = albumIdx >= 0 && lib ? Screen::ALBUM : Screen::LIB; break;
+				case BSTART: cycleLoudness(); break;
 				case BL: previous(); break;
 				case BR: advance(false); break;
 				case LEFT: if (qi >= 0) eng.seek(std::max(0.0, eng.pos() - (repeating ? 6.0 : 10.0))); break;
@@ -1672,6 +1918,95 @@ namespace
 				settle(1.5);
 				check(!lyrics.empty() && currentLyric(eng.pos()) >= 1, "lyrics follow the song: line " + std::to_string(currentLyric(eng.pos())));
 				check(shot(dir, "5-now-lyrics.png"), "now playing with lyrics");
+			}
+
+			// ---- engine, off the audio device: the callback is pulled by hand, so the output can be inspected ----
+			{
+				auto gapFile = [&](const char* n) { return dir + "/gap/" + n; };
+				auto pump = [](Engine& e, size_t frames, std::vector<int16_t>& o)
+				{
+					std::vector<int16_t> chunk(4096);
+					while (o.size() / 2 < frames)
+					{
+						for (int w = 0; w < 500; w++) { { std::lock_guard<std::mutex> lk(e.m); if (e.fill >= chunk.size() * 2 || e.eof.load()) break; } SDL_Delay(2); }
+						Engine::callback(&e, (Uint8*)chunk.data(), (int)(chunk.size() * 2));
+						o.insert(o.end(), chunk.begin(), chunk.end());
+					}
+				};
+				auto peak = [](const std::vector<int16_t>& o, size_t a, size_t b)
+				{
+					int m = 0;
+					for (size_t i = a * 2; i < std::min(b * 2, o.size()); i++) m = std::max(m, std::abs((int)o[i]));
+					return m;
+				};
+				auto zeroRun = [](const std::vector<int16_t>& o, size_t a, size_t b)
+				{
+					size_t best = 0, run = 0;
+					for (size_t i = a; i < std::min(b, o.size() / 2); i++) { if (o[2 * i] == 0 && o[2 * i + 1] == 0) best = std::max(best, ++run); else run = 0; }
+					return best;
+				};
+				RG r; r.hasTrack = true; r.trackDb = 6; r.trackPeak = 0.5;
+				check(std::fabs(rgLinear(r, 1) - 1.995f) < 0.01f, "ReplayGain: +6 dB boost allowed under the peak");
+				r.trackPeak = 0.9; check(std::fabs(rgLinear(r, 1) - 1.111f) < 0.01f, "ReplayGain: boost stops at the peak");
+				r.trackPeak = 0; check(rgLinear(r, 1) == 1.f, "ReplayGain: no boost past unity without a peak");
+				r.trackDb = -6; check(std::fabs(rgLinear(r, 1) - 0.501f) < 0.01f, "ReplayGain: -6 dB cut");
+				check(rgLinear(r, 0) == 1.f && rgLinear(RG(), 1) == 1.f, "ReplayGain: off, or untagged, leaves the level alone");
+				r.hasAlbum = true; r.albumDb = -3;
+				check(std::fabs(rgLinear(r, 2) - 0.708f) < 0.01f && std::fabs(rgLinear(r, 1) - 0.501f) < 0.01f, "ReplayGain: album mode uses the album gain");
+				check(std::fabs(r128ToDb(-512) - 3.0) < 1e-9, "R128 gain: Q7.8 against -23 LUFS becomes ReplayGain's -18 LUFS");
+				double dv = 0;
+				check(parseDb("-6.54 dB", dv) && std::fabs(dv + 6.54) < 1e-9 && !parseDb("", dv) && !parseDb("loud", dv), "ReplayGain: tag text parses");
+
+				{	// A (tagged -6 dB) then B (untagged): one unbroken stream, B at full level, A at half
+					Engine g; g.initBuffers(); g.paused = false; g.setPaused(false);
+					g.setNext(gapFile("b.flac")); g.openTrack(gapFile("a.flac"), 0);
+					std::vector<int16_t> o; pump(g, 150000, o);
+					size_t z = zeroRun(o, 2400, 142000);
+					int pa = peak(o, 4800, 70000), pb = peak(o, 76000, 142000);
+					check(z < 16, "gapless: no silence across the song change (longest zero run " + std::to_string(z) + " frames)");
+					check(pa > 1300 && pa < 1600 && pb > 2750 && pb < 3050, "gapless: song gain follows the song (A " + std::to_string(pa) + ", B " + std::to_string(pb) + ")");
+					double p = g.pos();
+					check(g.switched.load() == 1 && p > 1.4 && p < 1.6, "gapless: engine reports the switch, position restarts (" + std::to_string(p) + " s)");
+					g.closeTrack();
+				}
+				{	// the next song will not open: reported once; a replacement is picked up from the parked decoder
+					Engine g; g.initBuffers(); g.paused = false; g.setPaused(false);
+					g.setNext(gapFile("bad.flac")); g.openTrack(gapFile("a.flac"), 0);
+					for (int w = 0; w < 500 && g.nextFailed.load() == 0; w++) SDL_Delay(2);
+					check(g.nextFailed.load() == 1 && g.takeFailed() == gapFile("bad.flac"), "unreadable next song is reported");
+					g.setNext(gapFile("b.flac"));
+					std::vector<int16_t> o; pump(g, 150000, o);
+					check(zeroRun(o, 2400, 142000) < 16 && peak(o, 76000, 142000) > 2750, "playback continues into the replacement song");
+					g.closeTrack();
+				}
+				{	// seeking while the decoder is already on the next song goes back to this one
+					Engine g; g.initBuffers(); g.paused = false; g.setPaused(false);
+					g.setNext(gapFile("b.flac")); g.openTrack(gapFile("a.flac"), 0);
+					for (int w = 0; w < 500; w++) { { std::lock_guard<std::mutex> lk(g.m); if (!g.markers.empty()) break; } SDL_Delay(2); }
+					g.seek(0.5);
+					std::vector<int16_t> o; pump(g, 12000, o);
+					double p = g.pos();
+					check(p > 0.7 && p < 0.85 && g.switched.load() == 0, "seek with a song prefetched stays in the playing song (" + std::to_string(p) + " s)");
+					g.setNext("");	// and dropping the choice leaves nothing pending
+					g.closeTrack();
+				}
+				{	// pause fades out, holds silent without eating the ring, resume fades in
+					Engine g; g.initBuffers(); g.paused = false; g.rgMode = 0; g.setPaused(false);
+					g.openTrack(gapFile("a.flac"), 0); g.setPaused(false);
+					std::vector<int16_t> o; pump(g, 20000, o);
+					check(peak(o, 15000, 20000) > 2750, "fades: full level while playing");
+					o.clear(); g.setPaused(true); pump(g, 4096, o);
+					int pf = peak(o, 0, 256), pe = peak(o, 3900, 4096);
+					check(pf > 2000 && pe == 0, "fades: pause ramps to silence (" + std::to_string(pf) + " -> " + std::to_string(pe) + ")");
+					size_t fillBefore; { std::lock_guard<std::mutex> lk(g.m); fillBefore = g.fill; }
+					o.clear(); pump(g, 8192, o);
+					size_t fillAfter; { std::lock_guard<std::mutex> lk(g.m); fillAfter = g.fill; }
+					check(peak(o, 0, 8192) == 0 && fillBefore == fillAfter, "fades: paused output is silent and the song does not move");
+					o.clear(); g.setPaused(false); pump(g, 6144, o);
+					int p0 = peak(o, 0, 96), p1 = peak(o, 4400, 6144);
+					check(p0 < 400 && p1 > 2750, "fades: resume ramps in (" + std::to_string(p0) + " -> " + std::to_string(p1) + ")");
+					g.closeTrack();
+				}
 			}
 			shutdown();
 			printf("%d failures\n", fails);
