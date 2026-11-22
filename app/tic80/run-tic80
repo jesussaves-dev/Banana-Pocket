@@ -1,0 +1,36 @@
+#!/bin/sh
+# TIC-80 as a Wayland client of banana-ui's compositor (like run-bananatube). It opens in SURF, its gamepad-driven cart
+# browser (online carts from tic80.com plus the local ones). Carts and settings live in $BANANA_APP_DATA/fs.
+#   run-tic80 [<marker>]        the marker is what banana-ui found (the app's one entry); unused here
+APP=$(cd "$(dirname "$0")" && pwd)
+BIN=$APP/tic80
+[ -x "$BIN" ] || { echo "run-tic80: no $BIN" >&2; exit 1; }
+D=${BANANA_APP_DATA:-/data/banana/appdata/tic80}
+mkdir -p "$D/fs" /data/banana/logs 2>/dev/null
+export HOME="$D/home"; mkdir -p "$HOME" 2>/dev/null
+export XDG_RUNTIME_DIR=/run/banana/wayland
+mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null; chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null
+: "${SDL_VIDEODRIVER:=wayland}"; export SDL_VIDEODRIVER
+: "${SDL_AUDIODRIVER:=alsa}"; export SDL_AUDIODRIVER
+# the RPC's pad as banana maps it: a = the A button (east), which is TIC-80's accept on a Nintendo layout, so no a/b swap.
+# F (guide) is dropped: banana-ui keeps it for its quick menu.
+SDL_GAMECONTROLLERCONFIG="$(sed -e 's/,guide:b[0-9]*,/,/' /etc/banana/sdl-pad.map 2>/dev/null)"
+export SDL_GAMECONTROLLERCONFIG
+# TIC-80 loads each script language (lua.so, js.so, ...) with a bare dlopen("lua.so"), so the folder they sit in is the
+# library path. Without them every cart segfaults at start (no script to run it).
+export LD_LIBRARY_PATH="$APP${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+L=/data/banana/logs/tic80.log
+[ -s "$L" ] && mv -f "$L" "$L.1"
+export WAYLAND_DISPLAY=banana-0
+setsid "$BIN" --skip --fullscreen --fs="$D/fs" --cmd=surf >"$L" 2>&1 &
+C=$!
+trap 'kill -TERM -$C 2>/dev/null' TERM INT HUP
+wait $C; S=$?
+while kill -0 $C 2>/dev/null; do wait $C; S=$?; done
+if kill -0 -$C 2>/dev/null; then
+    kill -TERM -$C 2>/dev/null
+    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 -$C 2>/dev/null || break; sleep 0.2; done
+    kill -KILL -$C 2>/dev/null
+fi
+exit $S

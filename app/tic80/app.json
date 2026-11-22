@@ -1,0 +1,11 @@
+{
+        // TIC-80: fantasy computer (carts from tic80.com via its SURF browser), github.com/nesbox/TIC-80, MIT.
+        // Keys are Library::scanApps's; see app/bananatube/app.json.
+        "id": "tic80",
+        "name": "TIC-80",
+        "maker": "Nesbox",
+        "run": "/data/apps/tic80/run-tic80 %ROM%",
+        "ext": "app",
+        "perf": "balanced",
+        "accent": "#5d275d"
+}
