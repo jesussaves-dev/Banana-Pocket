@@ -38,6 +38,7 @@ namespace banana
 			if (gamePage) { items.swap(savedItems); groups.swap(savedGroups); gamePage = false; recoveryPage = false; }
 			savedItems.clear(); savedGroups.clear();
 		}
+		void openStore() { mOpen = true; storeDirect = true; openStoreHome(); }	// the Apps tile's Store entry: B closes it
 		void setup() { mOpen = true; openSetup(); }	// the first-time setup, from the host
 		// the recovery screen (Select + Start held at power-on): a flat page of rescue actions over the held-aside main list
 		void recovery() { openRecovery(); }
@@ -214,7 +215,7 @@ namespace banana
 		std::string about, wifiInfo, ip;
 
 		// the Wi-Fi pages: the networks around, and the keyboard for a password (settings-wifi.cpp)
-		enum Page { LIST, NETWORKS, KEYBOARD, UPDATES, SETUP, STATES, QR } page = LIST;
+		enum Page { LIST, NETWORKS, KEYBOARD, UPDATES, SETUP, STATES, QR, STORE } page = LIST;
 		// the web page's QR code (settings.cpp): encoded once when it opens, drawn from the module bitmap
 		Page qrBack = LIST;
 		std::vector<unsigned char> qrMods;
@@ -301,6 +302,21 @@ namespace banana
 		double nextStatus2 = 0;
 		double checkStart = 0;			// when the "Check for updates" run began (it must not hang the page)
 		std::string slot, version, board;
+		// the app store (banana-store does the work; this lists its index and the installed apps and polls its status)
+		struct StoreApp { std::string id, name, version, desc, have; long size = 0; bool installed = false, update = false; };
+		std::vector<StoreApp> storeApps;
+		std::vector<std::string> storeActs;			// the detail's action ids
+		int ssel2 = 0, actSel = 0;
+		bool storeDirect = false, storeDetail = false, storeBusy = false, storeSeen = false, storeRemoving = false;
+		std::string storeOp, storeStatus, storeMsg;
+		double storeStart = 0;
+		void openStoreHome();
+		void loadStore();
+		void storeRun(const std::string& op, const char* a1, const char* a2 = nullptr, const char* a3 = nullptr);
+		void pollStore();
+		void buildStoreActs();
+		Result pressStore(Key k);
+		void renderStore();
 		void openUpdates();
 		void pollUpdate();
 		Result pressUpdates(Key k);

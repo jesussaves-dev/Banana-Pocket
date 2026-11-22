@@ -33,7 +33,7 @@ echo "ngp/Peel Quest.ngp" > "$D/data/favorites.txt"
 # app's one entry. Nothing here is executed -- the harness only checks the tile is on the shelf (the `apps` op).
 mkdir -p "$D/data/apps/hello"
 cat > "$D/data/apps/hello/app.json" <<'JSON'
-{ "id": "hello", "name": "Hello App", "maker": "Banana", "run": "/usr/libexec/banana/run-bananatube %ROM%", "ext": "app", "perf": "balanced", "accent": "#12ab34" }
+{ "id": "hello", "version": "1.0", "name": "Hello App", "maker": "Banana", "run": "/usr/libexec/banana/run-bananatube %ROM%", "ext": "app", "perf": "balanced", "accent": "#12ab34" }
 JSON
 touch "$D/data/apps/hello/Hello.app"
 # a save state for one ngp game (RetroArch keeps them sorted per core), so the states page has something to list

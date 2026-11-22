@@ -85,7 +85,7 @@ for size in 640x557; do
     check "press a: used, view 1"          # home -> the library
     check "press down: used, view 1 sys 0 game 1"
     check "sysinfo ngp: .*achievements 17/80"     # the shelf's RetroAchievements totals (fixture: 12/40 + 5/40)
-    check "apps .*: hello (Hello App), 1 entries"  # the Apps shelf: a scanned manifest (fixture.sh)
+    check "apps .*: hello (Hello App), 2 entries"  # the Apps shelf: a scanned manifest (fixture.sh)
     check "press a: used, view 2"          # library -> ready screen
     check "launch 1: .*Monkey Puzzle League.ngp"
     check "splash boot-seat at 1900 ms"
@@ -739,5 +739,44 @@ for s in settings settings-list settings-system settings-tz; do
     [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ] || { echo "FAIL $size: $f is blank"; fail=1; }
 done
 for s in settings settings-system; do golden "$s" "$OUT/$size-$s.png"; done
+# The Store screen (Settings' store page, from the Apps tile's first entry): a mock index through banana-store, a
+# refresh, the list, one app's page, per style. hello is installed at 1.0 and the index has 1.1 (Update); the others
+# are new.
+make -s -C "$HERE" ALSA=0 banana-store 2>&1 | tail -n 35
+SX=$OUT/store-fixture
+rm -rf "$SX"; mkdir -p "$SX/run"
+sha=0000000000000000000000000000000000000000000000000000000000000000
+cat > "$SX/index.json" <<JSON
+{ "version": 1, "apps": [
+ { "id": "hello", "name": "Hello App", "version": "1.1", "description": "Says hello. A new version.", "size": 2048, "minBanana": "1.0", "url": "file://$SX/hello.tar", "sha256": "$sha" },
+ { "id": "pocket-tetris", "name": "Pocket Tetris", "version": "0.3.2", "description": "Falling blocks, in a small app of its own.", "size": 3145728, "minBanana": "1.0", "url": "file://$SX/t.tar", "sha256": "$sha" },
+ { "id": "weather", "name": "Weather", "version": "2.0", "description": "The forecast over Wi-Fi.", "size": 524288, "minBanana": "1.0", "url": "file://$SX/w.tar", "sha256": "$sha" } ] }
+JSON
+echo 1.0.1 > "$SX/version"
+stolog=$OUT/store.log
+: > "$stolog"
+for st in "dark:640x557:classic" "street:1240x1080:street" "blast:1240x1080:blast"; do
+    th=${st%%:*}; rest=${st#*:}; sz=${rest%%:*}; nm=${rest#*:}
+    case $th in dark) tv=dark;; *) tv=file:$HERE/../system/rootfs/usr/share/banana/themes/$th.json;; esac
+    sed -i "s|^ *theme *=.*|theme = $tv|" "$FX/data/settings.conf"
+    rm -f "$SX/run/store.status"
+    BANANA_STORE_ALLOW_FILE=1 BANANA_STORE_BIN="$HERE/banana-store" BANANA_STORE_INDEX="file://$SX/index.json" BANANA_APPS="$FX/data/apps" \
+        BANANA_CACHE="$SX/cache" BANANA_RUN="$SX/run" BANANA_VERSION_FILE="$SX/version" \
+        "$HERE/banana-ui" --headless "$OUT/$sz-store-$nm-" --size $sz --assets "$HERE/assets/rnds" --banana "$HERE/assets/banana" \
+        --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" \
+        --script "home 0; wait 600; store; wait 1500; shot list; press down; press a; wait 100; shot detail" 2>> "$stolog" ||
+        { echo "FAIL $nm: banana-ui (store) exited $?"; fail=1; }
+    sed -i "s|^ *theme *=.*|theme = dark|" "$FX/data/settings.conf"
+    for s in list detail; do
+        f=$OUT/$sz-store-$nm-$s.png
+        [ -s "$f" ] || { echo "FAIL $nm: no $f"; fail=1; continue; }
+        [ "$(convert "$f" -format '%[fx:standard_deviation>0.01]' info:)" = 1 ] || { echo "FAIL $nm: $f is blank"; fail=1; }
+        sz2=$sz; size=$sz; golden "store-$nm-$s" "$f"
+    done
+done
+size=640x557
+grep -q "store open" "$stolog" || { echo "FAIL store: didn't open"; fail=1; }
+grep -q '^done' "$SX/run/store.status" || { echo "FAIL store: the refresh didn't finish: $(cat "$SX/run/store.status" 2>&1)"; fail=1; }
+[ -s "$SX/cache/store-index.json" ] || { echo "FAIL store: no cached index"; fail=1; }
 [ $fail = 0 ] && echo "banana-ui: all checks passed ($OUT)"
 exit $fail

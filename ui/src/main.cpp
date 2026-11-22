@@ -1335,6 +1335,13 @@ int main(int argc, char** argv)
 		{
 			lib.clearLaunch();
 			if (gamePid > 0) { logf("launch ignored: a game is running"); continue; }
+			if (lib.gameAt(g).path == "banana:store")
+			{
+				std::lock_guard<std::mutex> l(worker.uiLock);
+				settingsView.openStore();
+				dirty = true;
+				continue;
+			}
 			runGame(g);
 			continue;
 		}

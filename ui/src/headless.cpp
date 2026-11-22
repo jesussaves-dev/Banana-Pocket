@@ -261,6 +261,7 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 		}
 		else if (op == "recovery") { settings.recovery(); logf("recovery open"); }
 		else if (op == "setup") { settings.setup(); logf("setup open"); }
+		else if (op == "store") { settings.openStore(); logf("store open"); }
 		// search <text>: the search keyboard open with that text typed (START then searches)
 		else if (op == "search") { std::string t; std::getline(cs, t); size_t b = t.find_first_not_of(' '); settings.openSearch(b == std::string::npos ? "" : t.substr(b)); logf("search open: \"%s\"", t.c_str()); }
 		else if (op == "mem")

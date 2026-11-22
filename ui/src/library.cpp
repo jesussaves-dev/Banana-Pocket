@@ -804,6 +804,13 @@ namespace banana
 			ap.favorites = ap.apps = true;
 			ap.order = 1 << 19;
 			ap.def.id = "apps"; ap.def.name = "Apps"; ap.def.maker = "Collection"; ap.def.always = true;
+			{
+				// the Store: a built-in entry first; main.cpp opens its screen instead of launching it
+				Game g;
+				g.path = "banana:store"; g.title = "Store"; g.fav = false;
+				ap.games.push_back(g);
+				ap.sysOf.push_back(0);
+			}
 			for (int a = 0; a < (int)appShelves.size(); a++)
 			{
 				Game g;

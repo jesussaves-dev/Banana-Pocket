@@ -81,12 +81,12 @@ namespace banana
 	}
 
 	// a program in the background, not waited for (Wi-Fi coming up takes seconds)
-	static void spawn(const char* path, const char* arg, const char* arg2 = nullptr)
+	static void spawn(const char* path, const char* arg, const char* arg2 = nullptr, const char* arg3 = nullptr)
 	{
 		pid_t p = fork();
 		if (p == 0)
 		{
-			if (fork() == 0) { setsid(); execl(path, path, arg, arg2, (char*)nullptr); _exit(127); }
+			if (fork() == 0) { setsid(); execl(path, path, arg, arg2, arg3, (char*)nullptr); _exit(127); }
 			_exit(0);
 		}
 		if (p > 0) waitpid(p, nullptr, 0);
@@ -420,6 +420,7 @@ namespace banana
 			"", "reset_system", { "" }, { "" }, Item::ACTION);
 		add(S, "gear", "Reset emulator settings", "Puts the emulator choices back to their defaults: the core.<system> picks. Your menu and card settings stay. Press A twice.",
 			"", "reset_emulator", { "" }, { "" }, Item::ACTION);
+		add(S, "gear", "App Store", "Apps to install over Wi-Fi: each is checked against its published size and checksum before it is put in place.", "", "store", {}, {}, Item::PAGE);
 		add(S, "gear", "About", "", "", "", {}, {}, Item::INFO);
 		add(S, "gear", "Restart", "Restarts the handheld. Press A twice.", "", "reboot", { "" }, { "" }, Item::ACTION);
 		add(S, "gear", "Shut down", "Turns the handheld off. Press A twice. (Or hold the power button.)", "", "poweroff", { "" }, { "" }, Item::ACTION);
@@ -850,7 +851,7 @@ namespace banana
 			if (dir <= 0) return NONE;
 			if (it.key == "scrape") { startScrape(); return MOVED; }
 			if (it.key == "states") { openStates(); return MOVED; }
-			if (it.key == "update") openUpdates(); else if (it.key == "setup") openSetup(); else openNetworks();
+			if (it.key == "store") { storeDirect = false; openStoreHome(); } else if (it.key == "update") openUpdates(); else if (it.key == "setup") openSetup(); else openNetworks();
 			return MOVED;
 		}
 		if (it.kind == Item::ACTION)
@@ -1003,6 +1004,7 @@ namespace banana
 		if (page == NETWORKS) return pressNetworks(k);
 		if (page == KEYBOARD) return pressKeyboard(k);
 		if (page == UPDATES) return pressUpdates(k);
+		if (page == STORE) return pressStore(k);
 		if (page == SETUP) return pressSetup(k);
 		if (page == QR) { page = qrBack; message.clear(); return MOVED; }	// any key closes it
 		if (page == STATES) return pressStates(k);
@@ -1152,6 +1154,21 @@ namespace banana
 				if (downY < ry || downY > ry + 56) continue;
 				if (r != wsel) { wsel = r; return MOVED; }
 				return pressSetup(Key::A);
+			}
+			return NONE;
+		}
+		if (page == STORE)
+		{
+			if (downY >= 418 && downY <= 466) return pressStore(downX < 320 ? Key::B : Key::A);
+			int n = storeDetail ? (int)storeActs.size() : (int)storeApps.size();
+			int first = std::max(0, std::min((storeDetail ? actSel : ssel2) - ROWS + 1, n - ROWS));
+			for (int r = 0; r < ROWS && first + r < n; r++)
+			{
+				float ry = 82 + r * 64;
+				if (downY < ry || downY > ry + 56) continue;
+				int& cur = storeDetail ? actSel : ssel2;
+				if (first + r != cur) { cur = first + r; return MOVED; }
+				return pressStore(Key::A);
 			}
 			return NONE;
 		}
@@ -1797,6 +1814,7 @@ namespace banana
 		if (page == NETWORKS) { renderNetworks(); return; }
 		if (page == KEYBOARD) { if (genesis) renderNameEntry(); else if (snes) renderPhoneBook(); else renderKeyboard(); return; }
 		if (page == UPDATES) { renderUpdates(); return; }
+		if (page == STORE) { renderStore(); return; }
 		if (page == SETUP) { renderSetup(); return; }
 		if (page == QR) { renderQr(); return; }
 		if (page == STATES) { renderStates(); return; }
@@ -1995,6 +2013,12 @@ namespace banana
 			pollUpdate();
 			changed |= ustatus != before;
 		}
+		if (page == STORE && storeBusy && now >= nextStatus2)
+		{
+			std::string before = storeStatus;
+			pollStore();
+			changed |= storeStatus != before || !storeBusy;
+		}
 		std::string out;
 		if (scanJob.take(out))
 		{
@@ -2042,6 +2066,7 @@ namespace banana
 	{
 		if (scanJob.running() || statusJob.running()) return 100;
 		if (page == UPDATES && (applying || checking)) return std::max(0, (int)(nextStatus2 - t));
+		if (page == STORE && storeBusy) return std::max(0, (int)(nextStatus2 - t));
 		if (page != NETWORKS || !wifiEnabled) return -1;
 		double due = joining.empty() ? nextScan : std::min(nextStatus, joinStart + 30001);
 		return std::max(0, (int)(due - t));
@@ -2605,6 +2630,246 @@ namespace banana
 			face("A", act, 622 - aw, aw);
 		}
 		footer(help, p.muted);
+		be->endScreen();
+	}
+	// ---- the app store: banana-store's index and installs (a status file polled like the updater's) ---------------
+	static std::string envOr(const char* k, const std::string& d) { const char* v = getenv(k); return v && *v ? v : d; }
+
+	// "1.2.10" > "1.2.9": dotted numbers, anything else ignored (the helper compares the same way)
+	static int verCmp(const std::string& a, const std::string& b)
+	{
+		auto parts = [](const std::string& s)
+		{
+			std::vector<long> v;
+			long cur = 0;
+			bool any = false;
+			for (char ch : s)
+			{
+				if (ch >= '0' && ch <= '9') { cur = cur * 10 + (ch - '0'); any = true; }
+				else if (ch == '.') { v.push_back(cur); cur = 0; any = false; }
+				else break;
+			}
+			if (any) v.push_back(cur);
+			return v;
+		};
+		std::vector<long> x = parts(a), y = parts(b);
+		size_t n = std::max(x.size(), y.size());
+		x.resize(n, 0); y.resize(n, 0);
+		for (size_t i = 0; i < n; i++) if (x[i] != y[i]) return x[i] < y[i] ? -1 : 1;
+		return 0;
+	}
+
+	void Settings::loadStore()
+	{
+		storeApps.clear();
+		std::string apps = envOr("BANANA_APPS", "/data/apps");
+		JPtr j = readJsonFile(envOr("BANANA_CACHE", data + "/cache") + "/store-index.json");
+		const JVal* arr = j && j->isObj() ? j->get("apps") : nullptr;
+		if (arr && arr->isArr())
+			for (auto& e : arr->arr)
+			{
+				if (!e->isObj() || e->str("id").empty()) continue;
+				StoreApp s;
+				s.id = e->str("id");
+				s.name = e->str("name", s.id);
+				s.version = e->str("version");
+				s.desc = e->str("description");
+				s.size = (long)e->num("size");
+				JPtr m = readJsonFile(apps + "/" + s.id + "/app.json");
+				if (m && m->isObj()) { s.installed = true; s.have = m->str("version"); s.update = verCmp(s.version, s.have) > 0; }
+				storeApps.push_back(s);
+			}
+		if (ssel2 >= (int)storeApps.size()) ssel2 = std::max(0, (int)storeApps.size() - 1);
+	}
+
+	void Settings::storeRun(const std::string& op, const char* a1, const char* a2, const char* a3)
+	{
+		unlink((envOr("BANANA_RUN", "/run/banana") + "/store.status").c_str());
+		storeOp = op;
+		storeStatus = "starting";
+		storeMsg.clear();
+		storeBusy = true;
+		storeSeen = false;
+		storeStart = now;
+		nextStatus2 = now + 300;
+		std::string bin = envOr("BANANA_STORE_BIN", "/usr/bin/banana-store");
+		if (!sync) { spawn(bin.c_str(), a1, a2, a3); return; }
+		// the headless test's clock is virtual: let the helper finish so the next poll finds its last line
+		pid_t pid = fork();
+		if (pid == 0) { execl(bin.c_str(), bin.c_str(), a1, a2, a3, (char*)nullptr); _exit(127); }
+		if (pid > 0) waitpid(pid, nullptr, 0);
+	}
+
+	void Settings::openStoreHome()
+	{
+		page = STORE;
+		ssel2 = 0; storeDetail = false; storeRemoving = false; storeBusy = false;
+		storeMsg.clear(); storeStatus.clear();
+		loadStore();
+		storeRun("refresh", "refresh");
+	}
+
+	void Settings::pollStore()
+	{
+		nextStatus2 = now + 400;
+		std::string s = readLine(envOr("BANANA_RUN", "/run/banana") + "/store.status");
+		if (!s.empty()) storeSeen = true;
+		if (s.compare(0, 7, "running") == 0)
+		{
+			long d = 0, t = 0;
+			sscanf(s.c_str(), "running %ld %ld", &d, &t);
+			storeStatus = t > 0 ? std::to_string(std::min(100L, d * 100 / t)) + "%" : "...";
+			return;
+		}
+		bool done = s.compare(0, 4, "done") == 0, err = s.compare(0, 5, "error") == 0;
+		if (!done && !err)
+		{
+			// the helper never started or died without a line: don't leave the page waiting
+			if (!storeSeen && now - storeStart > 20) { err = true; s = "error the store helper did not start"; }
+			else if (storeOp != "refresh" ? now - storeStart > 900 : now - storeStart > 90) { err = true; s = "error no answer"; }
+			else return;
+		}
+		storeBusy = false;
+		storeStatus.clear();
+		loadStore();
+		if (err) storeMsg = s.size() > 6 ? s.substr(6) : "failed";
+		else if (storeOp == "refresh") storeMsg = s == "done offline" ? tr("Offline: showing the last list") : "";
+		else storeMsg = tr(storeOp == "remove" ? "Removed" : "Installed");
+		if (storeOp != "refresh") libChanged = true;	// the Apps shelf is scanned again
+		if (storeDetail) { storeRemoving = false; buildStoreActs(); }
+	}
+
+	void Settings::buildStoreActs()
+	{
+		storeActs.clear();
+		ssel2 = std::min(ssel2, std::max(0, (int)storeApps.size() - 1));
+		if (storeApps.empty()) return;
+		const StoreApp& a = storeApps[ssel2];
+		if (storeRemoving) storeActs = { "keep", "wipe", "cancel" };
+		else
+		{
+			if (!a.installed) storeActs.push_back("install");
+			else if (a.update) storeActs.push_back("update");
+			if (a.installed) storeActs.push_back("remove");
+		}
+	}
+
+	Settings::Result Settings::pressStore(Key k)
+	{
+		int n = storeDetail ? (int)storeActs.size() : (int)storeApps.size();
+		bool hold = storeBusy && storeOp != "refresh";	// an install or a removal is not interrupted
+		switch (k)
+		{
+		case Key::UP: case Key::DOWN:
+			if (hold || n < 2) return NONE;
+			{
+				int& cur = storeDetail ? actSel : ssel2;
+				cur = (cur + (k == Key::UP ? -1 : 1) + n) % n;
+			}
+			return MOVED;
+		case Key::X:
+			if (storeBusy || storeDetail) return NONE;
+			storeRun("refresh", "refresh");
+			return MOVED;
+		case Key::A: case Key::RIGHT:
+		{
+			if (hold) return NONE;
+			if (!storeDetail)
+			{
+				if (storeApps.empty()) { if (!storeBusy) storeRun("refresh", "refresh"); return MOVED; }
+				storeDetail = true; storeRemoving = false; actSel = 0;
+				buildStoreActs();
+				storeMsg.clear();
+				return MOVED;
+			}
+			if (storeBusy || actSel >= (int)storeActs.size()) return NONE;
+			const std::string act = storeActs[actSel];
+			const std::string id = storeApps[ssel2].id;
+			if (act == "install" || act == "update") storeRun("install", "install", id.c_str());
+			else if (act == "remove") { storeRemoving = true; buildStoreActs(); actSel = 0; }
+			else if (act == "cancel") { storeRemoving = false; buildStoreActs(); actSel = 0; }
+			else { storeRun("remove", "remove", id.c_str(), act == "wipe" ? "--wipe-data" : nullptr); }
+			return MOVED;
+		}
+		case Key::B: case Key::LEFT:
+			if (hold) return NONE;
+			if (storeDetail)
+			{
+				if (storeRemoving) { storeRemoving = false; buildStoreActs(); actSel = 0; }
+				else storeDetail = false;
+				return MOVED;
+			}
+			page = LIST; storeMsg.clear();
+			if (storeDirect) { mOpen = false; storeDirect = false; return CLOSED; }
+			return MOVED;
+		case Key::START:
+			if (hold) return NONE;
+			page = LIST; mOpen = false; storeDirect = false;
+			return CLOSED;
+		default: return NONE;
+		}
+	}
+
+	void Settings::renderStore()
+	{
+		SPal p = pal(light);
+		const bool det = storeDetail && ssel2 < (int)storeApps.size();
+		const StoreApp* app = det ? &storeApps[ssel2] : nullptr;
+		auto sizeText = [](long b) { char t[32]; snprintf(t, sizeof t, b >= 1048576 ? "%.1f MB" : "%.0f KB", b >= 1048576 ? b / 1048576.0 : b / 1024.0); return std::string(t); };
+		auto actLabel = [&](const std::string& a)
+		{
+			return tr(a == "install" ? "Install" : a == "update" ? "Update" : a == "remove" ? "Remove" : a == "keep" ? "Remove, keep saves"
+				: a == "wipe" ? "Remove and delete saves" : "Cancel");
+		};
+		std::vector<SRow> rows;
+		if (det) for (auto& a : storeActs) { SRow r; r.label = actLabel(a); r.accent = a == "wipe"; rows.push_back(r); }
+		else
+			for (auto& a : storeApps)
+			{
+				SRow r;
+				r.label = a.name;
+				r.accent = a.update;
+				r.value = a.update ? tr("Update") : a.installed ? tr("Installed") : sizeText(a.size);
+				rows.push_back(r);
+			}
+		int sel = det ? actSel : ssel2;
+		std::string title = det ? app->name : tr("App Store");
+		std::string count = det ? app->version + " - " + sizeText(app->size) + (app->installed ? " - " + tr("Installed") + (app->have.empty() ? "" : " " + app->have) : "")
+			: std::to_string(storeApps.size()) + tr(storeApps.size() == 1 ? " app" : " apps");
+		std::string st = storeBusy ? tr(storeOp == "refresh" ? "Checking the store" : storeOp == "remove" ? "Removing" : "Installing") + ": " + storeStatus : storeMsg;
+		std::string help = det ? (storeRemoving ? tr("Keep this app's saves for a later install, or delete them with it?") : app->desc)
+			: storeApps.empty() ? tr(storeBusy ? "Looking for apps..." : "No apps to show. Wi-Fi has to be on; press A to try again.")
+			: tr("Press A on an app for its page. X looks for new apps.");
+		std::string act = (storeBusy && storeOp != "refresh") ? "" : det ? (actSel < (int)storeActs.size() ? "Select" : "") : "Open";
+		if (snes)
+		{
+			std::vector<SChip> left;
+			if (!(storeBusy && storeOp != "refresh")) left.push_back({ "B", tr("Back") });
+			renderLedger(title, count, st, rows, sel, tr("No apps"), help, false, left, { act.empty() ? "" : "A", tr(act) });
+			return;
+		}
+		be->beginScreen();
+		box("screen", false, 0, 0, 640, 480);
+		box("bubble", false, 18, 14, 604, 54);
+		text(fit(title, true, 22, 330), true, 22, 38, 28, p.ink);
+		float cw = text(count, true, 17, 0, 0, p.muted, false, 0, true);
+		text(count, true, 17, 602 - cw, 31, p.muted);
+		int first = std::max(0, std::min(sel - ROWS + 1, (int)rows.size() - ROWS));
+		for (int r = 0; r < ROWS && first + r < (int)rows.size(); r++)
+		{
+			bool on = first + r == sel;
+			float y = 82 + r * 64;
+			box(on ? "pick" : "slot", on, 18, y, 604, 56);
+			Color c = on ? p.onPick : p.muted;
+			text(fit(rows[first + r].label, true, 20, 380), true, 20, 38, y + 16, c);
+			const std::string& tag = rows[first + r].value;
+			float tw = text(tag, true, 17, 0, 0, c, false, 0, true);
+			text(tag, true, 17, 586 - tw, y + 18, rows[first + r].accent ? (on ? p.onPickAccent : p.accent) : c);
+		}
+		if (rows.empty()) text(tr("No apps"), true, 20, 38, 98, p.muted);
+		if (!(storeBusy && storeOp != "refresh")) face("B", tr("Back"), 18, faceWidth("B", tr("Back")));
+		if (!act.empty()) { float aw = faceWidth("A", tr(act)); face("A", tr(act), 622 - aw, aw); }
+		footer(st.empty() ? help : st + ". " + help, p.muted);
 		be->endScreen();
 	}
 	// ---- the save states a game has (the states page) -----------------------------------------------------------
