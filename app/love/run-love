@@ -1,0 +1,44 @@
+#!/bin/sh
+# LÖVE as a Wayland client of banana-ui's compositor (like run-tic80). It opens a gamepad picker over the *.love files
+# (and game folders) you put in $BANANA_APP_DATA/games; a game that ends brings you back to the picker.
+#   run-love [<marker>]        the marker is what banana-ui found (the app's one entry); unused here
+APP=$(cd "$(dirname "$0")" && pwd)
+BIN=$APP/love
+[ -x "$BIN" ] || { echo "run-love: no $BIN" >&2; exit 1; }
+D=${BANANA_APP_DATA:-/data/banana/appdata/love}
+mkdir -p "$D/games" /data/banana/logs 2>/dev/null
+export HOME="$D/home"; mkdir -p "$HOME" 2>/dev/null
+export XDG_RUNTIME_DIR=/run/banana/wayland
+mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null; chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null
+: "${SDL_VIDEODRIVER:=wayland}"; export SDL_VIDEODRIVER
+: "${SDL_AUDIODRIVER:=alsa}"; export SDL_AUDIODRIVER
+# banana's pad map; F (guide) is dropped, banana-ui keeps it for its quick menu.
+SDL_GAMECONTROLLERCONFIG="$(sed -e 's/,guide:b[0-9]*,/,/' /etc/banana/sdl-pad.map 2>/dev/null)"
+export SDL_GAMECONTROLLERCONFIG
+export LD_LIBRARY_PATH="$APP${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export WAYLAND_DISPLAY=banana-0
+export LOVE_GAMES_DIR="$D/games"
+export LOVE_PICK_OUT="$D/pick"
+
+L=/data/banana/logs/love.log
+[ -s "$L" ] && mv -f "$L" "$L.1"
+: >"$L"
+C=
+trap '[ -n "$C" ] && kill -TERM -$C 2>/dev/null; STOP=1' TERM INT HUP
+STOP=
+while [ -z "$STOP" ]; do
+    rm -f "$LOVE_PICK_OUT"
+    setsid "$BIN" "$APP/picker" >>"$L" 2>&1 &
+    C=$!; wait $C
+    [ -s "$LOVE_PICK_OUT" ] || break
+    G=$(sed -n 1p "$LOVE_PICK_OUT")
+    setsid "$BIN" "$G" >>"$L" 2>&1 &
+    C=$!; wait $C
+    while kill -0 $C 2>/dev/null; do wait $C; done
+done
+if [ -n "$C" ] && kill -0 -$C 2>/dev/null; then
+    kill -TERM -$C 2>/dev/null
+    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 -$C 2>/dev/null || break; sleep 0.2; done
+    kill -KILL -$C 2>/dev/null
+fi
+exit 0

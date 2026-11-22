@@ -1,0 +1,11 @@
+{
+        // LÖVE: 2D game framework; runs your own .love games from a folder (love2d.org), zlib licence.
+        // Keys are Library::scanApps's; see app/bananatube/app.json.
+        "id": "love",
+        "name": "LÖVE",
+        "maker": "LÖVE Development Team",
+        "run": "/data/apps/love/run-love %ROM%",
+        "ext": "app",
+        "perf": "balanced",
+        "accent": "#e8559a"
+}
