@@ -1,0 +1,12 @@
+{
+        // Jukebox: a music player with a library, cover-tinted screens, a spectrum visualizer, synced lyrics (.lrc),
+        // a sleep timer and resume. Plays MP3, FLAC, Ogg, Opus, AAC/M4A and WAV from /data/music (folders are fine).
+        // Keys are Library::scanApps's; see app/bananatube/app.json.
+        "id": "jukebox",
+        "name": "Jukebox",
+        "maker": "Banana",
+        "run": "/data/apps/jukebox/run-jukebox %ROM%",
+        "ext": "app",
+        "perf": "balanced",
+        "accent": "#ffd21e"
+}

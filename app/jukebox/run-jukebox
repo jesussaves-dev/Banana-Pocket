@@ -1,0 +1,33 @@
+#!/bin/sh
+# Jukebox as a Wayland client of banana-ui's compositor (like run-bananatube). Audio is SDL's ALSA driver, i.e. a
+# PipeWire client: nothing here touches hw:0 mixers.
+#   run-jukebox [<marker>]        the marker is what banana-ui found (the app's one entry); unused here
+APP=$(cd "$(dirname "$0")" && pwd)
+BIN=$APP/jukebox
+[ -x "$BIN" ] || { echo "run-jukebox: no $BIN" >&2; exit 1; }
+D=${BANANA_APP_DATA:-/data/banana/appdata/jukebox}
+export BANANA_APP_DATA="$D"
+mkdir -p "$D" /data/music /data/banana/logs 2>/dev/null
+export HOME="$D/home"; mkdir -p "$HOME" 2>/dev/null
+export XDG_RUNTIME_DIR=/run/banana/wayland
+mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null; chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null
+: "${SDL_VIDEODRIVER:=wayland}"; export SDL_VIDEODRIVER
+: "${SDL_AUDIODRIVER:=alsa}"; export SDL_AUDIODRIVER
+# banana's pad map; F (guide) is dropped, banana-ui keeps it for its quick menu.
+SDL_GAMECONTROLLERCONFIG="$(sed -e 's/,guide:b[0-9]*,/,/' /etc/banana/sdl-pad.map 2>/dev/null)"
+export SDL_GAMECONTROLLERCONFIG
+export WAYLAND_DISPLAY=banana-0
+
+L=/data/banana/logs/jukebox.log
+[ -s "$L" ] && mv -f "$L" "$L.1"
+setsid "$BIN" >"$L" 2>&1 &
+C=$!
+trap 'kill -TERM -$C 2>/dev/null' TERM INT HUP
+wait $C; S=$?
+while kill -0 $C 2>/dev/null; do wait $C; S=$?; done
+if kill -0 -$C 2>/dev/null; then
+    kill -TERM -$C 2>/dev/null
+    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 -$C 2>/dev/null || break; sleep 0.2; done
+    kill -KILL -$C 2>/dev/null
+fi
+exit $S
