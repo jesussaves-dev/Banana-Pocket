@@ -44,6 +44,7 @@ namespace banana
 		bool favorites = false;		// the Favorites collection
 		bool recent = false;		// the Recently played collection (also favorites = true: copies, sysOf)
 		bool search = false;		// the Search collection (also favorites = true: a collection of copies, sysOf)
+		bool apps = false;			// the Apps collection (also favorites = true): one entry per app, sysOf indexing Library::appShelves
 		std::vector<Game> games;	// favourites: copies, with sysOf giving each one's own system
 		std::vector<int> sysOf;
 		int order = 0;				// its place in systems.conf
@@ -133,6 +134,7 @@ namespace banana
 		std::string confPath, romRoot, dataDir, assets;
 		std::vector<SystemDef> defs;
 		std::vector<Shelf> shelves;
+		std::vector<Shelf> appShelves;	// each scanned app's own shelf; the home menu shows them through the one Apps collection
 		std::map<std::string, Look> looks;
 		std::set<std::string> favGames, favSystems;	// "<system>/<rel>", system ids
 		struct Stat { int plays = 0; long seconds = 0; time_t last = 0; int achA = -1, achB = 0; };

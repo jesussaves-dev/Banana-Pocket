@@ -4,7 +4,11 @@
 BIN=/usr/bin/pokedaisy-linux
 [ -x "$BIN" ] || { echo "run-pokedaisy: no $BIN" >&2; exit 1; }
 
-D=/data/banana/pokedaisy
+# $BANANA_APP_DATA is banana-ui's per-app data folder; an earlier image kept the files in pokedaisy/, moved over once.
+D=${BANANA_APP_DATA:-/data/banana/pokedaisy}
+if [ "$D" != /data/banana/pokedaisy ] && [ -d /data/banana/pokedaisy ] && [ -z "$(ls -A "$D" 2>/dev/null)" ]; then
+    rmdir "$D" 2>/dev/null; mv /data/banana/pokedaisy "$D" 2>/dev/null
+fi
 mkdir -p "$D" /data/banana/logs 2>/dev/null
 export HOME="$D/home"; mkdir -p "$HOME" 2>/dev/null
 export XDG_RUNTIME_DIR=/run/banana/wayland

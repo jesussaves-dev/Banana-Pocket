@@ -194,12 +194,15 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 		}
 		else if (op == "apps")
 		{
-			// apps: the app systems the registry scanned (Library::scanApps), one line each -- the Apps shelf, as the
-			// test reads it without a rendered tile
+			// apps: the Apps collection tile and its entries (Library::arrange), one line each, as the test reads them
+			// without a rendered tile
 			for (int i = 0; i < lib.systemCount(); i++)
 			{
-				rnds::SysInfo si = lib.system(i);
-				if (si.app) logf("apps %d: %s (%s), %d entries", i, si.id.c_str(), si.name.c_str(), si.games);
+				const Shelf& sh = lib.shelf(i);
+				if (!sh.apps) continue;
+				lib.openLibrary(i);	// systemOf reads the open shelf
+				for (size_t k = 0; k < sh.games.size(); k++)
+					logf("apps %d: %s (%s), %d entries", i, lib.systemOf((int)k).id.c_str(), sh.games[k].title.c_str(), (int)sh.games.size());
 			}
 		}
 		else if (op == "press")

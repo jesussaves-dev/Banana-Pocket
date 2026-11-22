@@ -11,8 +11,12 @@ BIN=/usr/bin/banana-tube
 # The app's files (yt-dlp's cache, a log) go on the card; the read-only root must not be written. Its ALSA default
 # is the system one -- bananad points "default" at the sound server (PipeWire), so mpv mixes with the menu instead
 # of the two handing the DSP's frontend back and forth.
-export HOME=/data/banana/bananatube/home
-mkdir -p "$HOME" /data/banana/bananatube /data/banana/logs 2>/dev/null
+# $BANANA_APP_DATA is banana-ui's per-app data folder; an earlier image kept this app's files in bananatube/, moved over once.
+D=${BANANA_APP_DATA:-/data/banana/bananatube}
+[ "$D" != /data/banana/bananatube ] && [ -d /data/banana/bananatube/home ] && [ ! -e "$D/home" ] &&
+    mv /data/banana/bananatube/home "$D/home" 2>/dev/null
+export HOME="$D/home"
+mkdir -p "$HOME" /data/banana/logs 2>/dev/null
 # banana-ui's compositor has its socket here: a private, 0700 runtime dir on tmpfs.
 export XDG_RUNTIME_DIR=/run/banana/wayland
 mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null; chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null

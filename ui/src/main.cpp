@@ -1137,6 +1137,15 @@ int main(int argc, char** argv)
 			sigprocmask(SIG_SETMASK, &none, nullptr);
 			setenv("BANANA_ROM", rom.c_str(), 1);
 			setenv("BANANA_SYSTEM", sd.id.c_str(), 1);
+			if (sd.app)
+			{
+				// the app's own data (saves, caches), kept apart from its code so an update never touches it
+				std::string ad = o.data + "/appdata";
+				mkdir(ad.c_str(), 0755);
+				ad += "/" + sd.id;
+				if (mkdir(ad.c_str(), 0755) != 0 && errno != EEXIST) logf("mkdir %s: %s", ad.c_str(), strerror(errno));
+				setenv("BANANA_APP_DATA", ad.c_str(), 1);
+			}
 			setenv("BANANA_RA_PROGRESS", PROGRESS, 1);
 			setenv("BANANA_RA_CHEEVOS", CHEEVOS, 1);
 			setenv("BANANA_RA_CHEEVOS_SET", CHEEVOS_SET, 1);	// RetroArch's patch writes both (buildroot/patches/retroarch/0013)

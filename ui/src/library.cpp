@@ -691,6 +691,7 @@ namespace banana
 	{
 		loadState();
 		shelves.clear();
+		appShelves.clear();
 		MediaIndex media;
 		for (auto& def : defs)
 		{
@@ -747,7 +748,7 @@ namespace banana
 				}
 			}
 			std::sort(sh.games.begin(), sh.games.end(), [](const Game& a, const Game& b) { return lower(a.title) < lower(b.title); });
-			if (!sh.games.empty() || def.always) shelves.push_back(sh);
+			if (!sh.games.empty() || def.always) (def.app ? appShelves : shelves).push_back(sh);
 		}
 		arrange();
 		if (lib >= (int)shelves.size()) lib = 0;
@@ -796,6 +797,25 @@ namespace banana
 			int fa = (int)favSystems.count(a.def.id), fb = (int)favSystems.count(b.def.id);
 			return fa != fb ? fa > fb : a.order < b.order;
 		});
+		// Apps: one tile after the systems holding every app (each launches from its entry here), when there are any
+		if (!appShelves.empty())
+		{
+			Shelf ap;
+			ap.favorites = ap.apps = true;
+			ap.order = 1 << 19;
+			ap.def.id = "apps"; ap.def.name = "Apps"; ap.def.maker = "Collection"; ap.def.always = true;
+			for (int a = 0; a < (int)appShelves.size(); a++)
+			{
+				Game g;
+				if (!appShelves[a].games.empty()) g = appShelves[a].games[0];
+				else g.path = appShelves[a].def.folder;	// no marker file: the launcher still runs, and says why
+				g.title = appShelves[a].def.name;
+				g.fav = false;
+				ap.games.push_back(g);
+				ap.sysOf.push_back(a);
+			}
+			shelves.push_back(ap);
+		}
 		// Favorites: a collection after the systems (its place among them as a favourite itself), when not empty
 		Shelf fav;
 		fav.favorites = true;
@@ -803,7 +823,7 @@ namespace banana
 		fav.def.id = "favorites"; fav.def.name = "Favorites"; fav.def.maker = "Collection";
 		for (int s = 0; s < (int)shelves.size(); s++)
 			for (auto& g : shelves[s].games)
-				if (g.fav) { fav.games.push_back(g); fav.sysOf.push_back(s); }
+				if (g.fav && !shelves[s].apps) { fav.games.push_back(g); fav.sysOf.push_back(s); }
 		std::sort(fav.games.begin(), fav.games.end(), [](const Game& a, const Game& b) { return lower(a.title) < lower(b.title); });
 		// sysOf follows the sort: find each game's system again by its path
 		for (size_t k = 0; k < fav.games.size(); k++)
@@ -869,7 +889,7 @@ namespace banana
 			std::stable_sort(ix.begin(), ix.end(), [&](size_t a, size_t b) { return lower(srch.games[a].title) < lower(srch.games[b].title); });
 			Shelf sorted = srch;
 			for (size_t k = 0; k < ix.size(); k++) { sorted.games[k] = srch.games[ix[k]]; sorted.sysOf[k] = srch.sysOf[ix[k]]; }
-			for (auto& sh : shelves) if (sh.favorites) for (int& s : sh.sysOf) s++;
+			for (auto& sh : shelves) if (sh.favorites && !sh.apps) for (int& s : sh.sysOf) s++;
 			shelves.insert(shelves.begin(), sorted);
 		}
 		if (lib >= (int)shelves.size()) lib = 0;
@@ -881,6 +901,7 @@ namespace banana
 		if (shelf < 0 || shelf >= (int)shelves.size()) return nullptr;
 		Shelf& sh = shelves[shelf];
 		if (game < 0 || game >= (int)sh.games.size()) return nullptr;
+		if (sh.apps) return nullptr;	// an app keeps no plays or favourites
 		if (!sh.favorites) { if (sys) *sys = shelf; return &sh.games[game]; }
 		int s = sh.sysOf[game];
 		if (sys) *sys = s;
@@ -892,6 +913,7 @@ namespace banana
 	const SystemDef& Library::systemOf(int game) const
 	{
 		const Shelf& sh = shelves[lib];
+		if (sh.apps && game >= 0 && game < (int)sh.sysOf.size()) return appShelves[sh.sysOf[game]].def;
 		if (sh.favorites && game >= 0 && game < (int)sh.sysOf.size()) return shelves[sh.sysOf[game]].def;
 		return sh.def;
 	}
