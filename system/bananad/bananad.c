@@ -2968,7 +2968,11 @@ int main(int argc, char **argv)
 		if (jack_settle_at > 0 && jack_settle_at - tnow < wait) wait = jack_settle_at - tnow;	/* the jack's second look */
 		if (audio_retry_at > 0 && audio_retry_at - tnow < wait) wait = audio_retry_at - tnow;	/* the game's driver, after a late sound server */
 		int timeout = wait <= 0 ? 20 : (int)(wait * 1000) + 20;
-		poll(pf, n, timeout);
+		if (poll(pf, n, timeout) < 0 && errno != EINTR) {
+			int e = errno;
+			say("poll: %s", strerror(e));
+			return 1;
+		}
 		double now = mono();
 		if (audio_retry_at > 0 && now >= audio_retry_at) audio_retry_poll();
 		if (vib_off_at > 0 && now >= vib_off_at) { vib_stop(); vib_off_at = 0; }
