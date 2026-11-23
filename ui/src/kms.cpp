@@ -1007,6 +1007,13 @@ namespace banana
 		drmEventContext ev = {};
 		ev.version = 2;
 		ev.page_flip_handler = flipDone;
-		drmHandleEvent(fd, &ev);
+		// a failed read leaves the event queued (POLLIN stays level-triggered, so the loop comes back to it); only the
+		// first failure is logged, so a persistent one does not flood the log while presentation stays gated on pending
+		static bool warned = false;
+		if (drmHandleEvent(fd, &ev) < 0 && !warned)
+		{
+			warned = true;
+			fprintf(stderr, "kms: drmHandleEvent failed (%s), %d flip(s) pending\n", strerror(errno), pending);
+		}
 	}
 }

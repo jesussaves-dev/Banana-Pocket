@@ -37,6 +37,10 @@ ${CXX:-c++} -O2 -std=c++17 $(pkg-config --cflags libdrm 2>/dev/null) -o "$OUT/dm
     { echo "FAIL: can't build dmabuf-test (see $OUT/dmabuf-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/dmabuf-test" > "$OUT/dmabuf.log" 2>&1 || { echo "FAIL: dmabuf-test"; cat "$OUT/dmabuf.log"; fail=1; }
 # the Phase 3C rotation map must be turn.h's 90-degree turn, and the quad's UVs must interpolate to it
+${CXX:-c++} -O2 -std=c++17 -o "$OUT/resume-test" "$HERE/tests/resume-test.cpp" 2> "$OUT/resume-build.log" ||
+    { echo "FAIL: can't build resume-test (see $OUT/resume-build.log)"; fail=1; }
+[ "$fail" = 1 ] || "$OUT/resume-test" > "$OUT/resume.log" 2>&1 || { echo "FAIL: resume-test"; cat "$OUT/resume.log"; fail=1; }
+
 ${CXX:-c++} -O2 -std=c++17 -o "$OUT/rotation-test" "$HERE/tests/rotation-test.cpp" 2> "$OUT/rotation-build.log" ||
     { echo "FAIL: can't build rotation-test (see $OUT/rotation-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/rotation-test" > "$OUT/rotation.log" 2>&1 || { echo "FAIL: rotation-test"; cat "$OUT/rotation.log"; fail=1; }

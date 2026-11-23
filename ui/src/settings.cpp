@@ -1965,13 +1965,23 @@ namespace banana
 		bool scrapeChanged = pollScrape(t);
 		if (raCheck)
 		{
-			std::lock_guard<std::mutex> l(raCheck->mu);
-			if (raCheck->done)
+			bool done;
+			int kind = 0;
+			std::string detail;
 			{
-				const int kind = raCheck->kind;
-				toast(kind == 1 ? "RetroAchievements" : "RetroAchievements login failed", raCheck->l2,
+				std::lock_guard<std::mutex> l(raCheck->mu);
+				done = raCheck->done;
+				if (done)
+				{
+					kind = raCheck->kind;
+					detail = raCheck->l2;
+				}
+			}
+			if (done)
+			{
+				toast(kind == 1 ? "RetroAchievements" : "RetroAchievements login failed", detail,
 					kind == 1 ? 0x6ad07a : 0xff7a4a, kind == 1 ? 1 : 2, kind == 1 ? 5000 : 7000);
-				message = kind == 1 ? "" : raCheck->l2;
+				message = kind == 1 ? "" : detail;
 				raCheck.reset();
 				return true;
 			}

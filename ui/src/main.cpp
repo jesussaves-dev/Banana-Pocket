@@ -28,6 +28,7 @@
 #include "sound.h"
 #include "idle.h"
 #include "menu.h"
+#include "resume.h"
 #include <linux/input.h>
 #include "layout.h"
 
@@ -1605,20 +1606,17 @@ int main(int argc, char** argv)
 						// times a second for 20 s (the thump and the switch-off stay)
 						if (crt && gamePid <= 0) { crtWarmAt = crtWarmStep = nowMs(); disp.setWarmup(0); }
 						else if (disp.warmupLevel() != 1000) disp.setWarmup(1000);
-						bool restored = false;
-						for (int tries = 0; disp.isOpen() && !restored && tries < 50; tries++)
-						{
-							restored = disp.restore();
-							if (!restored) sleepUs(20000);
-						}
-						if (restored)
+						bool restored = restoreRetry([&] { return disp.isOpen(); }, [&] { return disp.restore(); },
+						                             [] { sleepUs(20000); });
+						ResumeAction act = resumeAction(restored, gamePid);
+						if (act == ResumeAction::Resume)
 						{
 							if (crt) vibrate(140);	// the degauss thump (only a real wake gets here: phantoms stay asleep)
 							comp.resume();
 							// bananad's wake SIGCONTs the game's group: the pause menu keeps it frozen
 							if (gamePid > 0 && pause.open) { signalTree(gamePid, SIGSTOP); pause.draw(); }
 						}
-						else if (gamePid > 0) logf("resume: panel restore failed (resident game)");
+						else if (act == ResumeAction::KeepResident) logf("resume: panel restore failed (resident game)");
 						else
 						{
 							logf("resume: panel restore failed, reopening it");
