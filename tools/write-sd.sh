@@ -22,9 +22,29 @@ MODEL=$(cat "/sys/block/$NAME/device/model" 2>/dev/null | tr -s ' ' || echo "?")
 if [ "$REMOVABLE" != 1 ]; then
     echo "warning: $DEV doesn't report itself as removable ($MODEL)"
 fi
-if [ "$(lsblk -no MOUNTPOINT "$DEV" 2>/dev/null | grep -c .)" != 0 ]; then
+# The device number distinguishes an unmounted device from a missing probe row.
+if ! PROBE=$(lsblk -n -P -o MAJ:MIN,MOUNTPOINT -- "$DEV"); then
+    echo "cannot verify mount points for $DEV: lsblk failed" >&2
+    exit 1
+fi
+if ! MOUNTED=$(printf '%s\n' "$PROBE" | awk '
+    /^MAJ:MIN="[0-9]+:[0-9]+" MOUNTPOINT="[^"]*"$/ {
+        rows++
+        if ($0 !~ / MOUNTPOINT=""$/) mounted = 1
+        next
+    }
+    { invalid = 1 }
+    END {
+        if (!rows || invalid) exit 1
+        print mounted + 0
+    }
+'); then
+    echo "cannot verify mount points for $DEV: unexpected or empty lsblk output" >&2
+    exit 1
+fi
+if [ "$MOUNTED" = 1 ]; then
     echo "$DEV has something mounted on it; unmount it first:" >&2
-    lsblk "$DEV" >&2
+    lsblk -- "$DEV" >&2
     exit 1
 fi
 
