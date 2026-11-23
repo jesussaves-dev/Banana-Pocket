@@ -37,6 +37,21 @@ set_default() {   # set_default <slot>: extlinux.conf rewritten, the small file 
 }
 hash_of() { sha256sum "$1" | cut -d' ' -f1; }
 
+# One update at a time: apply, stage, switch and prune share the slot writes, the unpack directory and the boot
+# selector, and the UI and an SSH session can both start one. The lock is held on fd 9 until this shell exits, so
+# every failure path (fail() exits) releases it. A refused run touches nothing: no status line, no .unpack removal.
+case $1 in
+apply|stage|switch|prune)
+    mkdir -p "$RUN" 2>/dev/null
+    exec 9>"$RUN/update.lock"
+    if ! flock -n 9 2>/dev/null; then
+        [ "$1" = prune ] && exit 0
+        echo "update: another update is running" >&2
+        exit 1
+    fi
+    ;;
+esac
+
 case $1 in
 list)
     mkdir -p $UPDATES 2>/dev/null
