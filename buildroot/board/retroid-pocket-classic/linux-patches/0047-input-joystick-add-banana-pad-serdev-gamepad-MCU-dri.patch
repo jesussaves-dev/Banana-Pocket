@@ -56,7 +56,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..8ffdfa7739aa708be880d6878df06823b2d6cfbe
 --- /dev/null
 +++ b/drivers/input/joystick/banana-pad.c
-@@ -0,0 +1,563 @@
+@@ -0,0 +1,592 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * banana-pad: gamepad MCU driver (serdev).
@@ -156,6 +156,7 @@ index 0000000000000000000000000000000000000000..8ffdfa7739aa708be880d6878df06823
 +	unsigned int wd_fail;
 +	bool recovering;
 +	bool vdd_on;
++	bool uart_open;	/* serdev port is open; guarded by lock */
 +};
 +
 +/* ---- transmit ---- */
@@ -170,6 +171,10 @@ index 0000000000000000000000000000000000000000..8ffdfa7739aa708be880d6878df06823
 +		return -EINVAL;
 +
 +	mutex_lock(&bp->lock);
++	if (!bp->uart_open) {
++		mutex_unlock(&bp->lock);
++		return -ENODEV;
++	}
 +	memcpy(f, bp_magic, 4);
 +	f[4] = bp->seq++;
 +	f[5] = cmd;
@@ -329,19 +334,39 @@ index 0000000000000000000000000000000000000000..8ffdfa7739aa708be880d6878df06823
 +
 +/* ---- power / link ---- */
 +
++static void bp_close_uart(struct banana_pad *bp)
++{
++	mutex_lock(&bp->lock);
++	if (bp->uart_open) {
++		bp->uart_open = false;
++		serdev_device_close(bp->serdev);
++	}
++	mutex_unlock(&bp->lock);
++}
++
 +static int bp_open_uart(struct banana_pad *bp)
 +{
 +	int ret;
 +
++	mutex_lock(&bp->lock);
++	if (bp->uart_open) {
++		mutex_unlock(&bp->lock);
++		return 0;
++	}
 +	bp->fill = 0;	/* port is closed here: no receive callback can race */
 +	ret = serdev_device_open(bp->serdev);
-+	if (ret)
++	if (ret) {
++		mutex_unlock(&bp->lock);
 +		return ret;
++	}
 +	serdev_device_set_baudrate(bp->serdev, BP_BAUD);
 +	serdev_device_set_flow_control(bp->serdev, false);
 +	ret = serdev_device_set_parity(bp->serdev, SERDEV_PARITY_NONE);
 +	if (ret)
 +		serdev_device_close(bp->serdev);
++	else
++		bp->uart_open = true;
++	mutex_unlock(&bp->lock);
 +	return ret;
 +}
 +
@@ -390,7 +415,7 @@ index 0000000000000000000000000000000000000000..8ffdfa7739aa708be880d6878df06823
 +		goto out;
 +	}
 +
-+	serdev_device_close(bp->serdev);
++	bp_close_uart(bp);
 +	if (bp->wd_fail >= BP_WD_POWER_FROM) {
 +		if (bp->enable)
 +			gpiod_set_value_cansleep(bp->enable, 0);
@@ -564,8 +589,12 @@ index 0000000000000000000000000000000000000000..8ffdfa7739aa708be880d6878df06823
 +	bp->boot = devm_gpiod_get_optional(dev, "boot", GPIOD_OUT_HIGH);
 +	bp->enable = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_HIGH);
 +	bp->reset = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
-+	if (IS_ERR(bp->boot) || IS_ERR(bp->enable) || IS_ERR(bp->reset))
-+		return dev_err_probe(dev, -EINVAL, "gpios\n");
++	if (IS_ERR(bp->boot))
++		return dev_err_probe(dev, PTR_ERR(bp->boot), "boot gpio\n");
++	if (IS_ERR(bp->enable))
++		return dev_err_probe(dev, PTR_ERR(bp->enable), "enable gpio\n");
++	if (IS_ERR(bp->reset))
++		return dev_err_probe(dev, PTR_ERR(bp->reset), "reset gpio\n");
 +
 +	ret = bp_setup_input(bp, dev);
 +	if (ret)
@@ -593,7 +622,7 @@ index 0000000000000000000000000000000000000000..8ffdfa7739aa708be880d6878df06823
 +
 +	cancel_delayed_work_sync(&bp->wd);
 +	debugfs_remove(bp->dbg);
-+	serdev_device_close(sdev);
++	bp_close_uart(bp);
 +	if (bp->enable)
 +		gpiod_set_value_cansleep(bp->enable, 0);
 +	if (bp->reset)
