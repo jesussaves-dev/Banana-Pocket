@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anze <aanzdev@gmail.com>
+Date: Sun, 22 Nov 2026 11:05:49 -0500
+Subject: [PATCH] usb: typec: ucsi: clear USB role when partner lacks USB data
+
+Adopted from ROCKNIX (SM8750 0509, f0703a06).
+
+0c8ee850572 gated the "no USB data -> USB_ROLE_NONE" decision behind
+UCSI_USB4_IMPLIES_USB. Without that quirk the role is never cleared for a
+charger-only partner, so it stays attached across suspend, and unplugging
+while suspended can hang the SoC. Clear the role whenever the partner
+advertises no USB data.
+
+Signed-off-by: Anze <aanzdev@gmail.com>
+Assisted-by: Claude:claude-sonnet-5-5
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/typec/ucsi/ucsi.c | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/usb/typec/ucsi/ucsi.c b/drivers/usb/typec/ucsi/ucsi.c
+index c1450639c7956517ad3f313e1e494b2b0f6c52a0..aee0377594c33fd56f5d6e47af0517858077acc8 100644
+--- a/drivers/usb/typec/ucsi/ucsi.c
++++ b/drivers/usb/typec/ucsi/ucsi.c
+@@ -1367,10 +1367,8 @@ static void ucsi_partner_change(struct ucsi_connector *con)
+ 			typec_partner_set_usb_mode(con->partner, USB_MODE_USB4);
+ 	}
+ 
+-	if ((!UCSI_CONSTAT(con, PARTNER_FLAG_USB)) &&
+-	    ((con->ucsi->quirks & UCSI_USB4_IMPLIES_USB) &&
+-	     (!(UCSI_CONSTAT(con, PARTNER_FLAG_USB4_GEN3) ||
+-		UCSI_CONSTAT(con, PARTNER_FLAG_USB4_GEN4)))))
++	/* Only notify USB controller if partner supports USB data */
++	if (!(UCSI_CONSTAT(con, PARTNER_FLAG_USB)))
+ 		u_role = USB_ROLE_NONE;
+ 
+ 	ret = usb_role_switch_set_role(con->usb_role_sw, u_role);

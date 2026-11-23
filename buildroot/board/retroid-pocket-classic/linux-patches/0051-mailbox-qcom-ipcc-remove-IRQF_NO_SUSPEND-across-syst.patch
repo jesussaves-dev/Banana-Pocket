@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ashketchup <ashley@shuuri.net>
+Date: Sun, 22 Nov 2026 11:05:49 -0500
+Subject: [PATCH] mailbox: qcom-ipcc: remove IRQF_NO_SUSPEND across system
+ suspend
+
+Adopted from ROCKNIX (SM8550 0502, also Batocera 0013e16fa5).
+
+The ADSP charger firmware pushes BATTMGR_NOTIFICATION over pmic_glink. Those
+notifications ring the IPCC mailbox IRQ, which IRQF_NO_SUSPEND never masks
+across system suspend, so it pulls the SoC out of deep sleep (the short
+phantom wakes on USB). Co-processor doorbells no longer wake the AP while
+asleep; pending signals are handled on resume.
+
+Signed-off-by: Ashketchup <ashley@shuuri.net>
+Assisted-by: Claude:claude-sonnet-5-5
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ drivers/mailbox/qcom-ipcc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/mailbox/qcom-ipcc.c b/drivers/mailbox/qcom-ipcc.c
+index 185b63f724d4fba5a89ed55e7c3990857765c5a0..f2e5b9505bfcca1149db52092a98aa5f0281bbb1 100644
+--- a/drivers/mailbox/qcom-ipcc.c
++++ b/drivers/mailbox/qcom-ipcc.c
+@@ -326,7 +326,7 @@ static int qcom_ipcc_probe(struct platform_device *pdev)
+ 		goto err_mbox;
+ 
+ 	ret = devm_request_irq(&pdev->dev, ipcc->irq, qcom_ipcc_irq_fn,
+-			       IRQF_TRIGGER_HIGH | IRQF_NO_SUSPEND |
++			       IRQF_TRIGGER_HIGH |
+ 			       IRQF_NO_THREAD, name, ipcc);
+ 	if (ret < 0)
+ 		goto err_req_irq;

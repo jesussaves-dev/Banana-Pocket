@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ashketchup <ashley@shuuri.net>
+Date: Sun, 22 Nov 2026 11:05:49 -0500
+Subject: [PATCH] serial: qcom-geni: mask UART IRQ during system suspend
+
+Adopted from ROCKNIX (SM8550 0037, SM6115 0034).
+
+Mask the UART IRQ around uart_suspend_port() so RX activity cannot wake the
+SoC mid-suspend (qcom_geni_serial_uart1 wakeups on the 12.7 s bursts).
+Re-enable it on resume and on every error path.
+
+Signed-off-by: Ashketchup <ashley@shuuri.net>
+Assisted-by: Claude:claude-sonnet-5-5
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ drivers/tty/serial/qcom_geni_serial.c | 17 ++++++++++++++---
+ 1 file changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/tty/serial/qcom_geni_serial.c b/drivers/tty/serial/qcom_geni_serial.c
+index 252118456105461b6c00c96033e70421bf5ca331..120a685973e7241cca6a6cbf91a41c528ab4ac37 100644
+--- a/drivers/tty/serial/qcom_geni_serial.c
++++ b/drivers/tty/serial/qcom_geni_serial.c
+@@ -2114,9 +2114,12 @@ static int qcom_geni_serial_suspend(struct device *dev)
+ 		geni_icc_set_bw(&port->se);
+ 	}
+ 
++	disable_irq(uport->irq);
+ 	ret = uart_suspend_port(private_data->drv, uport);
+-	if (ret)
++	if (ret) {
++		enable_irq(uport->irq);
+ 		return ret;
++	}
+ 
+ 	/*
+ 	 * When no_console_suspend is set the console must remain active
+@@ -2125,7 +2128,11 @@ static int qcom_geni_serial_suspend(struct device *dev)
+ 	if (!console_suspend_enabled && uart_console(uport))
+ 		return 0;
+ 
+-	return pm_runtime_force_suspend(dev);
++	ret = pm_runtime_force_suspend(dev);
++	if (ret)
++		enable_irq(uport->irq);
++
++	return ret;
+ }
+ 
+ static int qcom_geni_serial_resume(struct device *dev)
+@@ -2137,11 +2144,15 @@ static int qcom_geni_serial_resume(struct device *dev)
+ 
+ 	if (console_suspend_enabled || !uart_console(uport)) {
+ 		ret = pm_runtime_force_resume(dev);
+-		if (ret)
++		if (ret) {
++			enable_irq(uport->irq);
+ 			return ret;
++		}
+ 	}
+ 
+ 	ret = uart_resume_port(private_data->drv, uport);
++
++	enable_irq(uport->irq);
+ 	if (uart_console(uport)) {
+ 		geni_icc_set_tag(&port->se, QCOM_ICC_TAG_ALWAYS);
+ 		geni_icc_set_bw(&port->se);
