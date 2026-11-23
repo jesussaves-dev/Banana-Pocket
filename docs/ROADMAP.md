@@ -20,32 +20,24 @@ goes into 1.0.1, not into a delay.
 ### Must-haves (in order)
 1. **Sleep: the 12.7 s phantom burst.** Three wakes exactly 12.7 s apart at an unchanged battery %, then `bananad` gives up
    and wakes fully (2026-11-16 14:34). Not the gauge. Not seen again through 2026-11-19 (overnight 9.9 h, 12 mA, five
-   slow phantoms that re-slept: `ipcc_0`/`glink-smem` +40-49, no power key, the battmgr ping). At the next burst, dump
-   `wakeup_sources` and `/proc/interrupts` deltas per re-sleep before guessing. Stopgap: the give-up keeps the panel dark.
+   slow phantoms that re-slept: `ipcc_0`/`glink-smem` +40-49, no power key, the battmgr ping). **Seen again 2026-11-22
+   10:24 during the game soak, on USB (plugged 1):** wakes at 5.2, 12.7, 12.7 s, then the give-up. `sleep-irq.log` per re-sleep:
+   `ipcc_0` +41, `glink-smem` +44, `apps_rsc` +55, plus `qcom_geni_serial_uart1` +100, `mmc0` +67 and `arch_mem_timer` +30 on
+   the 12.7 s ones. 11 of 19 USB cycles had short phantoms; 0 of 9 unplugged did, so it looks charge-related. Next: find what
+   sends the `uart1` traffic and the `mmc0` wakes. Stopgap: the give-up keeps the panel dark.
 2. **Sleep: power-button sleeps that "did not take"** (25 in `sleep.log` by 2026-11-20, all woke 0-4 s later with
    "power key" and no kernel wakeup event). Mostly quick double-presses by the owner, which the log cannot tell apart
-   from a failed sleep, so the count proves nothing. No early wake without a key since 2026-11-19. Next: a short
-   deliberate check after the signed flash (sleep, wait about 10 s, wake, about 10 times, unplugged and on USB). Every
-   sleep holding closes this.
-3. **Signed releases: built, verified on hardware, unshipped.** `update` verifies `sha256sums.sig` (ed25519,
-   `tools/release-key.sh`) against `/etc/banana/release.pub` and refuses unsigned packages unless
-   `/data/banana/allow-unsigned` exists. Done: public key committed, `openssl` in the image, key backed up (NAS,
-   2026-11-20), and on the handheld a tampered `sha256sums` and a missing `.sig` are refused before any slot write.
-   Left: the first signed release must go out as a full flash; then apply a signed package for real.
-4. **Sessions survive a hang (M):** done in software, untested on hardware. While a RetroArch game runs, `bananad` asks
+   from a failed sleep, so the count proves nothing. No early wake without a key since 2026-11-19. 2026-11-22 game soak: 28 cycles
+   (19 USB, 9 unplugged), every sleep took, 28/28 game audio reinits, no `enc35`. Left: 11 more cycles unplugged and the
+   overnight sleep, which closes this.
+3. **Sessions survive a hang (M):** done in software, untested on hardware. While a RetroArch game runs, `bananad` asks
    for its automatic state every 180 s (`session_secs`) and rewrites `/data/banana/resume` (fsync + rename); the
    menu's existing resume path relaunches the game after a hang and Quick resume loads the state (checked on hardware
    with `reboot -f`, 2026-11-20); a clean quit clears it. Left: a real battery pull, alternating state slots.
-5. **Recovery screen without Android (M):** hold a button at power-on: boot the other slot, reset settings, fsck `/data`,
-   transfer mode. **Built and checked on hardware 2026-11-20 (0.9.2):** hold Select + Start through the splash; rows in
-   `Settings::openRecovery`, fsck in `usr/libexec/banana/recovery`.
-6. **Fresh-card welcome (S):** where ROMs go, the share and `banana.local` address with a QR code, missing BIOS files.
 
 ### Headline features
 - **`banana.local` (M), built 2026-11-20 (host-tested, QR code on Settings > Network > Web page and the welcome's Your games step, X; drawn for Classic, SNES and Genesis styles, golden-tested, flashed 2026-11-20; QR page checked on the real panel in the SNES style 2026-11-20):** a web page on the handheld: drop in ROMs and BIOS, download saves and a backup, read logs,
   apply updates. Replaces SMB/SSH for strangers and is the 1.0 answer to "saves off the card". QR in Settings > Network.
-- **The game page (M):** art, description, facts, playtime (`playstats.tsv`), achievements. The scraper already receives
-  the data and drops it.
 
 ### 1.0 checks (on hardware, ticked in `docs/RPC-TEST.md`)
 - **Flasher 2.0.0 on real Windows:** one full flash and one mid-flash cancel (Windows paths are tested with mocks only).
