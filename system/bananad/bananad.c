@@ -1058,7 +1058,11 @@ static void suspend_now(const char *why)
 	pid_t game = pid_of("/run/banana/game.pid");
 	pid_t pg = game ? getpgid(game) : 0;
 	sleep_save_state(game);
-	if (pg > 0 && !skip("stop")) kill(-pg, SIGSTOP);	/* an emulator's dynarec mustn't run on while the clocks drop */
+	if (pg > 0 && !skip("stop") && kill(-pg, SIGSTOP) < 0) {
+		int e = errno;
+		sleep_log("game: pre-suspend SIGSTOP failed (pid %d, pgid %d, errno %d: %s)",
+		    (int)game, (int)pg, e, strerror(e));
+	}	/* an emulator's dynarec mustn't run on while the clocks drop */
 	/* the menu's ambient loop, if any: stop it and have it release the DSP before the ADSP sleeps (SIGHUP). Wait for
 	 * the close it publishes to /run/banana/sound-state instead of guessing at a delay -- a PCM close still in flight
 	 * when the DSP goes under is the one thing the overnight hang of 03:40 was seen doing (logs/sleep-state says
@@ -1158,7 +1162,11 @@ static void suspend_now(const char *why)
 			 * next press brings it back (see panel_blanked in handle()) -- and let the game run again, because
 			 * a frozen emulator behind a dark screen is worse. Nothing here is a wake, so the wake bookkeeping
 			 * below is skipped. */
-			if (pg > 0) kill(-pg, SIGCONT);
+			if (pg > 0 && kill(-pg, SIGCONT) < 0) {
+				int e = errno;
+				sleep_log("game: suspend-failure SIGCONT failed (pid %d, pgid %d, errno %d: %s)",
+				    (int)game, (int)pg, e, strerror(e));
+			}
 			sleep_quiet_end();
 			backlights_power(0);
 			/* the pre hooks have run (10-wifi took Wi-Fi down): run the post ones too, or a failed suspend would
@@ -1179,7 +1187,11 @@ static void suspend_now(const char *why)
 			int pct = battery_discharging_pct();
 			if (pct >= 0 && pct <= cfg.sleep_poweroff_pct) {
 				sleep_log("battery check: %d%% after %.1f h asleep: shutting down", pct, asleep / 3600);
-				if (pg > 0) kill(-pg, SIGCONT);	/* the game gets SIGTERM next, to write its saves */
+				if (pg > 0 && kill(-pg, SIGCONT) < 0) {
+					int e = errno;
+					sleep_log("game: battery-shutdown SIGCONT failed (pid %d, pgid %d, errno %d: %s)",
+					    (int)game, (int)pg, e, strerror(e));
+				}	/* the game gets SIGTERM next, to write its saves */
 				shutdown_now("battery empty while asleep");
 				return;
 			}
@@ -1236,7 +1248,11 @@ static void suspend_now(const char *why)
 	double t_wake = mono();
 	backlights_power(1);
 	sleep_quiet_end();
-	if (pg > 0) kill(-pg, SIGCONT);
+	if (pg > 0 && kill(-pg, SIGCONT) < 0) {
+		int e = errno;
+		sleep_log("game: wake (%s) SIGCONT failed (pid %d, pgid %d, errno %d: %s)",
+		    woke, (int)game, (int)pg, e, strerror(e));
+	}
 	pid_t ui = ui_pid();
 	if (ui && (!game || compositor_on())) kill(ui, SIGUSR1);	/* draws the panel again (the clock and the battery moved on); a resident game needs the re-modeset too */
 	double t_back = mono();
