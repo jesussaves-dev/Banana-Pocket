@@ -126,6 +126,7 @@ namespace banana
 		bool reframeDue = false;	// a new hole arrived during a flip
 		bool touchOutside = false;	// this touch began on the frame: the client never hears of it
 		uint32_t shownLayer() const { return overlayFb ? overlayFb : frameFb ? frameFb : d->maskFb(); }
+		double menuRetryAt = 0;		// a rejected menu commit is tried again at this time (msNow), while restoreMenu stays set
 		bool restoreMenu = false;		// show the menu as soon as the current flip completes
 		bool stopping = false;
 		bool saidShm = false;
@@ -329,8 +330,8 @@ namespace banana
 				logf("render: %s", err.empty() ? "no presenter" : err.c_str());
 				if (presenter) presenter->abandon();
 				dropPending();
-				return;
 				fireCbs(pendingCbs);	// the dropped frame's callbacks, or a callback-paced client waits for them forever
+				return;
 			}
 			double ft1 = f3On ? msNow() : 0;
 			int fenceFd = presenter->takeFenceFd();
@@ -450,7 +451,7 @@ namespace banana
 			if (restoreMenu && !inflight && !d->flipPending())
 			{
 				restoreMenu = false;
-				showMenu();
+				menuOrRetry();
 			}
 			if (!restoreMenu) frame();
 			if (reframeDue && !restoreMenu && d->isOpen() && !d->flipPending()) reframe();
@@ -476,9 +477,17 @@ namespace banana
 				if (surfaces[i] == s) { surfaces.erase(surfaces.begin() + i); break; }
 			delete s;
 		}
-		void showMenu()
+		// The menu's commit can be refused (a modeset in the way, lost master). The client is gone, so no vblank or
+		// frame follows to try again: keep restoreMenu set (lastFb still owns the primary) and arm a timed retry.
+		void menuOrRetry()
 		{
-			if (stopping) return;
+			if (showMenu()) { menuRetryAt = 0; return; }
+			restoreMenu = true;
+			menuRetryAt = msNow() + 100;
+		}
+		bool showMenu()
+		{
+			if (stopping) return true;
 			if (d->showMenu())
 			{
 				hidMenu = false;
@@ -494,7 +503,9 @@ namespace banana
 				noScanout = false;
 				if (presenter) presenter->detached();
 				if (onScreen) { bufferDrop(onScreen); onScreen = nullptr; }
+				return true;
 			}
+			return false;
 		}
 		// The player's window is gone: what the kiosk client drew under it comes back. It may have drawn before this
 		// was heard (it reaps the player and repaints at once), so that frame was kept, not dropped.
@@ -514,7 +525,7 @@ namespace banana
 			else if (!surf)
 			{
 				if (inflight) restoreMenu = true;
-				else if (hidMenu) showMenu();
+				else if (hidMenu) menuOrRetry();
 			}
 		}
 		// A player's first frame: it goes on top, and whatever the kiosk client still had queued is answered.
@@ -557,7 +568,7 @@ namespace banana
 			focusClear();
 			dropPending();
 			if (inflight) restoreMenu = true;
-			else if (hidMenu && !stopping) showMenu();
+			else if (hidMenu && !stopping) menuOrRetry();
 			logf("client disconnected");
 			if (heir)
 			{
@@ -1604,6 +1615,22 @@ namespace banana
 	bool Compositor::gameActive() const
 	{
 		return impl && (impl->pending || impl->inflight);
+	}
+
+	int Compositor::menuRetryMs() const
+	{
+		if (!impl || !impl->restoreMenu || impl->menuRetryAt <= 0) return -1;
+		double left = impl->menuRetryAt - msNow();
+		return left <= 0 ? 0 : (int)left + 1;
+	}
+
+	void Compositor::menuRetry()
+	{
+		Impl* im = impl;
+		if (!im || !im->restoreMenu || im->menuRetryAt <= 0 || msNow() < im->menuRetryAt) return;
+		if (im->inflight) { im->menuRetryAt = 0; return; }	// vblank() brings the menu back when it completes
+		im->restoreMenu = false;
+		im->menuOrRetry();
 	}
 
 	bool Compositor::recommit()

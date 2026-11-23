@@ -1417,6 +1417,7 @@ int main(int argc, char** argv)
 			if (ok) crtPushDue = false;
 			else crtPushAt = nowMs() + kCrtStepMs;
 		}
+		comp.menuRetry();
 		if (batteryDue)
 		{
 			batteryDue = false;
@@ -1481,6 +1482,10 @@ int main(int argc, char** argv)
 			std::lock_guard<std::mutex> l(worker.uiLock);
 			// the two views the rescan above covers: in the library the menu would otherwise sit in poll() until an
 			// unrelated key, so a ROM copied in while it is open would not appear on its own
+		{
+			int mr = comp.menuRetryMs();
+			if (mr >= 0 && (timeout < 0 || mr < timeout)) timeout = mr;
+		}
 			rescanCan = roms.due > 0 && !settingsView.isOpen() &&
 				(ui->view() == Menu::HOME || ui->view() == Menu::LIBRARY);
 		}

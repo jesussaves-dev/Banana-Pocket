@@ -34,6 +34,8 @@ namespace banana
 		void resume();			// after a suspend: the panel was re-modeset; re-arm the client without dropping it
 		void frame();			// present the latest committed client frame when no flip is in flight
 		void setOverlayFb(uint32_t fb);	// the 3D card over a client frame on the primary (0: the screen frame, if any)
+		int menuRetryMs() const;	// ms until a refused menu commit is tried again, -1 when none is waiting
+		void menuRetry();		// try it if due
 		bool recommit();		// the client frame on screen once more (new colour blobs over a paused game); false while a flip is in flight
 		// A game's screen frame: its framebuffer (0: none) and the hole the client is placed in (logical pixels, w == 0:
 		// the whole panel). Before the game starts, so its first configure has the hole's size; while it is frozen,
