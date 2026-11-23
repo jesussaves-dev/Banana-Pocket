@@ -607,6 +607,48 @@ static void irq_report(const char *kind, double slept)
 	fclose(f);
 }
 
+/* What the kernel announced while it slept. A phantom wake leaves no wakeup event, but the glink traffic behind it (the
+ * battery manager's notifications while charging) comes out as uevents queued on a socket nobody read during the suspend.
+ * A private socket (the main one stays untouched) is emptied just before each suspend and read at each phantom, and the
+ * names go in sleep-irq.log beside the interrupt rows: "power_supply/qcom-battmgr-usb change" says who spoke. */
+static int uevent_open(void);
+static int diag_fd = -2;
+
+static void diag_flush(void)
+{
+	if (diag_fd == -2) diag_fd = uevent_open();
+	if (diag_fd < 0) return;
+	char buf[8192];
+	while (recv(diag_fd, buf, sizeof buf, 0) > 0) { }
+}
+
+static void diag_report(const char *kind)
+{
+	if (diag_fd < 0) return;
+	char line[600], buf[8192];
+	size_t used = 0;
+	int n_ev = 0;
+	ssize_t n;
+	while ((n = recv(diag_fd, buf, sizeof buf - 1, 0)) > 0) {
+		buf[n] = 0;
+		const char *act = "", *sub = "", *name = "";
+		for (char *q = buf; q < buf + n; q += strlen(q) + 1) {
+			if (!strncmp(q, "ACTION=", 7)) act = q + 7;
+			else if (!strncmp(q, "SUBSYSTEM=", 10)) sub = q + 10;
+			else if (!strncmp(q, "POWER_SUPPLY_NAME=", 18)) name = q + 18;
+			else if (!*name && !strncmp(q, "DEVPATH=", 8)) { const char *sl = strrchr(q, '/'); name = sl ? sl + 1 : q + 8; }
+		}
+		n_ev++;
+		int w = snprintf(line + used, sizeof line - used, " %s/%s %s;", sub, name, act);
+		if (w > 0 && (size_t)w < sizeof line - used) used += (size_t)w;
+	}
+	line[used] = 0;
+	FILE *f = fopen("/data/banana/logs/sleep-irq.log", "a");
+	if (!f) return;
+	fprintf(f, "  %s uevents (%d):%s\n", kind, n_ev, n_ev ? line : " none");
+	fclose(f);
+}
+
 /* the RTC alarm that wakes the handheld for the battery check; 0 clears it. Returns the alarm's time (0: none) */
 static time_t rtc_alarm(int seconds)
 {
@@ -1059,6 +1101,7 @@ static void suspend_now(const char *why)
 	int woke_key = 0, woke_cable = 0;
 	unsigned long wk0 = 0;
 	for (;;) {
+		diag_flush();
 		time_t alarm = rtc_alarm((int)(cfg.sleep_check_hours * 3600));
 		double t_in = mono();
 		struct timespec b0, b1;
@@ -1168,6 +1211,7 @@ static void suspend_now(const char *why)
 			int pct = battery_pct_any();
 			if (slept >= 60) {
 				irq_report("slow-phantom", slept);
+				diag_report("slow-phantom");
 				phantoms++;
 				sleep_log("wake with no key or cable after %.0f s asleep, battery %d%%: back to sleep (slow phantom %d)",
 				    slept, pct, phantoms);
@@ -1175,6 +1219,7 @@ static void suspend_now(const char *why)
 			}
 			if (spurious < 3) {
 				irq_report("short-phantom", slept);
+				diag_report("short-phantom");
 				spurious++;
 				sleep_log("wake with no key or cable after %.1f s asleep, battery %d%%: back to sleep (%d/3)",
 				    slept, pct, spurious);
@@ -2905,9 +2950,11 @@ int main(int argc, char **argv)
 		if (power_down && wait > 0.1) wait = 0.1;
 		if (vib_off_at > 0 && vib_off_at - tnow < wait) wait = vib_off_at - tnow;	/* a pulse's stop */
 		if (jack_settle_at > 0 && jack_settle_at - tnow < wait) wait = jack_settle_at - tnow;	/* the jack's second look */
+		if (audio_retry_at > 0 && audio_retry_at - tnow < wait) wait = audio_retry_at - tnow;	/* the game's driver, after a late sound server */
 		int timeout = wait <= 0 ? 20 : (int)(wait * 1000) + 20;
 		poll(pf, n, timeout);
 		double now = mono();
+		if (audio_retry_at > 0 && now >= audio_retry_at) audio_retry_poll();
 		if (vib_off_at > 0 && now >= vib_off_at) { vib_stop(); vib_off_at = 0; }
 		if (jack_settle_at > 0 && now >= jack_settle_at) jack_settle_poll();
 		if (volume_reassert_at > 0 && now >= volume_reassert_at) { volume_reassert_at = 0; volume_restore(); }
@@ -2950,11 +2997,9 @@ int main(int argc, char **argv)
 					if (e->len && e->wd == ino_run && !strcmp(e->name, "vibrate")) vibrate_req = 1;
 					if (e->len && e->wd == ino_run && !strcmp(e->name, "cheevos")) cheevos_changed = 1;
 					if (e->wd == ino_cheev) cheevos_changed = 1;
-		if (audio_retry_at > 0 && audio_retry_at - tnow < wait) wait = audio_retry_at - tnow;	/* the game's driver, after a late sound server */
 					if ((e->mask & (IN_CREATE | IN_DELETE)) && e->wd == ino_in) inputs_changed = 1;
 					p += sizeof(struct inotify_event) + e->len;
 				}
-		if (audio_retry_at > 0 && now >= audio_retry_at) audio_retry_poll();
 			if (cheevos_changed) { cheevos_watch(ino); cheevos_poll(); }	/* the re-add catches the file's re-creation between games */
 			if (vibrate_req) {
 				/* `touch /run/banana/vibrate` (a test: the plug-in pulse), or a length in ms written to it (the menu's
