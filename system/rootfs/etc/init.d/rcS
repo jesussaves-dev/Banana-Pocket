@@ -88,6 +88,12 @@ mark "rcS: audio: adsp modprobe"
 i=0
 while [ $i -lt 40 ] && ! grep -q running /sys/class/remoteproc/remoteproc*/state 2>/dev/null; do sleep 0.2; i=$((i+1)); done
 mark "rcS: audio: adsp running"
+if [ $i -ge 40 ]; then
+    # timed out: say what the remoteproc reported (none at all means qcom_q6v5_pas never probed)
+    mark "rcS: audio: adsp NOT running"
+    for r in /sys/class/remoteproc/remoteproc*; do [ -d "$r" ] && mark "rcS:   ${r##*/} $(cat $r/name 2>/dev/null) $(cat $r/state 2>/dev/null)"; done
+    [ -d /sys/class/remoteproc/remoteproc0 ] || mark "rcS:   no remoteproc registered"
+fi
 # The DSP services first. q6apm's first APM_CMD_GET_SPF_STATE waits audioreach_send_cmd_sync()'s 5 s for the ADSP to
 # answer, and everything else (the DAIS GPR service, the macros, SoundWire, the card) is behind that wait -- so start
 # it as early as possible; the fixed `sleep 2` used to push it ~2 s later for nothing (the command is sent whether or
@@ -107,6 +113,11 @@ mark "rcS: audio: machine"
 i=0
 while [ $i -lt 40 ] && ! grep -q '\[' /proc/asound/cards 2>/dev/null; do sleep 0.1; i=$((i+1)); done
 mark "rcS: audio: card"
+if [ $i -ge 40 ]; then
+    mark "rcS: audio: NO card after 4 s"
+    mark "rcS:   asound: $(cat /proc/asound/cards 2>/dev/null | tr -d '\n')"
+    mark "rcS:   modules: $(lsmod 2>/dev/null | grep -cE '^(snd_soc_sc8280xp|snd_q6apm|snd_soc_wcd937x|soundwire_qcom|qcom_q6v5_pas) ')/5 of sc8280xp q6apm wcd937x soundwire_qcom q6v5_pas"
+fi
 # the board's own modules: the cooling fan (pwm-fan) and the charger/battery gauge (qcom_battmgr, which bananad reads
 # the level and the charging state from)
 modprobe -a pwm-fan qcom_battmgr 2>/dev/null
