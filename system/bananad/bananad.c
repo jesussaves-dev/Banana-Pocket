@@ -204,8 +204,9 @@ static int write_file(const char *path, const char *s)
 	ssize_t n = write(fd, s, strlen(s));
 	int e = errno;
 	close(fd);
+	if (n != (ssize_t)strlen(s)) { errno = n < 0 ? e : EIO; return -1; }
 	errno = e;
-	return n == (ssize_t)strlen(s) ? 0 : -1;
+	return 0;
 }
 
 static int read_int(const char *path, int def)
@@ -785,7 +786,7 @@ static void sleep_note_resume(const char *what)
 static void wake_only_power(void)
 {
 	DIR *d = opendir("/sys/class/wakeup");
-	if (!d) return;
+	if (!d) { sleep_log("wake sources: cannot open /sys/class/wakeup: %s", strerror(errno)); return; }
 	struct dirent *e;
 	while ((e = readdir(d))) {
 		if (strncmp(e->d_name, "wakeup", 6) != 0) continue;
@@ -796,7 +797,9 @@ static void wake_only_power(void)
 		if (!realpath(p, dev)) continue;	/* a virtual source (mmc0) has no power/wakeup to write */
 		snprintf(p, sizeof p, "%s/power/wakeup", dev);
 		int keep = strstr(name, "pwrkey") || strstr(name, "battmgr") || strstr(name, "ucsi");
-		write_file(p, keep ? "enabled" : "disabled");
+		if (write_file(p, keep ? "enabled" : "disabled"))
+			sleep_log("wake source %s: cannot set power/wakeup=%s: %s", name[0] ? name : e->d_name,
+			    keep ? "enabled" : "disabled", strerror(errno));
 	}
 	closedir(d);
 }
