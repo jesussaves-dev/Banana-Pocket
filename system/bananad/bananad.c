@@ -2623,6 +2623,7 @@ static int uevent_read(int fd)
 	return hit;
 }
 
+/* Discover available input devices. */
 static void open_inputs(void)
 {
 	for (int i = 0; i < ndev; i++) close(devfd[i]);
