@@ -180,7 +180,7 @@ namespace banana
 		bgm = std::move(b.bgm);
 		bgmLoaded = b.bgmLoaded;
 #ifdef BANANA_ALSA
-		bgmStartAt = std::chrono::steady_clock::now();	// setBgm(true) starts the loop from here
+		bgmStartAt = std::chrono::steady_clock::now().time_since_epoch().count();	// setBgm(true) starts the loop from here
 		publishState("closed (startup)");
 #endif
 		th = std::thread([this] { run(); });
@@ -229,9 +229,12 @@ namespace banana
 	void Sound::warm()
 	{
 		if (!enabled) return;
-		warmAt = std::chrono::steady_clock::now();	// the hold's deadline starts now, not at the last cue
+		warmAt = std::chrono::steady_clock::now().time_since_epoch().count();	// the hold's deadline starts now, not at the last cue
 		handedOver = false;	// a wake (bananad's SIGUSR1, the guard's press) hands the device back to the menu
-		warmUp = true;
+		{
+			std::lock_guard<std::mutex> l(m);	// the runner tests its wait predicate under m: set it there, or the notify can fall between
+			warmUp = true;
+		}
 #ifdef BANANA_ALSA
 		slog("warm(): the first cue will find the device open");
 #endif
@@ -254,13 +257,16 @@ namespace banana
 
 	void Sound::setBgm(bool on)	{
 		if (on) handedOver = false;	// the menu is back (a game ended, or bananad woke the panel)
-		bgmOn = on && bgmLoaded;
+		{
+			std::lock_guard<std::mutex> l(m);
+			bgmOn = on && bgmLoaded;
+		}
 		/* The amp's PLL and the DSP graph need a moment after the card comes up (dmesg: start failure (-1)
 		 * every few seconds until the amp locks), and the first few seconds of a boot are when the splash
 		 * plays. The loop opens the device as soon as the setting turns on -- writes retry in place while the
 		 * amp settles (writeFrames), so the device is warm and ready by the time the splash cue arrives -- and
 		 * a closed device keeps the stream open for it instead of closing after a quiet spell. */
-		if (on && bgmLoaded && !devOpen.load()) bgmStartAt = std::chrono::steady_clock::now();
+		if (on && bgmLoaded && !devOpen.load()) bgmStartAt = std::chrono::steady_clock::now().time_since_epoch().count();
 #ifdef BANANA_ALSA
 		slog("setBgm(%d) -> bgmOn=%d (loaded=%d)", on ? 1 : 0, bgmOn.load() ? 1 : 0, bgmLoaded ? 1 : 0);
 #endif
@@ -478,7 +484,7 @@ namespace banana
 			// The loop opens the device as soon as the setting turns on (bgmStartAt is set in the constructor and
 			// not pushed forward, so it is already past) and keeps it open; a closed device stays open for it
 			// instead of closing after a quiet spell. The amp settles while writeFrames retries in place.
-			const bool wantBgm = bgmOn.load() && bgmLoaded && (devOpen.load() || now >= bgmStartAt);
+			const bool wantBgm = bgmOn.load() && bgmLoaded && (devOpen.load() || now >= std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(bgmStartAt.load())));
 			// the boot warm-up opens and holds the device the same way, with no loop to play (the splash's cue)
 			const bool wantOpen = wantBgm || warmUp.load();
 			if (!name.empty())
@@ -493,8 +499,11 @@ namespace banana
 					// plays once it is, instead of being lost to the failed open
 					if (warmUp.load())
 					{
-						std::lock_guard<std::mutex> l(m);
-						if (queued.empty()) queued = name;
+						{
+							std::lock_guard<std::mutex> l(m);
+							if (queued.empty()) queued = name;
+						}
+						// not under m: warm(), setBgm() and the UI's cues take it, and must not wait out the back-off
 						std::this_thread::sleep_for(std::chrono::milliseconds(250));
 					}
 					continue;
@@ -509,7 +518,7 @@ namespace banana
 				// Nothing to play: the device stays open (a cue is then instant). Only the warm-up has a deadline,
 				// so a splash with no cue cannot hold it forever, and the guard's blank and a game's release are
 				// what else let it go.
-				const auto since = std::max(lastSound, warmAt);
+				const auto since = std::max(lastSound, std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(warmAt.load())));
 				if (warmUp.load() && now - since >= quiet) warmUp = false;	// the cue never came: stop holding the device
 				// the loop is off and the menu has been quiet: let the device go too. A stream held open for nothing
 				// keeps the Speaker front end busy, and the sound server then drops the Speaker sink (the RPC's games)

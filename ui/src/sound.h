@@ -66,8 +66,8 @@ namespace banana
 		std::atomic<bool> warmUp{false};	// the boot warm-up: open the device and hold it until the first cue
 		std::atomic<bool> handedOver{false};	// released for a game or a sleep: stay closed until the menu is back (warm/setBgm true)
 		std::atomic<int> bgmGain{280};		// the loop's mix, thousandths of full scale
-		std::chrono::steady_clock::time_point warmAt;		// when warm() was last called: the hold's deadline counts from here
-		std::chrono::steady_clock::time_point bgmStartAt;	// the loop waits until this before opening (the amp needs a moment)
+		std::atomic<std::chrono::steady_clock::rep> warmAt{0};		// (tick count: set by the UI thread, read by the runner)  // when warm() was last called: the hold's deadline counts from here
+		std::atomic<std::chrono::steady_clock::rep> bgmStartAt{0};	// (tick count)  // the loop waits until this before opening (the amp needs a moment)
 		void run();
 	};
 }
