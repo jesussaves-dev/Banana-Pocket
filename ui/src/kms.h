@@ -9,7 +9,11 @@
 // rotated by the same 90 degrees. Without an overlay/atomic KMS the old single-plane path is kept. A CRT/LCD mask
 // (shader_mask.h) takes the overlay, and the menu then moves to the primary.
 #include "shader_mask.h"
+#include <condition_variable>
 #include <cstdint>
+#include <memory>
+#include <mutex>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -219,6 +223,11 @@ namespace banana
 		};
 		int fd = -1, W = 0, H = 0, pending = 0;
 		bool off = false;	// sleepOff() until restore()
+		// sleepOff's commit runs on a worker so a modeset the driver never finishes cannot hold the UI past bananad's wait
+		struct OffJob { std::mutex m; std::condition_variable cv; bool done = false, ok = false; int err = 0; };
+		std::thread offTh;
+		std::shared_ptr<OffJob> offJob;
+		bool reapOff(int waitMs);	// joins a finished (or, with waitMs, nearly finished) sleepOff commit; true while one is still running
 		AtomicBuf atomicBuf;	// the flip path's request, reused every frame
 		static constexpr unsigned kMaxLut = 1024;
 		drm_color_lut lutScratch[kMaxLut];	// colorRebuild's staging, so a rebuild allocates only the kernel's blobs

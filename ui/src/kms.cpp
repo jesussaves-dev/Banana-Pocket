@@ -1,6 +1,7 @@
 #include "kms.h"
 #include "turn.h"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -407,6 +408,9 @@ namespace banana
 	bool Display::restore()
 	{
 		if (fd < 0) return false;
+		// a sleepOff commit still in the kernel: the modeset below queues behind it, so wait it out first
+		if (offJob) { std::unique_lock<std::mutex> lk(offJob->m); offJob->cv.wait(lk, [this] { return offJob->done; }); }
+		reapOff(0);
 		// cleared whatever the outcome: a restore that fails leaves the commits to fail as they did before sleepOff
 		// existed, rather than holding a resident game's frames back for good
 		off = false;
@@ -438,25 +442,58 @@ namespace banana
 			pollfd pf = { fd, POLLIN, 0 };
 			if (poll(&pf, 1, 20) > 0 && (pf.revents & POLLIN)) handleEvents();
 		}
-		// blocking on purpose: bananad suspends right after this handler, and the panel has to be off by then
-		AtomicBuf& r = atomicBuf;
-		r.clear();
-		r.add(panel.crtc, active, 0);
-		drm_mode_atomic req = {};
-		req.flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
-		req.count_objs = (uint32_t)r.groups;
-		req.objs_ptr = (uint64_t)(uintptr_t)r.objs;
-		req.count_props_ptr = (uint64_t)(uintptr_t)r.counts;
-		req.props_ptr = (uint64_t)(uintptr_t)r.props;
-		req.prop_values_ptr = (uint64_t)(uintptr_t)r.vals;
-		if (drmIoctl(fd, DRM_IOCTL_MODE_ATOMIC, &req) != 0)
+		// the commit blocks until the panel is really off, which bananad's suspend relies on. It runs on a worker with its
+		// own request buffer so a driver that never answers costs the 800 ms budget below (bananad gives up at a second)
+		// and not the UI; restore() and close() join it before they touch the panel.
+		if (reapOff(0)) return false;	// the last one is still stuck
+		auto job = std::make_shared<OffJob>();
+		offJob = job;
+		int dfd = fd;
+		uint32_t crtc = panel.crtc;
+		try
 		{
-			fprintf(stderr, "kms: panel off before sleep failed (%s)\n", strerror(errno));
+			offTh = std::thread([job, dfd, crtc, active]
+			{
+				AtomicBuf r;
+				r.add(crtc, active, 0);
+				drm_mode_atomic req = {};
+				req.flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
+				req.count_objs = (uint32_t)r.groups;
+				req.objs_ptr = (uint64_t)(uintptr_t)r.objs;
+				req.count_props_ptr = (uint64_t)(uintptr_t)r.counts;
+				req.props_ptr = (uint64_t)(uintptr_t)r.props;
+				req.prop_values_ptr = (uint64_t)(uintptr_t)r.vals;
+				int rc = drmIoctl(dfd, DRM_IOCTL_MODE_ATOMIC, &req);
+				int e = errno;
+				std::lock_guard<std::mutex> lk(job->m);
+				job->ok = rc == 0; job->err = e; job->done = true;
+				job->cv.notify_all();
+			});
+		}
+		catch (...) { offJob.reset(); fprintf(stderr, "kms: panel off before sleep: no thread\n"); return false; }
+		if (reapOff(800))
+		{
+			fprintf(stderr, "kms: panel off before sleep still pending after 800 ms\n");
 			return false;
 		}
-		pending = 0;
-		off = true;
-		return true;
+		return off;
+	}
+
+	// joins the sleepOff commit once it has finished, waiting up to waitMs for that; true when it is still running.
+	// Records its outcome the first time it is seen done.
+	bool Display::reapOff(int waitMs)
+	{
+		if (!offJob) return false;
+		{
+			std::unique_lock<std::mutex> lk(offJob->m);
+			if (waitMs > 0) offJob->cv.wait_for(lk, std::chrono::milliseconds(waitMs), [this] { return offJob->done; });
+			if (!offJob->done) return true;
+		}
+		if (offTh.joinable()) offTh.join();
+		if (offJob->ok) { pending = 0; off = true; }
+		else fprintf(stderr, "kms: panel off before sleep failed (%s)\n", strerror(offJob->err));
+		offJob.reset();
+		return false;
 	}
 
 	void Display::setWarmth(int level)
@@ -656,6 +693,8 @@ namespace banana
 
 	void Display::close()
 	{
+		if (offJob) { std::unique_lock<std::mutex> lk(offJob->m); offJob->cv.wait(lk, [this] { return offJob->done; }); }
+		reapOff(0);
 		off = false;
 		if (fd < 0) return;
 		Panel& pn = panel;
