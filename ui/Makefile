@@ -64,8 +64,23 @@ $(WLDIR)/qrcodegen.o: third_party/qrcodegen.c third_party/qrcodegen.h
 	@mkdir -p $(WLDIR)
 	$(CXX) -x c -O2 -std=c11 -Wall -c $< -o $@
 
-banana-ui: $(SRC) $(WL_O) $(WL_H) $(wildcard src/*.h src/wayland/*.xml)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $(SRC) $(WL_O) $(LDLIBS)
+# one object per source: an edit recompiles its own TU (and, through -MMD, the TUs that include a changed header), not
+# all of them. OBJFLAGS records the compiler and flags, so a host (ALSA=0) build after a target build, or a changed
+# CXX, rebuilds everything instead of linking stale objects.
+OBJDIR = build/obj
+OBJ = $(SRC:src/%.cpp=$(OBJDIR)/%.o)
+OBJFLAGS = $(OBJDIR)/.flags
+$(OBJFLAGS): FORCE
+	@mkdir -p $(OBJDIR)
+	@printf '%s\n' '$(CXX) $(CXXFLAGS)' | cmp -s - $@ || printf '%s\n' '$(CXX) $(CXXFLAGS)' > $@
+
+$(OBJDIR)/%.o: src/%.cpp $(OBJFLAGS) | $(WL_H)
+	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
+
+banana-ui: $(OBJ) $(WL_O) $(wildcard src/wayland/*.xml)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $(OBJ) $(WL_O) $(LDLIBS)
+
+-include $(OBJ:.o=.d)
 
 # box art, title screens, genres and years from libretro's free collections (Settings and the first-time setup)
 banana-scrape: src/scrape.cpp
@@ -94,4 +109,5 @@ clean:
 	rm -f banana-ui banana-scrape banana-store
 	rm -rf build
 
-.PHONY: host install clean
+.PHONY: host install clean FORCE
+FORCE:

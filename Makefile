@@ -21,12 +21,16 @@ BUILDROOT_VERSION = 2026.02.3
 BUILDROOT_DIR ?= $(CURDIR)/.buildroot
 OUT ?= $(CURDIR)/output
 BOARDS = retroid-pocket-classic
+LOCAL_NAMES = banana-ui bananad banana-tube
 LOCAL_PKGS = banana-ui-rebuild bananad-rebuild banana-tube-rebuild
 # the in-tree packages' sources: the board target compares these against the built binaries to decide whether to
 # rebuild. `find` is run once, at parse time, so the list is current. app/bananatube is banana-tube's site.
 # (the protocol XML the compositor's headers are generated from, third_party's C, and the packages' own Makefiles also
 # change the binaries: leaving them out shipped a stale banana-ui after such an edit)
 LOCAL_SRC = $(shell find ui/src ui/third_party system/bananad app/bananatube -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' -o -name '*.xml' -o -name 'Makefile' \) 2>/dev/null) $(shell find ui/assets -type f 2>/dev/null) ui/Makefile
+SRC_banana-ui = $(shell find ui/src ui/third_party -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' -o -name '*.xml' \) 2>/dev/null) $(shell find ui/assets -type f 2>/dev/null) ui/Makefile
+SRC_bananad = $(shell find system/bananad -type f \( -name '*.c' -o -name '*.h' -o -name 'Makefile' \) 2>/dev/null)
+SRC_banana-tube = $(shell find app/bananatube -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' -o -name 'Makefile' \) 2>/dev/null)
 
 $(BUILDROOT_DIR)/Makefile:
 	git clone --depth 1 --branch $(BUILDROOT_VERSION) https://github.com/buildroot/buildroot $(BUILDROOT_DIR)
@@ -59,20 +63,14 @@ $(OUT)/$(1)/.config: $(BUILDROOT_DIR)/.banana-patched buildroot/configs/banana_$
 # bananad) and touches itself, so the board target below only rebuilds them when something actually changed. On a
 # tree where the image was never built the binaries do not exist yet and the board target builds them for the first
 # time (the recipe runs regardless, since the stamp has no prerequisites there).
-ifneq ($(wildcard $(OUT)/$(1)/target/usr/bin/banana-ui),)
-$(OUT)/$(1)/.local-stamp: $(LOCAL_SRC)
-	$(MAKE) -C $(OUT)/$(1) $(LOCAL_PKGS)
-	@mkdir -p $(OUT)/$(1)/
-	@touch $(OUT)/$(1)/.local-stamp
-else
-$(OUT)/$(1)/.local-stamp:
-	@mkdir -p $(OUT)/$(1)/
-	@touch $(OUT)/$(1)/.local-stamp
-endif
+# one stamp per package, so a bananad edit does not rebuild banana-ui and banana-tube too
+$(foreach p,$(LOCAL_NAMES),$(eval $(OUT)/$(1)/.local-stamp-$(p): $(if $(wildcard $(OUT)/$(1)/target/usr/bin/banana-ui),$(SRC_$(p)))
+	$(if $(wildcard $(OUT)/$(1)/target/usr/bin/banana-ui),$$(MAKE) -C $(OUT)/$(1) $(p)-rebuild,@mkdir -p $(OUT)/$(1)/)
+	@touch $$@))
 
 # the image: the stamp rebuilds the in-tree packages when their sources are newer than the built binaries, so a
 # board build never ships a stale banana-ui/bananad (Buildroot's 'local' packages are not tracked by its own make).
-$(1): $(OUT)/$(1)/.config $(OUT)/$(1)/.local-stamp
+$(1): $(OUT)/$(1)/.config $(foreach p,$(LOCAL_NAMES),$(OUT)/$(1)/.local-stamp-$(p))
 	$(MAKE) -C $(OUT)/$(1)
 
 %-$(1): $(OUT)/$(1)/.config
