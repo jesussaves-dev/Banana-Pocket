@@ -1263,7 +1263,7 @@ namespace banana
 		{
 			// the fd is ours as soon as the request is dispatched: adopt it, or close it on every other path
 			auto* b = (Impl::Buffer*)wl_resource_get_user_data(res);
-			if (!b) { close(fd); return; }
+			if (!b) { close(fd); wl_resource_post_error(res, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_ALREADY_USED, "params already used"); return; }
 			if (plane != 0)
 			{
 				close(fd);
@@ -1302,7 +1302,8 @@ namespace banana
 		void paramsCreate(wl_client* c, wl_resource* res, int32_t w, int32_t h, uint32_t format, uint32_t)
 		{
 			auto* b = (Impl::Buffer*)wl_resource_get_user_data(res);
-			if (!b || !paramsValidate(res, b, w, h, format)) return;
+			if (!b) { wl_resource_post_error(res, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_ALREADY_USED, "params already used"); return; }
+			if (!paramsValidate(res, b, w, h, format)) return;
 			wl_resource* buf = wl_resource_create(c, &wl_buffer_interface, 1, 0);
 			if (!buf) return;
 			b->res = buf;
@@ -1314,7 +1315,8 @@ namespace banana
 		void paramsCreateImmed(wl_client* c, wl_resource* res, uint32_t id, int32_t w, int32_t h, uint32_t format, uint32_t)
 		{
 			auto* b = (Impl::Buffer*)wl_resource_get_user_data(res);
-			if (!b || !paramsValidate(res, b, w, h, format)) return;
+			if (!b) { wl_resource_post_error(res, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_ALREADY_USED, "params already used"); return; }
+			if (!paramsValidate(res, b, w, h, format)) return;
 			wl_resource* buf = wl_resource_create(c, &wl_buffer_interface, 1, id);
 			if (!buf) return;
 			b->res = buf;
