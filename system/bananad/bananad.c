@@ -88,7 +88,8 @@ static void jack_settle_begin(void);
 static void jack_settle_poll(void);
 static void jack_log(void);
 static int ra_cmd(const char *cmd);
-static void sound_wait(double seconds);
+static int sound_wait(double seconds);
+static void audio_retry_begin(void);
 static void undim(void);
 static void find_panel_bl(void);
 static char panel_bl[64];	/* the panel's backlight name; banana-ui's idle dim owns it while it runs */
@@ -1199,9 +1200,14 @@ static void suspend_now(const char *why)
 	if (pg > 0 && !cfg.wake_audio_fast) {
 		/* the game's stream died with the server when it was stopped for the sleep: the driver has to be restarted
 		 * (AUDIO_REINIT, the same command the jack uses), or the game runs on without sound for good */
-		sound_wait(3.0);
-		if (ra_cmd("AUDIO_REINIT")) sleep_log("audio: the game's driver was reinitialised after the wake (fast %d)", cfg.wake_audio_fast);
-		else sleep_log("audio: could not reinitialise the game's driver after the wake");
+		if (sound_wait(3.0)) {
+			if (ra_cmd("AUDIO_REINIT")) sleep_log("audio: the game's driver was reinitialised after the wake (fast %d)", cfg.wake_audio_fast);
+			else sleep_log("audio: could not reinitialise the game's driver after the wake");
+		} else {
+			/* no sink to open yet: a reinit now would fail the same way and leave the game silent for good */
+			sleep_log("audio: the server is not ready; the game's driver is retried from the loop");
+			audio_retry_begin();
+		}
 	}
 	/* the press that woke us comes in now: it is not a new request */
 	drain_inputs();
@@ -1656,7 +1662,40 @@ static void sleep_quiet_end(void)
  * the wake waits for the server to accept real PCM parameters before reinitialising the game's audio driver. The
  * daemon has no session, so the PipeWire runtime dir has to be set here. Bounded; without a server (the host test)
  * there is nothing to wait for. */
-static void sound_wait(double seconds)
+static int sound_probe_once(void)
+{
+	snd_pcm_t *pc = NULL;
+	int ok = 0;
+	if (snd_pcm_open(&pc, "default", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) == 0) {
+		ok = snd_pcm_set_params(pc, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, 48000, 1, 15000) == 0;
+		snd_pcm_close(pc);
+	}
+	return ok;
+}
+
+/* A wake whose sound server was not ready in time: the loop tries the probe again every 2 s (bounded) and
+ * reinitialises the game's driver the moment it passes, instead of a single AUDIO_REINIT into a dead sink. */
+static double audio_retry_at;
+static int audio_retry_left;
+
+static void audio_retry_begin(void)
+{
+	audio_retry_left = 5;
+	audio_retry_at = mono() + 2.0;
+}
+
+static void audio_retry_poll(void)
+{
+	audio_retry_at = 0;
+	if (sound_probe_once()) {
+		sleep_log("audio: the server is back; %s", ra_cmd("AUDIO_REINIT") ? "the game's driver was reinitialised" : "could not reinitialise the game's driver");
+		return;
+	}
+	if (--audio_retry_left > 0) audio_retry_at = mono() + 2.0;
+	else sleep_log("audio: the server never came back; the game stays silent until the next route change");
+}
+
+static int sound_wait(double seconds)
 {
 	setenv("XDG_RUNTIME_DIR", "/run/banana/wayland", 1);
 	setenv("PIPEWIRE_RUNTIME_DIR", "/run/banana/wayland", 1);
@@ -1672,12 +1711,7 @@ static void sound_wait(double seconds)
 		t = mono();	/* the probe below gets its own bound: the sink just appeared, the first opens can still fail */
 	}
 	for (;;) {
-		snd_pcm_t *pc = NULL;
-		if (snd_pcm_open(&pc, "default", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) == 0) {
-			int ok = snd_pcm_set_params(pc, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, 48000, 1, 15000) == 0;
-			snd_pcm_close(pc);
-			if (ok) return;
-		}
+		if (sound_probe_once()) return 1;
 		if (!seen) {
 			/* the server, or the hook that is still bringing it up (a sleep that did not take wakes within a second,
 			 * before sound-server up has even started pipewire: giving up then left the game with no sound for good) */
@@ -1685,8 +1719,8 @@ static void sound_wait(double seconds)
 			seen = p && fgetc(p) != EOF;
 			if (p) pclose(p);
 		}
-		if (!seen && mono() - t >= 1.5) return;
-		if (mono() - t >= seconds) { sleep_log("audio: the server is not back after %.0f ms", (mono() - t) * 1000); return; }
+		if (!seen && mono() - t >= 1.5) return 0;
+		if (mono() - t >= seconds) { sleep_log("audio: the server is not back after %.0f ms", (mono() - t) * 1000); return 0; }
 		sleep_us(100000);
 	}
 }
@@ -2916,9 +2950,11 @@ int main(int argc, char **argv)
 					if (e->len && e->wd == ino_run && !strcmp(e->name, "vibrate")) vibrate_req = 1;
 					if (e->len && e->wd == ino_run && !strcmp(e->name, "cheevos")) cheevos_changed = 1;
 					if (e->wd == ino_cheev) cheevos_changed = 1;
+		if (audio_retry_at > 0 && audio_retry_at - tnow < wait) wait = audio_retry_at - tnow;	/* the game's driver, after a late sound server */
 					if ((e->mask & (IN_CREATE | IN_DELETE)) && e->wd == ino_in) inputs_changed = 1;
 					p += sizeof(struct inotify_event) + e->len;
 				}
+		if (audio_retry_at > 0 && now >= audio_retry_at) audio_retry_poll();
 			if (cheevos_changed) { cheevos_watch(ino); cheevos_poll(); }	/* the re-add catches the file's re-creation between games */
 			if (vibrate_req) {
 				/* `touch /run/banana/vibrate` (a test: the plug-in pulse), or a length in ms written to it (the menu's

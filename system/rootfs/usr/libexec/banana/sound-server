@@ -97,10 +97,12 @@ fi
 # for it forever left the menu silent after an update's reboot), so both get the restart.
 i=0
 tries=0
+found=0
 while [ $i -lt 200 ]; do
     st=$(wpctl status 2>/dev/null | sed -n '/^Audio/,/^Video/p')
     if printf '%s\n' "$st" | grep -q 'Speaker playback'; then
         say "the card is in PipeWire (Speaker; ${i} tries)"
+        found=1
         break
     fi
     i=$((i + 1))
@@ -121,6 +123,12 @@ done
 # application of a one-shot UCM sequence, is exactly what the DSP law in AGENTS.md rules out.
 # bananad waits for this after a wake before it restarts a game's audio driver (a stream opened before the sink is in
 # PipeWire fails with "Host is down" and RetroArch does not retry)
-: > /run/banana/sound-ready 2>/dev/null
-say "up (runtime dir $RUNDIR)"
+# Only when the Speaker sink really is there: a marker for a missing sink sent bananad to reinitialise the game's
+# driver into nothing, once, for good. Without it bananad waits out its bound and retries from its loop.
+if [ "$found" = 1 ]; then
+    : > /run/banana/sound-ready 2>/dev/null
+    say "up (runtime dir $RUNDIR)"
+else
+    say "up, but the Speaker sink never appeared (no sound-ready)"
+fi
 exit 0
