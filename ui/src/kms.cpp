@@ -735,8 +735,10 @@ namespace banana
 			else
 			{
 				fprintf(stderr, "kms: atomic flip failed (%s); showing it directly\n", strerror(errno));
-				drmModeSetCrtc(fd, pn.crtc, bf.fb, 0, 0, &pn.conn, 1, (drmModeModeInfo*)pn.mode);
-				pn.front = back;
+				// the buffer is only the front one if the panel took it: otherwise the next frame diffs against
+				// what is really on screen and redraws, instead of believing this one is up
+				if (drmModeSetCrtc(fd, pn.crtc, bf.fb, 0, 0, &pn.conn, 1, (drmModeModeInfo*)pn.mode) == 0) pn.front = back;
+				else fprintf(stderr, "kms: showing it directly failed too (%s)\n", strerror(errno));
 			}
 		}
 		else if (drmModePageFlip(fd, pn.crtc, bf.fb, DRM_MODE_PAGE_FLIP_EVENT, &pending) == 0)
@@ -748,8 +750,7 @@ namespace banana
 		else
 		{
 			// no flip (lost master, a modeset in the way): put the buffer up directly
-			drmModeSetCrtc(fd, pn.crtc, bf.fb, 0, 0, &pn.conn, 1, (drmModeModeInfo*)pn.mode);
-			pn.front = back;
+			if (drmModeSetCrtc(fd, pn.crtc, bf.fb, 0, 0, &pn.conn, 1, (drmModeModeInfo*)pn.mode) == 0) pn.front = back;
 		}
 		return any;
 	}
