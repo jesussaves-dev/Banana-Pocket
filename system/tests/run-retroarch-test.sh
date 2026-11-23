@@ -43,6 +43,8 @@ chmod +x "$W/libexec/run-retroarch" "$W/libexec/ra-secrets"
 cat > "$W/retroarch" <<EOF
 #!/bin/sh
 printf '%s\n' "\$*" > "$W/retroarch.args"
+: > "$W/retroarch.argv"
+for a in "\$@"; do printf '<%s>\n' "\$a" >> "$W/retroarch.argv"; done
 for a in "\$@"; do case "\$a" in *retroarch-account.cfg*) for f in \$(printf '%s' "\$a" | tr '|' ' '); do case "\$f" in *retroarch-account.cfg) cp "\$f" "$W/account.passed" 2>/dev/null ;; esac; done ;; esac; done
 exit 0
 EOF
@@ -52,7 +54,7 @@ chmod +x "$W/retroarch"
 fresh() {
     rm -rf "$W/data/retroarch" "$W/run/banana" "$W/data/banana/settings.conf" "$W/data/banana/accounts.conf"
     rm -f "$W/data/banana/bananad.conf"
-    rm -f "$W/retroarch.args" "$W/account.passed"
+    rm -f "$W/retroarch.args" "$W/retroarch.argv" "$W/account.passed"
     mkdir -p "$W/run/banana"
     rm -f "$W/libretro"/*_libretro.so
     for c in gpsp gambatte swanstation pcsx_rearmed flycast fceumm; do : > "$W/libretro/${c}_libretro.so"; done
@@ -186,6 +188,13 @@ PATH="$W:$PATH" BANANA_SYSTEM=gba BANANA_CORE=gambatte BANANA_SHADER=crt "$W/lib
 has "$W/retroarch.args" gambatte_libretro.so && ok "the game's own core ran, not the system's" || bad "BANANA_CORE ignored"
 [ "$(cfg video_shader_enable)" = true ] && ok "the game's own shader is on" || bad "BANANA_SHADER ignored"
 has "$W/data/retroarch/config/global.slangp" crt && ok "the CRT preset was written" || bad "no preset for the game's shader"
+
+echo "9. a ROM path with spaces and a quote reaches RetroArch as exactly one argument"
+fresh
+ROM="/roms/it's a game (v1.0) \$x;y.gba"
+PATH="$W:$PATH" BANANA_SYSTEM=gba BANANA_ROM="$ROM" "$W/libexec/run-retroarch" gpsp "$ROM" 2>"$W/err" || true
+[ "$(grep -cxF "<$ROM>" "$W/retroarch.argv")" = 1 ] && ok "the ROM is one argument, intact" || bad "ROM argument mangled: $(cat "$W/retroarch.argv" | tr '\n' ' ')"
+[ "$(grep -cF "$ROM" "$W/retroarch.argv")" = 1 ] && ok "no other argument carries a piece of it" || bad "the ROM path was split"
 
 echo
 echo "run-retroarch: $pass passed, $fail failed"
