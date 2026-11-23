@@ -216,9 +216,15 @@ namespace banana
 			glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 			if (b.stride == b.w * 4)
 				glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, (GLsizei)b.w, (GLsizei)b.h, GL_BGRA_EXT, GL_UNSIGNED_BYTE, px);
-			else	// GLES2 has no row length: a padded buffer goes up a row at a time
+			else	// GLES2 has no row length: a padded buffer is packed into a reused scratch, then goes up in one call
+			{
+				static std::vector<uint8_t> pack;	// the presenter runs on one thread; grows to the largest frame, then never allocates
+				const size_t row = (size_t)b.w * 4;
+				if (pack.size() < row * b.h) pack.resize(row * b.h);
 				for (uint32_t y = 0; y < b.h; y++)
-					glTexSubImage2D(GL_TEXTURE_2D, 0, 0, (GLint)y, (GLsizei)b.w, 1, GL_BGRA_EXT, GL_UNSIGNED_BYTE, px + (size_t)y * b.stride);
+					memcpy(pack.data() + (size_t)y * row, px + (size_t)y * b.stride, row);
+				glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, (GLsizei)b.w, (GLsizei)b.h, GL_BGRA_EXT, GL_UNSIGNED_BYTE, pack.data());
+			}
 			wl_shm_buffer_end_access(b.shm);
 			b.shmDirty = false;
 			if (glGetError() != GL_NO_ERROR) { err = "uploading the shm frame failed"; return false; }
