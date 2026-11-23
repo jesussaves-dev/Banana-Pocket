@@ -68,7 +68,7 @@ make_update() {    # make_update <dir>
     size=$(python3 -c "import struct, sys; f = open(sys.argv[1], 'rb'); f.seek($off + 40); print(struct.unpack('<Q', f.read(8))[0])" "$CARD")
     dd if="$CARD" of="$U/rootfs.squashfs" bs=1M iflag=skip_bytes,count_bytes skip=$off count=$size status=none
     echo qemu-test > "$U/VERSION"; echo "$BOARD" > "$U/board"
-    (cd "$U" && sha256sum Image $DTBS rootfs.squashfs > sha256sums)
+    (cd "$U" && sha256sum Image $DTBS rootfs.squashfs VERSION board > sha256sums)
     touch "$1/../allow-unsigned"   # a hand-made package: the card opts in, as a dev would
     tar -C "$1" -cf "$U.tar" "$(basename "$U")"; rm -rf "$U"
     ls -la "$U.tar" | awk '{print $5, $9}'

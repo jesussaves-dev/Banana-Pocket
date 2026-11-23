@@ -104,8 +104,13 @@ apply|stage)
             fail "the package is not signed by the Banana release key"
         fi
     fi
-    # every file as the build hashed it
+    # every file as the build hashed it, and nothing the update installs or reads may be outside the signed list
+    # (an unlisted Image, device tree, board or VERSION would ride along under a valid signature)
+    for f in Image rootfs.squashfs VERSION board $(cd "$DIR" && ls *.dtb); do
+        grep -q "^[0-9a-f]\{64\}  $f\$" "$DIR/sha256sums" || fail "sha256sums doesn't cover $f"
+    done
     while read -r h f; do
+        case "$f" in */*|..*|"") fail "sha256sums has an unsafe name" ;; esac
         [ -f "$DIR/$f" ] || fail "the package has no $f"
         [ "$(hash_of "$DIR/$f")" = "$h" ] || fail "$f is damaged (its hash is wrong)"
     done < "$DIR/sha256sums"

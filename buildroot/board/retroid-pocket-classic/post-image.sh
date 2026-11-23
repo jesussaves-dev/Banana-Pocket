@@ -25,7 +25,7 @@ U=banana-$BOARD-$VERSION.update
 rm -rf "$U"; mkdir "$U"
 cp Image "$DTB.dtb" rootfs.squashfs "$U/"
 echo "$VERSION" > "$U/VERSION"; echo "$BOARD" > "$U/board"
-(cd "$U" && sha256sum Image "$DTB.dtb" rootfs.squashfs > sha256sums)
+(cd "$U" && sha256sum Image "$DTB.dtb" rootfs.squashfs VERSION board > sha256sums)
 # signed with the release key (tools/release-key.sh): `update` on a released image refuses a package without it
 if [ -f "${BANANA_SIGN_KEY:-$HOME/.config/banana/release-ed25519.pem}" ]; then
     sh "$HERE/../../../tools/release-key.sh" sign "$U/sha256sums"
