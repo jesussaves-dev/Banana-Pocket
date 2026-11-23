@@ -1254,16 +1254,23 @@ namespace banana
 		void paramsResourceGone(wl_resource* res)
 		{
 			auto* b = (Impl::Buffer*)wl_resource_get_user_data(res);
-			if (b && !b->res) ((Impl*)b->im)->bufferFree(b);	// a created buffer is owned by its wl_buffer resource
+			// a created buffer is owned by its wl_buffer resource, which cleared this resource's user data
+			if (b) ((Impl*)b->im)->bufferFree(b);
 		}
 		void paramsDestroy(wl_client*, wl_resource* res) { wl_resource_destroy(res); }
 		void paramsAdd(wl_client*, wl_resource* res, int32_t fd, uint32_t plane, uint32_t off, uint32_t stride, uint32_t hi, uint32_t lo)
 		{
+			// the fd is ours as soon as the request is dispatched: adopt it, or close it on every other path
 			auto* b = (Impl::Buffer*)wl_resource_get_user_data(res);
-			if (!b) return;
-			if (plane != 0) { wl_resource_post_error(res, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_PLANE_IDX, "one plane"); return; }
+			if (!b) { close(fd); return; }
+			if (plane != 0)
+			{
+				close(fd);
+				wl_resource_post_error(res, ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_PLANE_IDX, "one plane");
+				return;
+			}
 			if (b->fd >= 0) close(b->fd);
-			b->fd = dup(fd);
+			b->fd = fd;
 			b->off = off;
 			b->stride = stride;
 			b->modifier = ((uint64_t)hi << 32) | lo;
@@ -1300,6 +1307,7 @@ namespace banana
 			b->res = buf;
 			b->refs = 1;
 			wl_resource_set_implementation(buf, &bufferImpl, b, bufferResourceGone);
+			wl_resource_set_user_data(res, nullptr);	// the wl_buffer owns it now
 			zwp_linux_buffer_params_v1_send_created(res, buf);
 		}
 		void paramsCreateImmed(wl_client* c, wl_resource* res, uint32_t id, int32_t w, int32_t h, uint32_t format, uint32_t)
@@ -1311,6 +1319,7 @@ namespace banana
 			b->res = buf;
 			b->refs = 1;
 			wl_resource_set_implementation(buf, &bufferImpl, b, bufferResourceGone);
+			wl_resource_set_user_data(res, nullptr);	// the wl_buffer owns it now
 		}
 		const struct zwp_linux_buffer_params_v1_interface paramsImpl = {
 			.destroy = paramsDestroy, .add = paramsAdd, .create = paramsCreate, .create_immed = paramsCreateImmed,
