@@ -246,15 +246,55 @@ static int run(char *const argv[])
 /* every executable in /etc/banana/sleep.d, in name order, with "pre" or "post"; background: not waited for (after a
  * wake, the game and the menu come first and Wi-Fi catches up) */
 static void hooks_run(const char *when);
+static void sleep_log(const char *fmt, ...);
 static void hooks(const char *when, int background)
 {
-	if (!background) { hooks_run(when); return; }
 	pid_t p = fork();
 	if (p == 0) {
-		if (fork() == 0) { setsid(); hooks_run(when); _exit(0); }
+		if (!background) hooks_run(when);
+		else if (fork() == 0) { setsid(); hooks_run(when); _exit(0); }
 		_exit(0);
 	}
+	if (p < 0 && !background) sleep_log("cannot start pre-suspend hooks: %s", strerror(errno));
 	if (p > 0) while (waitpid(p, NULL, 0) < 0 && errno == EINTR) {}
+}
+
+static void pre_hook(char *const argv[])
+{
+	const double timeout = 10.0;
+	double deadline = mono() + timeout;
+	pid_t p = fork();
+	if (p == 0) {
+		if (setpgid(0, 0) < 0) _exit(126);
+		execvp(argv[0], argv);
+		_exit(127);
+	}
+	if (p < 0) {
+		sleep_log("pre-suspend hook %s: fork failed: %s", argv[0], strerror(errno));
+		return;
+	}
+
+	int st;
+	for (;;) {
+		pid_t waited = waitpid(p, &st, WNOHANG);
+		if (waited == p) {
+			if (WIFEXITED(st) && WEXITSTATUS(st) != 0)
+				sleep_log("pre-suspend hook %s: exited with status %d", argv[0], WEXITSTATUS(st));
+			else if (WIFSIGNALED(st))
+				sleep_log("pre-suspend hook %s: killed by signal %d", argv[0], WTERMSIG(st));
+			return;
+		}
+		if (waited < 0 && errno != EINTR) {
+			sleep_log("pre-suspend hook %s: waitpid failed: %s", argv[0], strerror(errno));
+			return;
+		}
+		if (mono() >= deadline) break;
+		sleep_us(20000);
+	}
+	/* The hook can be stuck in the kernel even after SIGKILL. Let init reap it when the pre-hook runner exits. */
+	if (kill(-p, SIGKILL) < 0 && kill(p, SIGKILL) < 0 && errno != ESRCH)
+		sleep_log("pre-suspend hook %s: SIGKILL failed: %s", argv[0], strerror(errno));
+	sleep_log("pre-suspend hook %s: timed out after %.0f s, continuing suspend", argv[0], timeout);
 }
 
 static void hooks_run(const char *when)
@@ -268,7 +308,8 @@ static void hooks_run(const char *when)
 		struct stat st;
 		if (list[i]->d_name[0] != '.' && !stat(path, &st) && S_ISREG(st.st_mode) && (st.st_mode & 0111)) {
 			char *argv[] = { path, (char *)when, NULL };
-			run(argv);
+			if (!strcmp(when, "pre")) pre_hook(argv);
+			else run(argv);
 		}
 		free(list[i]);
 	}
@@ -1109,9 +1150,12 @@ static void suspend_now(const char *why)
 		/* the cable going the other way is the charger's edge, not a phantom: nothing to stay awake for, and it is
 		 * not one of the three tries a real phantom gets */
 		if (plugged0 && !cable) {
-			irq_report("unplug", slept_now);
-			sleep_log("the charger was unplugged: back to sleep");
-			continue;
+			plugged0 = 0;
+			if (!woke_key) {
+				irq_report("unplug", slept_now);
+				sleep_log("the charger was unplugged: back to sleep");
+				continue;
+			}
 		}
 		/* Two kinds of phantom. One comes seconds after the suspend (the pwrkey glitch above): those are bounded, so a
 		 * press the key check missed still gets the handheld up by the fourth. The other comes after a long sleep,

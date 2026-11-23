@@ -279,15 +279,11 @@ namespace banana
 		std::unique_lock<std::mutex> l(m);
 		if (!cv.wait_for(l, std::chrono::seconds(2), [this] { return !closeNow; }))
 		{
+			l.unlock();
 #ifdef BANANA_ALSA
 			slog("release(): the device did not close in 2 s");
 #endif
 		}
-#ifdef BANANA_ALSA
-		/* the ack bananad waits for before it sleeps. A device that was already closed publishes nothing else (the
-		 * loop's closeDev only runs when it has a handle), which left the note on "releasing" for good. */
-		if (!devOpen.load()) publishState("closed (release)");
-#endif
 	}
 
 	void Sound::run()
@@ -302,7 +298,32 @@ namespace banana
 		snd_pcm_t* pcm = nullptr;
 		int openRate = 0, openCh = 0;
 		std::vector<int16_t> silence, mix;
-		auto closeDev = [&](const char* why) { if (pcm) { slog("closing (%s)", why); snd_pcm_drop(pcm); snd_pcm_close(pcm); pcm = nullptr; devOpen = false; char s[64]; snprintf(s, sizeof s, "closed (%s)", why); publishState(s); } };
+		auto closeWithLock = [&](std::unique_lock<std::mutex>& l, const char* why)
+		{
+			snd_pcm_t* closing = pcm;
+			pcm = nullptr;
+			if (closing)
+			{
+				l.unlock();
+				slog("closing (%s)", why);
+				snd_pcm_drop(closing);
+				snd_pcm_close(closing);
+				l.lock();
+				devOpen = false;
+			}
+			// A release also needs an acknowledgment if the device was already closed.
+			if (closing || closeNow)
+			{
+				char s[64];
+				snprintf(s, sizeof s, "closed (%s)", why);
+				publishState(s);
+			}
+		};
+		auto closeDev = [&](const char* why)
+		{
+			std::unique_lock<std::mutex> l(m);
+			closeWithLock(l, why);
+		};
 		// Where sound plays (speakers or headphones) is the sound server's now: ACP/WirePlumber follow the jack,
 		// and bananad only keeps ALSA's "default" pointed at PipeWire in /run/banana/asound.conf (read via
 		// /etc/asound.conf), so there is nothing here to reopen when the jack moves.
@@ -418,12 +439,19 @@ namespace banana
 					cur = nullptr;
 					bgmAt = 0;
 				}
-				if (closeNow) { closeDev("release"); cur = nullptr; closeNow = false; cv.notify_all(); continue; }	// a game is starting
+				if (closeNow)
+				{
+					closeWithLock(l, "release");
+					cur = nullptr;
+					closeNow = false;
+					cv.notify_all();
+					continue;
+				}
 				// the burn-in guard blanked the screen (idle.h): the real idle, so let the device go -- unless a
 				// cue came with it, in which case the screen is being used again
 				if (screenOff.exchange(false) && queued.empty())
 				{
-					closeDev("screen off");
+					closeWithLock(l, "screen off");
 					cur = nullptr;
 					continue;
 				}
@@ -533,6 +561,7 @@ namespace banana
 			if (stop) break;
 			closeNow = false;
 			queued.clear();
+			cv.notify_all();
 		}
 #endif
 	}
