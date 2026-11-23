@@ -330,6 +330,7 @@ namespace banana
 				if (presenter) presenter->abandon();
 				dropPending();
 				return;
+				fireCbs(pendingCbs);	// the dropped frame's callbacks, or a callback-paced client waits for them forever
 			}
 			double ft1 = f3On ? msNow() : 0;
 			int fenceFd = presenter->takeFenceFd();
