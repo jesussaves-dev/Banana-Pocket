@@ -18,6 +18,11 @@
 namespace banana
 {
 
+	// Bounds for what a clip may cost: a file on the card is read whole, and the 48 kHz stereo copy is made before
+	// it plays, so an oversized or odd-rate WAV must be refused up front (a bad-alloc here respawns the UI forever).
+	static const long kMaxWavBytes = 64L << 20;		// the file
+	static const size_t kMaxSamples = 40u << 20;	// int16 samples after conversion (~7 min of 48 kHz stereo)
+
 	// 16-bit PCM WAV only (what rnds/gen_sounds.py writes)
 	static bool loadWav(const std::string& path, std::vector<int16_t>& pcm, int& rate, int& channels)
 	{
@@ -26,7 +31,11 @@ namespace banana
 		std::vector<uint8_t> b;
 		uint8_t buf[4096];
 		size_t n;
-		while ((n = fread(buf, 1, sizeof buf, f)) > 0) b.insert(b.end(), buf, buf + n);
+		while ((n = fread(buf, 1, sizeof buf, f)) > 0)
+		{
+			if (b.size() + n > (size_t)kMaxWavBytes) { fclose(f); return false; }
+			b.insert(b.end(), buf, buf + n);
+		}
 		fclose(f);
 		if (b.size() < 44 || memcmp(b.data(), "RIFF", 4) || memcmp(b.data() + 8, "WAVE", 4)) return false;
 		size_t at = 12;
@@ -45,7 +54,7 @@ namespace banana
 			}
 			else if (!memcmp(b.data() + at, "data", 4))
 			{
-				if (bits != 16 || channels < 1 || channels > 8 || rate <= 0) return false;
+				if (bits != 16 || channels < 1 || channels > 8 || rate < 4000 || rate > 192000) return false;
 				len = (uint32_t)std::min<size_t>(len, b.size() - at - 8);
 				pcm.resize(len / 2);
 				memcpy(pcm.data(), c, pcm.size() * 2);
@@ -85,11 +94,12 @@ namespace banana
 	// is resampled there by alsa-lib's linear converter (the image has no speexrate). Convert each clip once, here,
 	// so the stream is always 48 kHz stereo and no plug resampler is involved. Mono (and >2-channel) clips are made
 	// stereo too, so a cue and the ambient loop can always share one stream.
-	static void to48k(std::vector<int16_t>& pcm, int& rate, int& channels)
+	static bool to48k(std::vector<int16_t>& pcm, int& rate, int& channels)
 	{
-		if (rate == 48000) return;	// (channels are fixed up by toStereo below)
-		if (channels < 1 || pcm.size() / channels < 2) return;
+		if (rate == 48000) return true;	// (channels are fixed up by toStereo below)
+		if (channels < 1 || pcm.size() / channels < 2) return true;
 		size_t frames = pcm.size() / channels, n = (size_t)((double)frames * 48000 / rate);
+		if (n * channels > kMaxSamples) return false;
 		std::vector<int16_t> out(n * channels);
 		for (size_t i = 0; i < n; i++)
 		{
@@ -102,19 +112,22 @@ namespace banana
 		}
 		pcm.swap(out);
 		rate = 48000;
+		return true;
 	}
 
 	// every clip the menu plays is stereo (the mixer below writes one stream for the device)
-	static void toStereo(std::vector<int16_t>& pcm, int& channels)
+	static bool toStereo(std::vector<int16_t>& pcm, int& channels)
 	{
-		if (channels == 2 || channels < 1 || pcm.size() / channels < 1) return;
+		if (channels == 2 || channels < 1 || pcm.size() / channels < 1) return true;
 		size_t frames = pcm.size() / channels;
+		if (frames * 2 > kMaxSamples) return false;
 		std::vector<int16_t> out(frames * 2);
 		for (size_t i = 0; i < frames; i++)
 			for (int c = 0; c < 2; c++)
 				out[i * 2 + c] = pcm[i * channels + (c < channels ? c : 0)];
 		pcm.swap(out);
 		channels = 2;
+		return true;
 	}
 #endif
 
@@ -136,8 +149,7 @@ namespace banana
 			if (got)
 			{
 #ifdef BANANA_ALSA
-				toStereo(c.pcm, c.channels);
-				to48k(c.pcm, c.rate, c.channels);
+				if (!toStereo(c.pcm, c.channels) || !to48k(c.pcm, c.rate, c.channels)) continue;
 #endif
 				b.clips[n] = std::move(c);
 			}
@@ -151,7 +163,11 @@ namespace banana
 		for (auto& p : paths)
 			if (loadWav(p, b.bgm.pcm, b.bgm.rate, b.bgm.channels)) { b.bgmLoaded = true; break; }
 #ifdef BANANA_ALSA
-		if (b.bgmLoaded) { toStereo(b.bgm.pcm, b.bgm.channels); to48k(b.bgm.pcm, b.bgm.rate, b.bgm.channels); }
+		if (b.bgmLoaded && (!toStereo(b.bgm.pcm, b.bgm.channels) || !to48k(b.bgm.pcm, b.bgm.rate, b.bgm.channels)))
+		{
+			b.bgm = Clip();
+			b.bgmLoaded = false;
+		}
 #endif
 		return b;
 	}
