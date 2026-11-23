@@ -1460,32 +1460,38 @@ int main(int argc, char** argv)
 			continue;	// see whether the next frame is due before sleeping
 		}
 
+		// a frame is only owed while the menu can draw it (the same gate as the draw above): wanting one under a resident
+		// client, with the panel off or a game flipping, must not turn the quiet-refresh wait below into a 1 ms spin
+		const bool canDraw = disp.isOpen() && !disp.isOff() && !comp.gameActive() && !comp.clientOnScreen();
+		const bool wantDraw = want && canDraw;
 		int timeout;
 		{
 			std::lock_guard<std::mutex> l(worker.uiLock);
-			timeout = want || drawn ? -1 : (settingsView.isOpen() ? settingsView.nextWake(now) : ui->nextWake());	// a frame is wanted: the flip event wakes us
+			// nothing the menu animates can be seen while it cannot draw (its own wake times are the draw's, and a due
+			// one -- 0 -- would clamp to a 1 ms spin below): only the timers further down matter then
+			timeout = wantDraw || drawn || !canDraw ? -1 : (settingsView.isOpen() ? settingsView.nextWake(now) : ui->nextWake());	// a frame is wanted: the flip event wakes us
 		}
-		if (want && !drawn && !disp.flipPending())	// ...unless no flip is pending: then the end of the quiet refresh
+		if (wantDraw && !drawn && !disp.flipPending())	// ...unless no flip is pending: then the end of the quiet refresh
 			timeout = std::max(1, (int)(quietUntil - nowMs() + 0.999));
 		boost.idle(nowMs());
-		if (!want && !drawn)
+		if (!wantDraw && !drawn)
 		{
 			int b = boost.wake(nowMs());
 			if (b >= 0 && (timeout < 0 || b < timeout)) timeout = b;
 		}
 		int toMinute = (int)((60 - wall % 60) * 1000);
-		if (timeout < 0 || timeout > toMinute) timeout = want || drawn ? timeout : toMinute;
+		if (timeout < 0 || timeout > toMinute) timeout = wantDraw || drawn ? timeout : toMinute;
 		int r = rep.wait(now);
+		{
+			int mr = comp.menuRetryMs();
+			if (mr >= 0 && (timeout < 0 || mr < timeout)) timeout = mr;
+		}
 		if (r >= 0 && (timeout < 0 || r < timeout)) timeout = r;
 		bool rescanCan;
 		{
 			std::lock_guard<std::mutex> l(worker.uiLock);
 			// the two views the rescan above covers: in the library the menu would otherwise sit in poll() until an
 			// unrelated key, so a ROM copied in while it is open would not appear on its own
-		{
-			int mr = comp.menuRetryMs();
-			if (mr >= 0 && (timeout < 0 || mr < timeout)) timeout = mr;
-		}
 			rescanCan = roms.due > 0 && !settingsView.isOpen() &&
 				(ui->view() == Menu::HOME || ui->view() == Menu::LIBRARY);
 		}
