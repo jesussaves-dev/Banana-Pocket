@@ -227,6 +227,8 @@ bool retro_serialize(void *data, size_t len)
 }
 bool retro_unserialize(const void *data, size_t len)
 {
+    const char *reject = getenv("BANANA_RETRO_TEST_REJECT_UNSERIALIZE");
+    if (reject != NULL && strcmp(reject, "1") == 0) return false;
     if (data == NULL || len != sizeof(frame)) return false;
     memcpy(&frame, data, sizeof(frame));
     return true;

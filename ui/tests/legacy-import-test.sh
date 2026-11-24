@@ -27,7 +27,7 @@ BANANA_RETROARCH_CFG="$CASE/retroarch.cfg" \
 	"$HERE/banana-ui" --headless "$CASE/ui-" --size 640x557 \
 	--assets "$HERE/assets/rnds" --systems "$HERE/tests/systems.conf" \
 	--roms "$FX/roms" --data "$FX/data" \
-	--script 'lib 1 0; press x; wait 300; press x; wait 300; press down; press down; press down; press down; press a; wait 100; shot import-preview; press a; wait 100; shot import-result' \
+	--script 'lib 1 0; press x; wait 300; press x; wait 300; press down; press down; press down; press down; press a; wait 750; shot import-preview; press a; wait 750; shot import-result' \
 	2> "$CASE/ui.log"
 
 grep -q 'press x: game options open (gba/Orchard Tactics.gba)' "$CASE/ui.log"
@@ -55,4 +55,49 @@ printf '%s\n' "$FX/roms/gba/missing.gba" > "$FX/data/resume"
 grep -q 'resume: missing' "$CASE/stale-resume.log"
 [ ! -e "$FX/data/resume" ]
 [ ! -e "$FX/data/resume-tries" ]
+# A source replacement after preview invalidates the first confirmation. The
+# UI must preview the changed bytes again before it submits a second import.
+CHANGED=$CASE/changed
+mkdir -p "$CHANGED/cores" "$CHANGED/legacy" "$CHANGED/roms/gba" "$CHANGED/data/retro"
+cp "$BUILD/fixture.so" "$CHANGED/cores/mgba_libretro.so"
+printf 'BRC1\n' > "$CHANGED/roms/gba/Changed.gba"
+printf 'core.gba = mgba\n' > "$CHANGED/data/settings.conf"
+printf 'runtime.gba.mgba = banana-retro\n' > "$CHANGED/data/retro/runtime.conf"
+printf 'savefile_directory = "%s"\n' "$CHANGED/legacy" > "$CHANGED/retroarch.cfg"
+printf '\001\002\003\004' > "$CHANGED/legacy/Changed.srm"
+printf '\005\006' > "$CHANGED/legacy/Changed.rtc"
+cat > "$CHANGED/tool" <<'TOOL'
+#!/bin/sh
+set -u
+echo "$1" >> "$CALLS"
+if [ "$1" = --legacy-preview ]; then
+	"$REAL_TOOL" "$@"
+	rc=$?
+	if [ "$rc" -eq 0 ] && [ ! -e "$MUTATED" ]; then
+		: > "$MUTATED"
+		printf '\011\010\007\006' > "$MUTATE_SAVE"
+	fi
+	exit "$rc"
+fi
+exec "$REAL_TOOL" "$@"
+TOOL
+chmod +x "$CHANGED/tool"
+export BANANA_LIBRETRO="$CHANGED/cores"
+export BANANA_RETRO_TOOL="$CHANGED/tool"
+export BANANA_RETROARCH_CFG="$CHANGED/retroarch.cfg"
+export REAL_TOOL="$BUILD/banana-retro"
+export CALLS="$CHANGED/calls"
+export MUTATED="$CHANGED/mutated"
+export MUTATE_SAVE="$CHANGED/legacy/Changed.srm"
+"$HERE/banana-ui" --headless "$CASE/changed-ui-" --size 640x557 \
+	--assets "$HERE/assets/rnds" --systems "$HERE/tests/systems.conf" \
+	--roms "$CHANGED/roms" --data "$CHANGED/data" \
+	--script 'lib 1 0; press x; wait 300; press x; wait 300; press down; press down; press down; press down; press a; wait 750; press a; wait 750; press a; wait 750; press a; wait 750' \
+	2> "$CHANGED/ui.log"
+[ "$(grep -c '^--legacy-preview$' "$CALLS")" -eq 2 ]
+[ "$(grep -c '^--legacy-import$' "$CALLS")" -eq 2 ]
+printf '\011\010\007\006\005\006' > "$CHANGED/expected.memory"
+MEMORY=$(find "$CHANGED/data/retro/saves" -type f -name memory -print)
+[ -n "$MEMORY" ]
+cmp "$CHANGED/expected.memory" "$MEMORY"
 echo 'banana-retro UI legacy import and resume checks passed'

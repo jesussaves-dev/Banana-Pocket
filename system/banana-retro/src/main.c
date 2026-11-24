@@ -61,12 +61,17 @@ static int legacy_command(int argc, char **argv)
     if (argc < 2 || (strcmp(argv[1], "--legacy-preview") != 0 &&
                      strcmp(argv[1], "--legacy-import") != 0)) return -1;
     importing = strcmp(argv[1], "--legacy-import") == 0;
-    if (argc != 6) {
-        fprintf(stderr, "usage: %s --legacy-%s CORE CONTENT LEGACY_ROOT NATIVE_ROOT\n",
-                argv[0], importing ? "import" : "preview");
+    if (argc != (importing ? 7 : 6)) {
+        fprintf(stderr, "usage: %s --legacy-preview CORE CONTENT LEGACY_ROOT NATIVE_ROOT\n"
+                "       %s --legacy-import RECEIPT CORE CONTENT LEGACY_ROOT NATIVE_ROOT\n",
+                argv[0], argv[0]);
         return 2;
     }
-    if (!core_load(argv[2], argv[3], NULL)) {
+    const int offset = importing ? 1 : 0;
+    const char *receipt = importing ? argv[2] : NULL;
+    const char *core_path = argv[2 + offset], *content_path = argv[3 + offset];
+    const char *legacy_root = argv[4 + offset], *native_root = argv[5 + offset];
+    if (!core_load(core_path, content_path, NULL)) {
         fputs("error: core or content could not be loaded\n", stderr);
         return 1;
     }
@@ -75,21 +80,25 @@ static int legacy_command(int argc, char **argv)
     int exit_code = 1;
     if (!core_save_memory_sizes(&sram_size, &rtc_size)) {
         fputs("error: core save-memory sizes are unavailable\n", stderr);
-    } else if (!(saves = open_saves_profile(argv[5], argv[2], argv[3]))) {
+    } else if (!(saves = open_saves_profile(native_root, core_path, content_path))) {
         fputs("error: native save store is unavailable\n", stderr);
     } else {
+        char preview_receipt[65] = {0};
         enum saves_legacy_result result = importing
-            ? saves_legacy_import(saves, argv[4], sram_size, rtc_size)
-            : saves_legacy_preview(saves, argv[4], sram_size, rtc_size);
+            ? saves_legacy_import(saves, legacy_root, sram_size, rtc_size, receipt)
+            : saves_legacy_preview(saves, legacy_root, sram_size, rtc_size, preview_receipt);
         const char *status = "invalid";
         switch (result) {
         case SAVES_LEGACY_NONE: status = "none"; break;
         case SAVES_LEGACY_READY: status = importing ? "imported" : "ready"; break;
         case SAVES_LEGACY_ALREADY_IMPORTED: status = "already-imported"; break;
         case SAVES_LEGACY_AMBIGUOUS: status = "ambiguous"; break;
+        case SAVES_LEGACY_CHANGED: status = "changed"; break;
         case SAVES_LEGACY_INVALID: status = "invalid"; break;
         }
-        printf("ok %s sram=%zu rtc=%zu\n", status, sram_size, rtc_size);
+        if (!importing && result == SAVES_LEGACY_READY)
+            printf("ok %s sram=%zu rtc=%zu receipt=%s\n", status, sram_size, rtc_size, preview_receipt);
+        else printf("ok %s sram=%zu rtc=%zu\n", status, sram_size, rtc_size);
         exit_code = result == SAVES_LEGACY_INVALID ? 1 : 0;
     }
     saves_close(saves);
@@ -591,16 +600,19 @@ int main(int argc, char **argv)
             skip_save_commit = load_state_slot >= 0;
             ok = false;
         } else {
+            char resume_hash[65] = {0};
             bool checkpoint_load = quick_resume && load_state_slot < 0 &&
-                saves_resume_available(runtime.saves);
-            if (quick_resume && load_state_slot < 0 && !checkpoint_load)
-                (void)saves_resume_clear(runtime.saves);
+                saves_resume_available(runtime.saves, resume_hash);
+            if (quick_resume && load_state_slot < 0 && !checkpoint_load && resume_hash[0])
+                (void)saves_resume_clear_if(runtime.saves, resume_hash);
             bool loaded = checkpoint_load
                 ? core_persistence_restore_checkpoint(runtime.saves)
                 : core_persistence_load(runtime.saves, load_state_slot);
             if (!loaded) {
                 startup_error_code = "persistence-load";
                 fputs("No compatible native save or requested state slot\n", stderr);
+                if (checkpoint_load && !saves_resume_clear_if(runtime.saves, resume_hash))
+                    fputs("Failed to clear the rejected native resume marker\n", stderr);
                 if (load_state_slot >= 0 || checkpoint_load) {
                     skip_save_commit = true;
                     ok = false;

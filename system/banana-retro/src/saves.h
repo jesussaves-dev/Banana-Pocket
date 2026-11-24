@@ -11,6 +11,7 @@ enum saves_legacy_result {
 	SAVES_LEGACY_READY,
 	SAVES_LEGACY_ALREADY_IMPORTED,
 	SAVES_LEGACY_AMBIGUOUS,
+	SAVES_LEGACY_CHANGED,
 	SAVES_LEGACY_INVALID
 };
 
@@ -26,12 +27,16 @@ bool saves_set_legacy_core_name(struct saves *saves, const char *library_name);
 void saves_close(struct saves *saves);
 bool saves_load_memory(struct saves *saves, void *sram, size_t sram_size,
 		       void *rtc, size_t rtc_size);
-/* Preview and import uncompressed RetroArch SRAM/RTC files from /data/saves.
- * Import copies data into the native generation and never changes the source. */
+/* Preview hashes the profile, coherent source set, file contents, and destination
+ * state into a 64-character receipt. Import requires that receipt and rejects
+ * any changed snapshot. It copies into the native store without changing the
+ * source files. */
 enum saves_legacy_result saves_legacy_preview(struct saves *saves,
-		const char *legacy_root, size_t sram_size, size_t rtc_size);
+		const char *legacy_root, size_t sram_size, size_t rtc_size,
+		char receipt[65]);
 enum saves_legacy_result saves_legacy_import(struct saves *saves,
-		const char *legacy_root, size_t sram_size, size_t rtc_size);
+		const char *legacy_root, size_t sram_size, size_t rtc_size,
+		const char *receipt);
 bool saves_load_state(struct saves *saves, unsigned slot, void *data, size_t size);
 bool saves_state_present(struct saves *saves, unsigned slot);
 bool saves_checkpoint_present(struct saves *saves);
@@ -39,8 +44,9 @@ bool saves_load_checkpoint(struct saves *saves, void *data, size_t size);
 bool saves_commit_checkpoint(struct saves *saves, const void *sram, size_t sram_size,
 		const void *rtc, size_t rtc_size, const void *checkpoint, size_t checkpoint_size);
 bool saves_resume_record(struct saves *saves);
-bool saves_resume_available(struct saves *saves);
+bool saves_resume_available(struct saves *saves, char checkpoint_hash[65]);
 bool saves_resume_clear(struct saves *saves);
+bool saves_resume_clear_if(struct saves *saves, const char checkpoint_hash[65]);
 bool saves_commit(struct saves *saves, const void *sram, size_t sram_size,
 		  const void *rtc, size_t rtc_size, int state_slot,
 		  const void *state, size_t state_size);

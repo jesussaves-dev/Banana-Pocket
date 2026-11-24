@@ -748,6 +748,8 @@ namespace banana
 		inGroups = false;
 		sel = top = 0;
 		armed = -1;
+		legacyActionSel = -1;
+		legacyPreviewReceipt.clear();
 		message.clear();
 		mOpen = true;
 	}
@@ -906,9 +908,9 @@ namespace banana
 					message = "The RetroArch save directory is not an absolute path.";
 					armed = -1; return MOVED;
 				}
-				if (armed != sel)
+				if (armed != sel || legacyActionSel != sel || legacyPreviewReceipt.size() != 64)
 				{
-					armed = -1; legacyActionSel = sel; backupWhat = 3; message = "Checking the matching RetroArch save...";
+					armed = -1; legacyActionSel = sel; legacyPreviewReceipt.clear(); backupWhat = 3; message = "Checking the matching RetroArch save...";
 					std::string tool = (getenv("BANANA_RETRO_TOOL") && *getenv("BANANA_RETRO_TOOL"))
 						? getenv("BANANA_RETRO_TOOL") : "/usr/bin/banana-retro";
 					const char* libretro_env = getenv("BANANA_LIBRETRO");
@@ -918,13 +920,13 @@ namespace banana
 						banana::shellQuote(gameRom) + " " + banana::shellQuote(legacy_root) + " " + banana::shellQuote(data + "/retro/saves"), sync);
 					return MOVED;
 				}
-				armed = -1; legacyActionSel = sel; backupWhat = 4; message = "Importing the previewed save...";
+				armed = -1; backupWhat = 4; message = "Revalidating the previewed save...";
 				std::string tool = (getenv("BANANA_RETRO_TOOL") && *getenv("BANANA_RETRO_TOOL"))
 					? getenv("BANANA_RETRO_TOOL") : "/usr/bin/banana-retro";
 				const char* libretro_env = getenv("BANANA_LIBRETRO");
 				std::string ldir = libretro_env && *libretro_env ? libretro_env : "/usr/lib/libretro";
 				std::string core_path = ldir + "/" + effective_core + "_libretro.so";
-				backupJob.start(banana::shellQuote(tool) + " --legacy-import " + banana::shellQuote(core_path) + " " +
+				backupJob.start(banana::shellQuote(tool) + " --legacy-import " + banana::shellQuote(legacyPreviewReceipt) + " " + banana::shellQuote(core_path) + " " +
 					banana::shellQuote(gameRom) + " " + banana::shellQuote(legacy_root) + " " + banana::shellQuote(data + "/retro/saves"), sync);
 				return MOVED;
 			}
@@ -2072,14 +2074,18 @@ namespace banana
 					: line.compare(0, 7, "error: ") == 0 ? line.substr(7) : (line.empty() ? "the backup tool said nothing" : line);
 				if (what == 3)
 				{
-					if (good && line.compare(0, 9, "ok ready ") == 0)
+					const size_t receipt_at = line.find(" receipt=");
+					if (good && line.compare(0, 9, "ok ready ") == 0 && receipt_at != std::string::npos &&
+						receipt_at + 9 + 64 == line.size())
 					{
-						message = "Preview: " + line.substr(3) + ". Press A again to import; the original stays in RetroArch's saves folder.";
+						legacyPreviewReceipt = line.substr(receipt_at + 9);
+						message = "Preview: " + line.substr(3, receipt_at - 3) + ". Press A again to import; the original stays in RetroArch's saves folder.";
 						if (legacyActionSel >= 0 && legacyActionSel < (int)items.size() &&
 							items[legacyActionSel].key == "legacy_import") armed = legacyActionSel;
 					}
 					else
 					{
+						legacyPreviewReceipt.clear();
 						message = good ? "Legacy save preview: " + detail : "Legacy save preview failed: " + detail;
 						armed = -1;
 					}
@@ -2087,9 +2093,15 @@ namespace banana
 				}
 				if (what == 4)
 				{
-					message = good && line.compare(0, 12, "ok imported ") == 0
-						? "Legacy SRAM/RTC copied into the native save store. The RetroArch original was kept."
-						: "Legacy save import failed: " + detail;
+					if (good && line.compare(0, 12, "ok imported ") == 0)
+						message = "Legacy SRAM/RTC copied into the native save store. The RetroArch original was kept.";
+					else if (good && (line.compare(0, 11, "ok changed ") == 0 ||
+						line.compare(0, 20, "ok already-imported ") == 0 ||
+						line.compare(0, 13, "ok ambiguous ") == 0))
+						message = "Legacy save or native data changed. Preview again before importing.";
+					else message = "Legacy save import failed: " + detail;
+					legacyPreviewReceipt.clear();
+					armed = -1;
 					legacyActionSel = -1;
 					return true;
 				}

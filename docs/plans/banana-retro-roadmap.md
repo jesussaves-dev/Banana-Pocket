@@ -69,7 +69,7 @@ Each task is a separate Banana work item with the stated allowlist. Dependency I
 
 ## 10. Add explicit legacy data import and quick resume
 
-- **Scope and files** — `system/banana-retro/src/{main.c,saves.c,saves.h}`, `system/banana-retro/tests/{check-saves.c,legacy-fixtures/}`, `ui/src/{main.cpp,settings.cpp,settings.h}`.
+- **Scope and files** — `system/banana-retro/{Makefile,src/{main.c,core.c,core.h,saves.c,saves.h},tests/{check-saves.c,fixture_core.c,legacy-fixtures/}}`, `ui/src/{settings.cpp,settings.h}`, `ui/tests/{run.sh,legacy-import-test.sh}`. The core files expose safe-point memory-size, checkpoint capture, and restore operations; the runtime fixture supplies deterministic serialization and rejected-restore behavior; the build and UI test files execute the scoped regression paths.
 - **Dependencies and interface** — 05 and 09. Previewable SRAM/RTC import, native checkpoint metadata and boot resume record.
 - **Sequence and completion** — Validate produced legacy raw save fixtures per core. Test old root/per-core layouts, name collisions, corrupt files, mismatched size, read-only originals, already-imported data, diverging native and RetroArch files, and cold-boot resume. Keep state import disabled until a separate task has verified actual legacy containers and exact-build unserialize. Enable automatic resume only for a verified native checkpoint and profile.
 - **Complexity and rollback** — Medium. Disable importer or quick resume at the profile level. Preserve both save namespaces.

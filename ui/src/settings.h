@@ -285,6 +285,7 @@ namespace banana
 		wifi::Job scanJob, statusJob, backupJob;
 		int backupWhat = 0;	// 0 none, 1 backup, 2 restore, 3 save preview, 4 save import
 		int legacyActionSel = -1;
+		std::string legacyPreviewReceipt;
 		std::vector<wifi::Network> nets;
 		wifi::Status wstat;
 		bool scanning = false, scannedOnce = false, wifiEnabled = true;

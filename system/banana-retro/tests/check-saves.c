@@ -40,9 +40,10 @@ static void check_profile_fixture(const char *base,const char *fixtures,const ch
 	if(rtc_name){assert(snprintf(rtc_path,sizeof(rtc_path),"%s/%s/%s",legacy,library,rtc_name)>0);rtc=read_bytes(rtc_path,&rtc_size);}
 	struct saves *store=saves_open(native,core_path,content);assert(store);
 	assert(saves_set_legacy_core_name(store,library));
-	assert(saves_legacy_preview(store,legacy,sram_size,rtc_size)==SAVES_LEGACY_READY);
-	assert(saves_legacy_import(store,legacy,sram_size,rtc_size)==SAVES_LEGACY_READY);
-	assert(saves_legacy_preview(store,legacy,sram_size,rtc_size)==SAVES_LEGACY_ALREADY_IMPORTED);
+	char receipt[65];
+	assert(saves_legacy_preview(store,legacy,sram_size,rtc_size,receipt)==SAVES_LEGACY_READY);
+	assert(saves_legacy_import(store,legacy,sram_size,rtc_size,receipt)==SAVES_LEGACY_READY);
+	assert(saves_legacy_preview(store,legacy,sram_size,rtc_size,NULL)==SAVES_LEGACY_ALREADY_IMPORTED);
 	uint8_t *memory=malloc(sram_size+rtc_size);assert(memory);
 	assert(saves_load_memory(store,memory,sram_size,memory+sram_size,rtc_size));
 	assert(memcmp(memory,sram,sram_size)==0&&(!rtc_size||memcmp(memory+sram_size,rtc,rtc_size)==0));
@@ -98,6 +99,8 @@ static int runtime_run(const char *runtime,const char *core,const char *rom,
 		assert(setenv("BANANA_RETRO_TEST_PERSISTENCE","1",1)==0);
 		if(quick_resume)assert(setenv("BANANA_RETRO_TEST_QUICK_RESUME","1",1)==0);
 		else unsetenv("BANANA_RETRO_TEST_QUICK_RESUME");
+		if(quick_resume==4)assert(setenv("BANANA_RETRO_TEST_REJECT_UNSERIALIZE","1",1)==0);
+		else unsetenv("BANANA_RETRO_TEST_REJECT_UNSERIALIZE");
 		if(signal_exit)assert(setenv("BANANA_RETRO_TEST_WAIT_FOR_SIGNAL","1",1)==0);
 		else unsetenv("BANANA_RETRO_TEST_WAIT_FOR_SIGNAL");
 		char *args[10];int n=0;args[n++]=(char*)runtime;args[n++]=(char*)core;args[n++]=(char*)rom;args[n++]="--frames";args[n++]=signal_exit?"10000":"2";
@@ -105,19 +108,23 @@ static int runtime_run(const char *runtime,const char *core,const char *rom,
 		execv(runtime,args);_exit(127);
 	}
 	close(pipes[1]);bool saw_run=false;char line[256];size_t used=0;char c;
-	while(read(pipes[0],&c,1)==1){if(c=='\n'){line[used]=0;if(strstr(line,quick_resume==2||quick_resume==3?"fixture run 3":"fixture run 1")){saw_run=true;break;}used=0;}else if(used+1<sizeof(line))line[used++]=c;}
+	while(read(pipes[0],&c,1)==1){if(c=='\n'){line[used]=0;if(strstr(line,quick_resume==2?"fixture run 3":"fixture run 1")){saw_run=true;break;}used=0;}else if(used+1<sizeof(line))line[used++]=c;}
 	if(signal_exit){assert(saw_run);assert(kill(pid,SIGTERM)==0);}
+	if(quick_resume==4)assert(!saw_run);
+	else if(quick_resume)assert(saw_run);
 	while(read(pipes[0],&c,1)==1){}
 	close(pipes[0]);int status;assert(waitpid(pid,&status,0)==pid);assert(WIFEXITED(status));	return WEXITSTATUS(status);
 }
 
 static int legacy_cli_run(const char *runtime,const char *core,const char *rom,
-			  const char *legacy,const char *native,bool importing,char *output,size_t capacity)
+			  const char *legacy,const char *native,bool importing,const char *receipt,
+			  char *output,size_t capacity)
 {
 	int pipes[2];assert(pipe(pipes)==0);pid_t pid=fork();assert(pid>=0);
 	if(pid==0){close(pipes[0]);assert(dup2(pipes[1],STDOUT_FILENO)>=0);close(pipes[1]);
-		char *args[]={(char*)runtime,importing?"--legacy-import":"--legacy-preview",(char*)core,(char*)rom,(char*)legacy,(char*)native,NULL};
-		execv(runtime,args);_exit(127);}
+		char *preview_args[]={(char*)runtime,"--legacy-preview",(char*)core,(char*)rom,(char*)legacy,(char*)native,NULL};
+		char *import_args[]={(char*)runtime,"--legacy-import",(char*)receipt,(char*)core,(char*)rom,(char*)legacy,(char*)native,NULL};
+		execv(runtime,importing?import_args:preview_args);_exit(127);}
 	close(pipes[1]);size_t used=0;char b[256];ssize_t n;
 	while((n=read(pipes[0],b,sizeof(b)))>0){size_t take=(size_t)n;if(take>capacity-used-1)take=capacity-used-1;memcpy(output+used,b,take);used+=take;}
 	assert(close(pipes[0])==0);output[used]=0;int status;assert(waitpid(pid,&status,0)==pid&&WIFEXITED(status));return WEXITSTATUS(status);
@@ -171,10 +178,19 @@ int main(int argc,char **argv)
 	assert(snprintf(legacy_native,sizeof(legacy_native),"%s/legacy-native",base)>0);
 	put(legacy_sram,sram,sizeof(sram));put(legacy_rtc,rtc,sizeof(rtc));
 	struct saves *legacy_store=saves_open(legacy_native,core,content);assert(legacy_store);
-	assert(saves_legacy_preview(legacy_store,legacy,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_READY);
+	char legacy_receipt[65];
+	assert(saves_legacy_preview(legacy_store,legacy,sizeof(sram),sizeof(rtc),legacy_receipt)==SAVES_LEGACY_READY);
+	struct saves *changed_profile=saves_open_with_options(legacy_native,core,content,"different-options");assert(changed_profile);
+	assert(saves_legacy_import(changed_profile,legacy,sizeof(sram),sizeof(rtc),legacy_receipt)==SAVES_LEGACY_CHANGED);
+	saves_close(changed_profile);
+	uint8_t replacement_sram[]={4,3,2,1};put(legacy_sram,replacement_sram,sizeof(replacement_sram));
+	assert(saves_legacy_import(legacy_store,legacy,sizeof(sram),sizeof(rtc),legacy_receipt)==SAVES_LEGACY_CHANGED);
+	assert(!saves_load_memory(legacy_store,got_sram,sizeof(got_sram),got_rtc,sizeof(got_rtc)));
+	put(legacy_sram,sram,sizeof(sram));
+	assert(saves_legacy_preview(legacy_store,legacy,sizeof(sram),sizeof(rtc),legacy_receipt)==SAVES_LEGACY_READY);
 	assert(chmod(legacy_sram,0400)==0&&chmod(legacy_rtc,0400)==0);
-	assert(saves_legacy_import(legacy_store,legacy,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_READY);
-	assert(saves_legacy_preview(legacy_store,legacy,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_ALREADY_IMPORTED);
+	assert(saves_legacy_import(legacy_store,legacy,sizeof(sram),sizeof(rtc),legacy_receipt)==SAVES_LEGACY_READY);
+	assert(saves_legacy_preview(legacy_store,legacy,sizeof(sram),sizeof(rtc),NULL)==SAVES_LEGACY_ALREADY_IMPORTED);
 	memset(got_sram,0,sizeof(got_sram));memset(got_rtc,0,sizeof(got_rtc));
 	assert(saves_load_memory(legacy_store,got_sram,sizeof(got_sram),got_rtc,sizeof(got_rtc)));
 	assert(!memcmp(got_sram,sram,sizeof(sram))&&!memcmp(got_rtc,rtc,sizeof(rtc)));
@@ -182,30 +198,43 @@ int main(int argc,char **argv)
 	/* Divergent RetroArch data is previewed as already imported; neither namespace is overwritten. */
 	assert(chmod(legacy_sram,0600)==0);
 	uint8_t ra_divergent[]={7,7,7,7};put(legacy_sram,ra_divergent,sizeof(ra_divergent));
-	assert(saves_legacy_preview(legacy_store,legacy,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_ALREADY_IMPORTED);
-	assert(saves_legacy_import(legacy_store,legacy,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_ALREADY_IMPORTED);
+	assert(saves_legacy_preview(legacy_store,legacy,sizeof(sram),sizeof(rtc),NULL)==SAVES_LEGACY_ALREADY_IMPORTED);
+	assert(saves_legacy_import(legacy_store,legacy,sizeof(sram),sizeof(rtc),legacy_receipt)==SAVES_LEGACY_ALREADY_IMPORTED);
 	memset(got_sram,0,sizeof(got_sram));assert(saves_load_memory(legacy_store,got_sram,sizeof(got_sram),got_rtc,sizeof(got_rtc)));
 	assert(!memcmp(got_sram,sram,sizeof(sram)));
 	saves_close(legacy_store);
+	/* A destination write after preview invalidates confirmation and is preserved. */
+	char changed_dest_root[4096];assert(snprintf(changed_dest_root,sizeof(changed_dest_root),"%s/changed-dest",base)>0);
+	struct saves *changed_dest=saves_open(changed_dest_root,core,content);assert(changed_dest);
+	char dest_receipt[65];assert(saves_legacy_preview(changed_dest,legacy,sizeof(sram),sizeof(rtc),dest_receipt)==SAVES_LEGACY_READY);
+	uint8_t destination_byte=0x55;assert(saves_commit(changed_dest,&destination_byte,1,NULL,0,-1,NULL,0));
+	assert(saves_legacy_import(changed_dest,legacy,sizeof(sram),sizeof(rtc),dest_receipt)==SAVES_LEGACY_ALREADY_IMPORTED);
+	uint8_t destination_out=0;assert(saves_load_memory(changed_dest,&destination_out,1,NULL,0)&&destination_out==destination_byte);
+	saves_close(changed_dest);
 	/* Wrong lengths and duplicate root/per-core candidates fail closed. */
-	char bad_legacy[4096],bad_sram[4096],bad_core_dir[4096],bad_core_file[4096];
+	char bad_legacy[4096],bad_sram[4096],bad_core_dir[4096],bad_core_file[4096],bad_core_rtc[4096];
 	assert(snprintf(bad_legacy,sizeof(bad_legacy),"%s/legacy-bad",base)>0&&mkdir(bad_legacy,0700)==0);
 	assert(snprintf(bad_sram,sizeof(bad_sram),"%s/rom.srm",bad_legacy)>0);put(bad_sram,"x",1);
 	struct saves *bad_store=saves_open(legacy_native,core,content2);assert(bad_store);
-	assert(saves_legacy_preview(bad_store,bad_legacy,4,0)==SAVES_LEGACY_INVALID);
-	assert(saves_legacy_import(bad_store,bad_legacy,4,0)==SAVES_LEGACY_INVALID);
+	assert(saves_legacy_preview(bad_store,bad_legacy,4,0,NULL)==SAVES_LEGACY_INVALID);
+	assert(saves_legacy_import(bad_store,bad_legacy,4,0,"0000000000000000000000000000000000000000000000000000000000000000")==SAVES_LEGACY_INVALID);
 	uint8_t failed_import_target[4];assert(!saves_load_memory(bad_store,failed_import_target,sizeof(failed_import_target),NULL,0));
 	put(bad_sram,sram,sizeof(sram));
 	assert(snprintf(bad_core_dir,sizeof(bad_core_dir),"%s/core.so",bad_legacy)>0&&mkdir(bad_core_dir,0700)==0);
+	assert(snprintf(bad_core_rtc,sizeof(bad_core_rtc),"%s/rom.rtc",bad_core_dir)>0);put(bad_core_rtc,rtc,sizeof(rtc));
+	assert(saves_legacy_preview(bad_store,bad_legacy,4,sizeof(rtc),NULL)==SAVES_LEGACY_AMBIGUOUS);
+	assert(saves_legacy_import(bad_store,bad_legacy,4,sizeof(rtc),"0000000000000000000000000000000000000000000000000000000000000000")==SAVES_LEGACY_AMBIGUOUS);
 	assert(snprintf(bad_core_file,sizeof(bad_core_file),"%s/rom.srm",bad_core_dir)>0);put(bad_core_file,sram,sizeof(sram));
-	assert(saves_legacy_preview(bad_store,bad_legacy,4,0)==SAVES_LEGACY_AMBIGUOUS);
-	assert(saves_legacy_import(bad_store,bad_legacy,4,0)==SAVES_LEGACY_AMBIGUOUS);
+	assert(saves_legacy_preview(bad_store,bad_legacy,4,0,NULL)==SAVES_LEGACY_AMBIGUOUS);
+	assert(saves_legacy_import(bad_store,bad_legacy,4,0,"0000000000000000000000000000000000000000000000000000000000000000")==SAVES_LEGACY_AMBIGUOUS);
 	saves_close(bad_store);
 	/* A publication failure leaves the raw source untouched and no partial native generation visible. */
 	char failed_import_root[4096];assert(snprintf(failed_import_root,sizeof(failed_import_root),"%s/import-failed",base)>0);
 	struct saves *failed_import=saves_open(failed_import_root,core,content);assert(failed_import);
-	put(legacy_sram,sram,sizeof(sram));saves_test_fail_write_after(2);
-	assert(saves_legacy_import(failed_import,legacy,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_INVALID);
+	put(legacy_sram,sram,sizeof(sram));
+	char failed_receipt[65];assert(saves_legacy_preview(failed_import,legacy,sizeof(sram),sizeof(rtc),failed_receipt)==SAVES_LEGACY_READY);
+	saves_test_fail_write_after(2);
+	assert(saves_legacy_import(failed_import,legacy,sizeof(sram),sizeof(rtc),failed_receipt)==SAVES_LEGACY_INVALID);
 	assert(!saves_load_memory(failed_import,failed_import_target,sizeof(failed_import_target),got_rtc,sizeof(got_rtc)));
 	legacy_fd=open(legacy_sram,O_RDONLY);assert(legacy_fd>=0);assert(read(legacy_fd,&legacy_byte,1)==1&&legacy_byte==sram[0]);assert(close(legacy_fd)==0);
 	saves_close(failed_import);
@@ -218,8 +247,9 @@ int main(int argc,char **argv)
 	assert(snprintf(per_core_native,sizeof(per_core_native),"%s/per-core-native",base)>0);
 	put(per_core_sram,sram,sizeof(sram));put(per_core_rtc,rtc,sizeof(rtc));
 	struct saves *per_core_store=saves_open(per_core_native,core,content);assert(per_core_store);
-	assert(saves_legacy_preview(per_core_store,per_core_root,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_READY);
-	assert(saves_legacy_import(per_core_store,per_core_root,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_READY);
+	char per_core_receipt[65];
+	assert(saves_legacy_preview(per_core_store,per_core_root,sizeof(sram),sizeof(rtc),per_core_receipt)==SAVES_LEGACY_READY);
+	assert(saves_legacy_import(per_core_store,per_core_root,sizeof(sram),sizeof(rtc),per_core_receipt)==SAVES_LEGACY_READY);
 	saves_close(per_core_store);
 	/* RetroArch uses the library-reported core name for sorted per-core save directories. */
 	char library_root[4096],library_dir[4096],library_sram[4096],library_rtc[4096],library_native[4096];
@@ -230,8 +260,9 @@ int main(int argc,char **argv)
 	assert(snprintf(library_native,sizeof(library_native),"%s/library-native",base)>0);
 	struct saves *library_store=saves_open(library_native,core,content);assert(library_store);
 	assert(saves_set_legacy_core_name(library_store,"Banana lifecycle fixture"));
-	assert(saves_legacy_preview(library_store,library_root,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_READY);
-	assert(saves_legacy_import(library_store,library_root,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_READY);
+	char library_receipt[65];
+	assert(saves_legacy_preview(library_store,library_root,sizeof(sram),sizeof(rtc),library_receipt)==SAVES_LEGACY_READY);
+	assert(saves_legacy_import(library_store,library_root,sizeof(sram),sizeof(rtc),library_receipt)==SAVES_LEGACY_READY);
 	saves_close(library_store);
 	/* Checkpoint records bind to a valid, exact-build native generation. */
 	char checkpoint_root[4096],other_core[4096],checkpoint_ident[4096],checkpoint_gen[4096],checkpoint_state[4096];
@@ -242,25 +273,31 @@ int main(int argc,char **argv)
 	assert(saves_commit_checkpoint(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),checkpoint_data,sizeof(checkpoint_data)));
 	assert(saves_checkpoint_present(checkpoint));
 	assert(saves_resume_record(checkpoint));
-	assert(saves_resume_available(checkpoint));uint8_t checkpoint_out[sizeof(checkpoint_data)];
+	char resume_hash[65];assert(saves_resume_available(checkpoint,resume_hash));uint8_t checkpoint_out[sizeof(checkpoint_data)];
 	assert(saves_load_checkpoint(checkpoint,checkpoint_out,sizeof(checkpoint_out))&&!memcmp(checkpoint_out,checkpoint_data,sizeof(checkpoint_data)));
 	assert(saves_load_state(checkpoint,9,checkpoint_out,sizeof(checkpoint_out))&&!memcmp(checkpoint_out,checkpoint_data,sizeof(checkpoint_data)));
 	/* Failed publication leaves the old resume generation usable. */
 	saves_test_fail_write_after(0);
 	uint8_t replacement_state[]={9,3,2,3};
 	assert(!saves_commit_checkpoint(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),replacement_state,sizeof(replacement_state)));
-	assert(saves_resume_available(checkpoint));
+	assert(saves_resume_available(checkpoint,resume_hash));
+	char rejected_generation_hash[65];memcpy(rejected_generation_hash,resume_hash,sizeof(resume_hash));
+	assert(saves_commit_checkpoint(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),replacement_state,sizeof(replacement_state)));
+	assert(saves_resume_record(checkpoint));assert(saves_resume_available(checkpoint,resume_hash));
+	assert(strcmp(rejected_generation_hash,resume_hash)!=0);
+	assert(saves_resume_clear_if(checkpoint,rejected_generation_hash));
+	assert(saves_resume_available(checkpoint,rejected_generation_hash)&&strcmp(rejected_generation_hash,resume_hash)==0);
 	assert(snprintf(other_core,sizeof(other_core),"%s/other-core.so",base)>0);put(other_core,"different-core",14);
 	struct saves *stale_checkpoint=saves_open(checkpoint_root,other_core,content);assert(stale_checkpoint);
-	assert(!saves_resume_available(stale_checkpoint));saves_close(stale_checkpoint);
+	assert(!saves_resume_available(stale_checkpoint,resume_hash));saves_close(stale_checkpoint);
 	struct saves *option_mismatch_checkpoint=saves_open_with_options(checkpoint_root,core,content,"options-changed");assert(option_mismatch_checkpoint);
-	assert(!saves_resume_available(option_mismatch_checkpoint));saves_close(option_mismatch_checkpoint);
+	assert(!saves_resume_available(option_mismatch_checkpoint,resume_hash));saves_close(option_mismatch_checkpoint);
 	/* A checksum failure invalidates resume metadata; it cannot be unserialized. */
 	entry_with_file(checkpoint_root,"RESUME",checkpoint_ident,sizeof(checkpoint_ident));uint64_t checkpoint_generation=current(checkpoint_ident);
 	assert(snprintf(checkpoint_gen,sizeof(checkpoint_gen),"%s/g%016llx",checkpoint_ident,(unsigned long long)checkpoint_generation)>0);
 	assert(snprintf(checkpoint_state,sizeof(checkpoint_state),"%s/checkpoint",checkpoint_gen)>0);put(checkpoint_state,"x",1);
-	assert(!saves_resume_available(checkpoint));assert(!saves_checkpoint_present(checkpoint));
-	assert(saves_resume_clear(checkpoint));saves_close(checkpoint);
+	assert(!saves_resume_available(checkpoint,resume_hash));assert(resume_hash[0]);assert(saves_checkpoint_present(checkpoint));
+	assert(saves_resume_clear_if(checkpoint,resume_hash));saves_close(checkpoint);
 	/* A second committed generation retains untouched explicit slots. */
 	uint8_t sram2[]={7,7,7,7};assert(saves_commit(s,sram2,sizeof(sram2),rtc,sizeof(rtc),-1,NULL,0));memset(got_state,0,sizeof(got_state));assert(saves_load_state(s,0,got_state,sizeof(got_state))&&!memcmp(state0,got_state,sizeof(state0)));
 	/* A truncated newest payload is rejected and the previous generation remains loadable. */
@@ -309,17 +346,31 @@ int main(int argc,char **argv)
 	assert(snprintf(resume_gen,sizeof(resume_gen),"%s/g%016llx",resume_ident,(unsigned long long)resume_generation)>0);
 	assert(snprintf(resume_payload,sizeof(resume_payload),"%s/checkpoint",resume_gen)>0);put(resume_payload,"x",1);
 	assert(runtime_run(runtime,fixture,rom,rr,false,0,3)==0);
+	assert(snprintf(rr,sizeof(rr),"%s/runtime-rejected-resume",base)>0);
+	assert(runtime_run(runtime,fixture,rom,rr,false,2,1)==0);
+	assert(runtime_run(runtime,fixture,rom,rr,false,0,4)!=0);
+	struct saves *rejected_resume=saves_open_with_options(rr,fixture,rom,"banana-retro-options-v1:");assert(rejected_resume);
+	char rejected_hash[65];assert(!saves_resume_available(rejected_resume,rejected_hash));
+	assert(saves_checkpoint_present(rejected_resume));uint32_t preserved_checkpoint=0;
+	assert(saves_load_checkpoint(rejected_resume,&preserved_checkpoint,sizeof(preserved_checkpoint)));
+	assert(saves_state_present(rejected_resume,0));uint32_t preserved_slot=0;
+	assert(saves_load_state(rejected_resume,0,&preserved_slot,sizeof(preserved_slot)));
+	saves_close(rejected_resume);
+	assert(runtime_has_save(rr,fixture,rom));
+	assert(runtime_run(runtime,fixture,rom,rr,false,0,5)==0);
 	char cli_legacy[4096],cli_native[4096],cli_sram[4096],cli_rtc[4096],cli_output[256];
 	assert(snprintf(cli_legacy,sizeof(cli_legacy),"%s/cli-legacy",base)>0&&mkdir(cli_legacy,0700)==0);
 	assert(snprintf(cli_native,sizeof(cli_native),"%s/cli-native",base)>0);
 	assert(snprintf(cli_sram,sizeof(cli_sram),"%s/runtime.srm",cli_legacy)>0);
 	assert(snprintf(cli_rtc,sizeof(cli_rtc),"%s/runtime.rtc",cli_legacy)>0);
 	put(cli_sram,sram,sizeof(sram));put(cli_rtc,rtc,sizeof(rtc));
-	assert(legacy_cli_run(runtime,fixture,rom,cli_legacy,cli_native,false,cli_output,sizeof(cli_output))==0);
+	assert(legacy_cli_run(runtime,fixture,rom,cli_legacy,cli_native,false,NULL,cli_output,sizeof(cli_output))==0);
 	assert(strstr(cli_output,"ok ready sram=4 rtc=2")!=NULL);
-	assert(legacy_cli_run(runtime,fixture,rom,cli_legacy,cli_native,true,cli_output,sizeof(cli_output))==0);
+	char *receipt_at=strstr(cli_output," receipt=");assert(receipt_at&&strlen(receipt_at+9)>=64);
+	char cli_receipt[65];memcpy(cli_receipt,receipt_at+9,64);cli_receipt[64]=0;
+	assert(legacy_cli_run(runtime,fixture,rom,cli_legacy,cli_native,true,cli_receipt,cli_output,sizeof(cli_output))==0);
 	assert(strstr(cli_output,"ok imported sram=4 rtc=2")!=NULL);
-	assert(legacy_cli_run(runtime,fixture,rom,cli_legacy,cli_native,false,cli_output,sizeof(cli_output))==0);
+	assert(legacy_cli_run(runtime,fixture,rom,cli_legacy,cli_native,false,NULL,cli_output,sizeof(cli_output))==0);
 	assert(strstr(cli_output,"ok already-imported")!=NULL);
 	saves_close(collision);saves_close(s);tree_remove(base);puts("banana-retro native save checks passed");return 0;
 }
