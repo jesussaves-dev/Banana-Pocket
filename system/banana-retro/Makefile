@@ -5,14 +5,38 @@
 CC ?= cc
 CFLAGS ?= -O2
 OUT ?= .
+PKG_CONFIG ?= pkg-config
+WAYLAND_SCANNER ?= wayland-scanner
+WAYLAND_PROTOCOLS ?= $(shell $(PKG_CONFIG) --variable=pkgdatadir wayland-protocols)
+XDG_XML = $(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml
+NATIVE_XML = protocol/banana-retro-v1.xml
+WL_HEADERS = $(OUT)/xdg-shell-client-protocol.h $(OUT)/banana-retro-client-protocol.h
+WL_CODE = $(OUT)/xdg-shell-protocol.c $(OUT)/banana-retro-protocol.c
+VIDEO = src/video_wayland.c src/video_wayland.h include/libretro.h $(WL_HEADERS) $(WL_CODE)
+VIDEO_CFLAGS = -Iinclude -I$(OUT) $(shell $(PKG_CONFIG) --cflags wayland-client)
+VIDEO_LIBS = $(shell $(PKG_CONFIG) --libs wayland-client)
+CHECK_SERVER_PKGS = wayland-server libdrm xkbcommon
+CHECK_SERVER_HEADERS = $(addprefix $(OUT)/,xdg-shell-server-protocol.h banana-retro-server-protocol.h \
+	linux-dmabuf-unstable-v1-server-protocol.h wayland-drm-server-protocol.h viewporter-server-protocol.h)
+CHECK_VIDEO_OBJS = $(OUT)/video_wayland.o $(WL_CODE:.c=.o)
 
 strict_cflags = -std=c99 -Wall -Wextra -Werror -pedantic
 
-.PHONY: all check check-binaries
+.PHONY: all check check-binaries check-video
 all: $(OUT)/banana-retro
 
-$(OUT)/banana-retro: src/main.c src/core.c src/core.h include/libretro.h
-	$(CC) $(CPPFLAGS) -Iinclude $(CFLAGS) $(strict_cflags) $(LDFLAGS) -o $@ src/main.c src/core.c -ldl $(LDLIBS)
+$(OUT)/banana-retro: src/main.c src/core.c src/core.h $(VIDEO)
+	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(CFLAGS) $(strict_cflags) $(LDFLAGS) -o $@ \
+		src/main.c src/core.c src/video_wayland.c $(WL_CODE) -ldl $(VIDEO_LIBS) $(LDLIBS)
+
+$(OUT)/xdg-shell-client-protocol.h: $(XDG_XML)
+	$(WAYLAND_SCANNER) client-header $< $@
+$(OUT)/xdg-shell-protocol.c: $(XDG_XML)
+	$(WAYLAND_SCANNER) private-code $< $@
+$(OUT)/banana-retro-client-protocol.h: $(NATIVE_XML)
+	$(WAYLAND_SCANNER) client-header $< $@
+$(OUT)/banana-retro-protocol.c: $(NATIVE_XML)
+	$(WAYLAND_SCANNER) private-code $< $@
 
 $(OUT)/fixture.so: tests/fixture_core.c include/libretro.h
 	$(CC) $(CPPFLAGS) -Iinclude $(CFLAGS) $(strict_cflags) -shared -fPIC $(LDFLAGS) -o $@ $< $(LDLIBS)
@@ -25,10 +49,29 @@ $(OUT)/fixture-missing-export.so: tests/fixture_core.c include/libretro.h
 
 check-binaries: $(OUT)/banana-retro $(OUT)/fixture.so $(OUT)/fixture-wrong-api.so $(OUT)/fixture-missing-export.so
 
+$(CHECK_SERVER_HEADERS): $(XDG_XML) $(NATIVE_XML)
+	$(MAKE) -s -C ../../ui WLDIR="$(abspath $(OUT))" "$(abspath $@)"
+
+$(OUT)/video_wayland.o: src/video_wayland.c src/video_wayland.h src/core.h include/libretro.h $(WL_HEADERS)
+	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(CFLAGS) $(strict_cflags) -c $< -o $@
+
+$(OUT)/%.o: $(OUT)/%.c
+	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(CFLAGS) $(strict_cflags) -c $< -o $@
+
+$(OUT)/fixture-check-video: tests/check-video.c $(CHECK_VIDEO_OBJS) $(CHECK_SERVER_HEADERS) \
+		../../ui/src/compositor.cpp ../../ui/src/client_buffer.h ../../ui/src/presenter.h
+	$(CXX) $(CPPFLAGS) $(VIDEO_CFLAGS) $(CXXFLAGS) $(shell $(PKG_CONFIG) --cflags $(CHECK_SERVER_PKGS)) \
+		-std=c++17 -UNDEBUG -ffunction-sections -fdata-sections -x c++ $< -x none $(CHECK_VIDEO_OBJS) \
+		$(LDFLAGS) -Wl,--gc-sections -o $@ $(VIDEO_LIBS) $(shell $(PKG_CONFIG) --libs $(CHECK_SERVER_PKGS))
+
+check-video: $(OUT)/fixture-check-video
+	$(OUT)/fixture-check-video
+
 check:
 	@set -eu; \
 	work=$$(mktemp -d "$${TMPDIR:-/tmp}/banana-retro-check.XXXXXX"); \
 	trap 'rm -rf -- "$$work"' 0; \
 	trap 'exit 1' HUP INT TERM; \
 	$(MAKE) -s OUT="$$work" check-binaries; \
-	sh tests/check-core.sh "$$work"
+	sh tests/check-core.sh "$$work"; \
+	$(MAKE) -s OUT="$$work" check-video

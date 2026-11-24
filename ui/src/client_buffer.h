@@ -7,6 +7,27 @@
 
 namespace banana
 {
+	struct NativeGeometry
+	{
+		uint32_t width = 0, height = 0, rotation = 0;
+
+		void displayAspect(uint32_t& w, uint32_t& h) const
+		{
+			if (!width) return;
+			w = rotation & 1 ? height : width;
+			h = rotation & 1 ? width : height;
+		}
+
+		// Column-major inverse rotation around the center of the source image.
+		const float* uvRotation() const
+		{
+			static constexpr float matrix[4][4] = {
+				{1, 0, 0, 1}, {0, 1, -1, 0}, {-1, 0, 0, -1}, {0, -1, 1, 0}
+			};
+			return matrix[rotation];
+		}
+	};
+
 	struct ClientBuffer
 	{
 		void* im = nullptr;			// Compositor::Impl, for refcount helpers
@@ -24,6 +45,8 @@ namespace banana
 		bool shmSource = false;			// stays true after shm goes null: the texture still holds the frame
 		bool shmDirty = false;			// the client attached new pixels since the last upload
 		wl_listener shmGone = {};		// on the wl_buffer: libwayland owns its user data, so this finds us
+		NativeGeometry nativeGeometry;
+		bool nativeBusy = false;
 		int refs = 0;
 	};
 }

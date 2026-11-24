@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="banana_retro_v1">
+  <interface name="banana_retro_manager_v1" version="1">
+    <description summary="native game presentation">
+      An opt-in protocol for the native software runtime. Other surfaces keep
+      their ordinary Wayland presentation behavior.
+    </description>
+    <enum name="capability" bitfield="true">
+      <entry name="xrgb8888_shm" value="1" summary="active presenter accepts native XRGB8888 SHM"/>
+    </enum>
+    <enum name="error">
+      <entry name="invalid_surface" value="0" summary="surface cannot start a native session"/>
+      <entry name="unsupported" value="1" summary="active presenter cannot present native SHM"/>
+    </enum>
+    <request name="destroy" type="destructor"/>
+    <request name="get_surface">
+      <description summary="start a native presentation session">
+        Associate this object with a newly constructed xdg_toplevel before its
+        initial empty commit. Each wl_surface can host one native session.
+      </description>
+      <arg name="id" type="new_id" interface="banana_retro_surface_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+    <event name="capabilities">
+      <description summary="report the active presenter's capabilities">
+        Sent once on binding. A client must receive xrgb8888_shm before
+        starting a session.
+      </description>
+      <arg name="flags" type="uint" enum="capability"/>
+    </event>
+  </interface>
+  <interface name="banana_retro_surface_v1" version="1">
+    <enum name="error">
+      <entry name="invalid_frame" value="0" summary="invalid buffer, geometry or initial configure"/>
+    </enum>
+    <request name="destroy" type="destructor"/>
+    <request name="set_geometry">
+      <description summary="set the geometry of the next buffer commit">
+        Send once before each XRGB8888 SHM buffer commit. The aspect is the
+        unrotated display aspect. Rotation counts counterclockwise quarter
+        turns, from zero through three, relative to the game image.
+      </description>
+      <arg name="aspect_width" type="uint"/>
+      <arg name="aspect_height" type="uint"/>
+      <arg name="rotation" type="uint"/>
+    </request>
+    <event name="first_presented">
+      <description summary="a frame from this session completed a display flip">
+        Sent at most once, after a successful KMS page flip, before the
+        matching wl_surface.frame callback is completed. The timestamp is
+        the compositor's monotonic time, in milliseconds, at flip dispatch.
+      </description>
+      <arg name="time" type="uint"/>
+    </event>
+    <event name="frame_failed">
+      <description summary="a game submission was dropped">
+        This commit did not flip. A client may continue submitting frames.
+      </description>
+    </event>
+    <event name="closed">
+      <description summary="the session surface has been lost"/>
+    </event>
+  </interface>
+</protocol>

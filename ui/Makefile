@@ -24,8 +24,9 @@ override LDLIBS += $(shell $(PKG_CONFIG) --libs $(PKGS))
 WAYLAND_SCANNER ?= $(shell command -v wayland-scanner 2>/dev/null || echo wayland-scanner)
 WAYLAND_PROTOCOLS ?= $(shell d=$$($(PKG_CONFIG) --variable=pkgdatadir wayland-protocols 2>/dev/null); test -f "$$d/stable/xdg-shell/xdg-shell.xml" && echo "$$d" || echo /usr/share/wayland-protocols)
 WLDIR = build/wayland
-WL_C = $(WLDIR)/xdg-shell-protocol.c $(WLDIR)/linux-dmabuf-unstable-v1-protocol.c $(WLDIR)/wayland-drm-protocol.c $(WLDIR)/viewporter-protocol.c
-WL_H = $(WLDIR)/xdg-shell-server-protocol.h $(WLDIR)/linux-dmabuf-unstable-v1-server-protocol.h $(WLDIR)/wayland-drm-server-protocol.h $(WLDIR)/viewporter-server-protocol.h
+BANANA_RETRO_XML ?= ../system/banana-retro/protocol/banana-retro-v1.xml
+WL_C = $(WLDIR)/xdg-shell-protocol.c $(WLDIR)/linux-dmabuf-unstable-v1-protocol.c $(WLDIR)/wayland-drm-protocol.c $(WLDIR)/viewporter-protocol.c $(WLDIR)/banana-retro-protocol.c
+WL_H = $(WLDIR)/xdg-shell-server-protocol.h $(WLDIR)/linux-dmabuf-unstable-v1-server-protocol.h $(WLDIR)/wayland-drm-server-protocol.h $(WLDIR)/viewporter-server-protocol.h $(WLDIR)/banana-retro-server-protocol.h
 WL_O = $(WL_C:.c=.o) $(WLDIR)/qrcodegen.o
 override CXXFLAGS += -I$(WLDIR) -Ithird_party
 
@@ -47,6 +48,13 @@ $(WLDIR)/viewporter-protocol.c: $(WAYLAND_PROTOCOLS)/stable/viewporter/viewporte
 $(WLDIR)/viewporter-server-protocol.h: $(WAYLAND_PROTOCOLS)/stable/viewporter/viewporter.xml
 	@mkdir -p $(WLDIR)
 	$(WAYLAND_SCANNER) server-header $< $@
+$(WLDIR)/banana-retro-protocol.c: $(BANANA_RETRO_XML)
+	@mkdir -p $(WLDIR)
+	$(WAYLAND_SCANNER) private-code $< $@
+$(WLDIR)/banana-retro-server-protocol.h: $(BANANA_RETRO_XML)
+	@mkdir -p $(WLDIR)
+	$(WAYLAND_SCANNER) server-header $< $@
+
 $(WLDIR)/wayland-drm-protocol.c: src/wayland/wayland-drm.xml
 	@mkdir -p $(WLDIR)
 	$(WAYLAND_SCANNER) private-code $< $@

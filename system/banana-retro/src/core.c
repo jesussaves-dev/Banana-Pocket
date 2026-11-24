@@ -1,7 +1,6 @@
 #define _XOPEN_SOURCE 700
 
 #include "core.h"
-#include "libretro.h"
 
 #include <dlfcn.h>
 #include <errno.h>
@@ -58,6 +57,10 @@ static struct {
     bool loaded;
     void *content;
     struct retro_system_av_info av;
+    struct core_video video;
+    unsigned capacity_width, capacity_height;
+    unsigned rotation;
+    bool running;
     enum retro_pixel_format pixel_format;
     struct frame_observation frame;
 } session;
@@ -119,14 +122,52 @@ static bool resolve_exports(void)
     return true;
 }
 
+static bool valid_av(const struct retro_system_av_info *av);
+
+static bool set_geometry(const struct retro_game_geometry *geometry)
+{
+    if (geometry->base_width == 0 || geometry->base_height == 0 ||
+        geometry->base_width > session.av.geometry.max_width ||
+        geometry->base_height > session.av.geometry.max_height ||
+        !isfinite(geometry->aspect_ratio))
+        return false;
+
+    session.av.geometry.base_width = geometry->base_width;
+    session.av.geometry.base_height = geometry->base_height;
+    session.av.geometry.aspect_ratio = geometry->aspect_ratio;
+    return true;
+}
+
 static bool environment(unsigned command, void *data)
 {
-    if (command == RETRO_ENVIRONMENT_GET_CAN_DUPE && data != NULL) {
-        *(bool *)data = false;
+    if (data == NULL)
+        return false;
+
+    switch (command) {
+    case RETRO_ENVIRONMENT_GET_CAN_DUPE:
+        *(bool *)data = session.video.submit != NULL;
+        return true;
+    case RETRO_ENVIRONMENT_SET_ROTATION:
+        if (!session.video.submit || *(const unsigned *)data > 3)
+            return false;
+        session.rotation = *(const unsigned *)data;
+        return true;
+    case RETRO_ENVIRONMENT_SET_GEOMETRY:
+        return session.video.submit && session.running && set_geometry(data);
+    case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO: {
+        const struct retro_system_av_info *av = data;
+        if (!session.video.submit || !session.running || !valid_av(av) ||
+            av->geometry.max_width > session.capacity_width ||
+            av->geometry.max_height > session.capacity_height)
+            return false;
+        session.av = *av;
         return true;
     }
-    if (command != RETRO_ENVIRONMENT_SET_PIXEL_FORMAT || data == NULL)
+    case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
+        break;
+    default:
         return false;
+    }
 
     enum retro_pixel_format format = *(const enum retro_pixel_format *)data;
     switch (format) {
@@ -145,16 +186,24 @@ static void video(const void *data, unsigned width, unsigned height, size_t pitc
     struct frame_observation *frame = &session.frame;
     size_t pixel_size = session.pixel_format == RETRO_PIXEL_FORMAT_XRGB8888 ? 4 : 2;
 
-    if (data == NULL)
-        return;
-    if (data == RETRO_HW_FRAME_BUFFER_VALID || width == 0 || height == 0 ||
-        (session.loaded && (width > session.av.geometry.max_width ||
-                            height > session.av.geometry.max_height)) ||
-        width > pitch / pixel_size || height > SIZE_MAX / pitch) {
+    if (data != NULL &&
+        (data == RETRO_HW_FRAME_BUFFER_VALID || width == 0 || height == 0 ||
+         (session.loaded && (width > session.av.geometry.max_width ||
+                             height > session.av.geometry.max_height)) ||
+         width > pitch / pixel_size || height > SIZE_MAX / pitch)) {
         frame->invalid = true;
         return;
     }
 
+    if (session.video.submit) {
+        if (session.running &&
+            !session.video.submit(session.video.data, data, width, height, pitch,
+                                  session.pixel_format, &session.av.geometry, session.rotation))
+            frame->invalid = true;
+        return;
+    }
+    if (data == NULL)
+        return;
     if (pixel_size == 4) {
         memcpy(&frame->first_pixel, data, sizeof(frame->first_pixel));
     } else {
@@ -279,20 +328,20 @@ done:
     return ok;
 }
 
-static bool valid_av(void)
+static bool valid_av(const struct retro_system_av_info *av)
 {
-    const struct retro_game_geometry *geometry = &session.av.geometry;
-    const struct retro_system_timing *timing = &session.av.timing;
+    const struct retro_game_geometry *geometry = &av->geometry;
+    const struct retro_system_timing *timing = &av->timing;
 
     return geometry->base_width > 0 && geometry->base_height > 0 &&
            geometry->base_width <= geometry->max_width &&
            geometry->base_height <= geometry->max_height &&
-           isfinite(geometry->aspect_ratio) && geometry->aspect_ratio >= 0.0f &&
+           isfinite(geometry->aspect_ratio) && (session.video.submit || geometry->aspect_ratio >= 0.0f) &&
            isfinite(timing->fps) && timing->fps > 0.0 &&
            isfinite(timing->sample_rate) && timing->sample_rate > 0.0;
 }
 
-bool core_load(const char *core_path, const char *content_path)
+bool core_load(const char *core_path, const char *content_path, const struct core_video *video_sink)
 {
     struct core_api *api = &session.api;
     struct retro_system_info info = {0};
@@ -319,6 +368,8 @@ bool core_load(const char *core_path, const char *content_path)
         return false;
     }
 
+    if (video_sink)
+        session.video = *video_sink;
     session.pixel_format = RETRO_PIXEL_FORMAT_0RGB1555;
     api->retro_set_environment(environment);
     api->retro_set_video_refresh(video);
@@ -338,24 +389,35 @@ bool core_load(const char *core_path, const char *content_path)
     session.loaded = true;
 
     api->retro_get_system_av_info(&session.av);
-    if (!valid_av()) {
+    if (!valid_av(&session.av)) {
         fputs("Core returned invalid AV information\n", stderr);
         return false;
     }
+    session.capacity_width = session.av.geometry.max_width;
+    session.capacity_height = session.av.geometry.max_height;
     api->retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
     return true;
+}
+
+const struct retro_game_geometry *core_geometry(void)
+{
+    return &session.av.geometry;
 }
 
 bool core_step(unsigned frame)
 {
     session.frame = (struct frame_observation){0};
+    session.running = true;
     session.api.retro_run();
+    session.running = false;
 
     const struct frame_observation *result = &session.frame;
     if (result->invalid) {
         fputs("Core returned invalid frame data\n", stderr);
         return false;
     }
+    if (session.video.submit)
+        return true;
     return printf("frame %u video=%zu %ux%u pitch=%zu pixel=%08" PRIx32
                   " audio=%zu first=%d,%d last=%d,%d input=%zu/%zu\n",
                   frame, result->video_frames, result->width, result->height,

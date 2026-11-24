@@ -37,6 +37,7 @@
 #include "linux-dmabuf-unstable-v1-server-protocol.h"
 #include "wayland-drm-server-protocol.h"
 #include "viewporter-server-protocol.h"
+#include "banana-retro-server-protocol.h"
 
 namespace banana
 {
@@ -81,6 +82,12 @@ namespace banana
 			bool upright = false;		// RetroArch turning its own frame for the panel (uprightClient): configured
 							// portrait and scanned out as it is, with no GPU pass
 			Buffer* pend = nullptr;		// attached, not committed
+			wl_resource* native = nullptr;
+			wl_list nativeCbs;
+			NativeGeometry nextGeometry;
+			uint32_t configureSerial = 0;
+			bool nativeUsed = false, attached = false, acked = false, firstPresented = false;
+			bool waitingConfigure = false;
 		};
 
 		Display* d = nullptr;
@@ -99,6 +106,8 @@ namespace banana
 		Buffer* pending = nullptr;		// committed, not yet presented
 		Buffer* inflight = nullptr;		// presented, flip not completed
 		Buffer* onScreen = nullptr;		// the FB the primary is scanning now (kept until replaced)
+		Surface* pendingNative = nullptr;
+		Surface* inflightNative = nullptr;
 		Buffer* under = nullptr;		// the kiosk client's newest frame while it is covered, shown when the cover goes
 		// Frame callbacks, as lists (wl_resource_get_link; each one unlinks itself when destroyed, cbUnlink): a commit
 		// may carry more than one. RetroArch's Wayland GL context asks for its own and then Mesa's eglSwapBuffers asks
@@ -176,6 +185,8 @@ namespace banana
 		void bufferDrop(Buffer* b) { if (--b->refs <= 0) bufferFree(b); }
 		void bufferRelease(Buffer* b)	// after the frame is no longer in use
 		{
+			b->nativeBusy = false;
+			b->nativeGeometry = {};
 			if (b->res) wl_buffer_send_release(b->res);
 			bufferDrop(b);
 		}
@@ -244,7 +255,8 @@ namespace banana
 			cfgW = w;
 			cfgH = h;
 			xdg_toplevel_send_configure(s->top, cfgW, cfgH, &states);
-			xdg_surface_send_configure(s->xdg, wl_display_next_serial(wl));
+			s->configureSerial = wl_display_next_serial(wl);
+			xdg_surface_send_configure(s->xdg, s->configureSerial);
 			logf("configure %dx%d", cfgW, cfgH);
 			wl_array_release(&states);
 		}
@@ -279,7 +291,13 @@ namespace banana
 			if (!pending) return;
 			Buffer* b = pending;
 			pending = nullptr;
+			if (pendingNative) banana_retro_surface_v1_send_frame_failed(pendingNative->native);
 			bufferRelease(b);
+			if (pendingNative)
+			{
+				pendingNative = nullptr;
+				fireCbs(pendingCbs);
+			}
 		}
 		// every callback in `from` joins the end of `to`
 		static void moveCbs(wl_list& from, wl_list& to)
@@ -294,12 +312,16 @@ namespace banana
 			fireCbs(pendingCbs);
 			moveCbs(pendCbs, pendingCbs);
 		}
+		static uint32_t callbackTime()
+		{
+			struct timespec ts = {};
+			clock_gettime(CLOCK_MONOTONIC, &ts);
+			return (uint32_t)((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000);
+		}
 		static void fireCbs(wl_list& l)
 		{
 			if (wl_list_empty(&l)) return;
-			struct timespec ts;
-			clock_gettime(CLOCK_MONOTONIC, &ts);
-			uint32_t ms = (uint32_t)((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000);
+			uint32_t ms = callbackTime();
 			wl_resource *cb, *next;
 			wl_resource_for_each_safe(cb, next, &l)
 			{
@@ -317,7 +339,7 @@ namespace banana
 			// (ui/src/rotate.h fitRotated), so a port or video window that is not 1240x1080 stays upright.
 			// RetroArch picks its first size itself, after the first configure, and only a later one moves it: say it
 			// once more, and a client that still will not change is letterboxed into the hole
-			if (!cfgRepeated && top() && top()->top && (holeW || top()->upright) && ((int)b->w != cfgW || (int)b->h != cfgH))
+			if (!pendingNative && !cfgRepeated && top() && top()->top && (holeW || top()->upright) && ((int)b->w != cfgW || (int)b->h != cfgH))
 			{
 				cfgRepeated = true;
 				sendConfigure(top());
@@ -401,6 +423,8 @@ namespace banana
 			}
 			pending = nullptr;
 			inflight = b;
+			inflightNative = pendingNative;
+			pendingNative = nullptr;
 			hidMenu = true;
 			updateFocus();
 			if (!presenter->rotated())
@@ -441,8 +465,19 @@ namespace banana
 				// the frame that was on screen until this flip goes back to the client now; a scanned-out frame is
 				// still being read by the display, so it is held until the next flip replaces it
 				releaseHeld();
-				if (inflightScanned) held = b;
+				if (inflightScanned || b->nativeBusy) held = b;
 				else bufferRelease(b);
+				if (inflightNative)
+				{
+					if (d->isOff())
+						banana_retro_surface_v1_send_frame_failed(inflightNative->native);
+					else if (!inflightNative->firstPresented)
+					{
+						inflightNative->firstPresented = true;
+						banana_retro_surface_v1_send_first_presented(inflightNative->native, callbackTime());
+					}
+				}
+				inflightNative = nullptr;
 				inflightScanned = false;
 				if (f3On) f3ReleaseAt = msNow();	// the client can render its next frame now
 				fireCbs(inflightCbs);
@@ -461,11 +496,48 @@ namespace banana
 			    presentLast())
 				shownOverlay = shownLayer();
 		}
+		void closeNative(Surface* s, bool notify)
+		{
+			if (!s->native) return;
+			if (notify) banana_retro_surface_v1_send_closed(s->native);
+			if (pendingNative == s)
+			{
+				pendingNative = nullptr;
+				dropPending();
+				fireCbs(pendingCbs);
+			}
+			if (inflightNative == s) inflightNative = nullptr;
+			if (s->pend) { bufferDrop(s->pend); s->pend = nullptr; }
+			wl_resource_set_user_data(s->native, nullptr);
+			s->native = nullptr;
+			fireCbs(s->nativeCbs);
+			if (surf == s)
+			{
+				surf = nullptr;
+				updateFocus();
+				if (!cover)
+				{
+					if (inflight || d->flipPending()) restoreMenu = true;
+					else if (hidMenu) menuOrRetry();
+				}
+			}
+		}
 		void surfaceGone(Surface* s)
 		{
 			if (focusRes == s->res) { focusOn = false; focusRes = nullptr; }
+			closeNative(s, s->owner == client || s->owner == child);
+			if (s->nativeUsed)
+			{
+				if (s->xdg) wl_resource_set_user_data(s->xdg, nullptr);
+				if (s->top) wl_resource_set_user_data(s->top, nullptr);
+			}
 			s->res = nullptr;
-			if (s->pend) { bufferRelease(s->pend); s->pend = nullptr; }
+			if (s->pend)
+			{
+				if (s->nativeUsed) bufferDrop(s->pend);
+				else bufferRelease(s->pend);
+				s->pend = nullptr;
+			}
 			s->xdg = s->top = nullptr;	// the client's resources are going away too
 			if (surf == s)
 			{
@@ -575,6 +647,13 @@ namespace banana
 				client = heir;
 				wl_client_add_destroy_listener(heir, &clientGone);
 				logf("the second connection is the client");
+				for (auto* s : surfaces)
+				{
+					if (s->owner != heir || !s->native || !s->waitingConfigure) continue;
+					s->waitingConfigure = false;
+					sendConfigure(s);
+					s->configured = true;
+				}
 			}
 		}
 
@@ -737,6 +816,8 @@ namespace banana
 			{
 				Buffer* b = inflight;
 				inflight = nullptr;
+				if (inflightNative) banana_retro_surface_v1_send_frame_failed(inflightNative->native);
+				inflightNative = nullptr;
 				bufferRelease(b);
 			}
 			dropPending();
@@ -826,7 +907,11 @@ namespace banana
 		void xdgTopDestroy(wl_client*, wl_resource* res)
 		{
 			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
-			if (s && s->top == res) s->top = nullptr;
+			if (s && s->top == res)
+			{
+				s->im->closeNative(s, true);
+				s->top = nullptr;
+			}
 			wl_resource_destroy(res);
 		}
 		void xdgTopNoop2(wl_client*, wl_resource* r, wl_resource*) { (void)r; }
@@ -847,7 +932,11 @@ namespace banana
 		void xdgSurfDestroy(wl_client*, wl_resource* res)
 		{
 			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
-			if (s && s->xdg == res) s->xdg = nullptr;
+			if (s && s->xdg == res)
+			{
+				s->im->closeNative(s, true);
+				s->xdg = nullptr;
+			}
 			wl_resource_destroy(res);
 		}
 		// RetroArch turns its own frame for the panel (video_rotation, patches 0005/0010/0011) when run-retroarch says
@@ -885,7 +974,11 @@ namespace banana
 			wl_resource_post_error(res, XDG_SURFACE_ERROR_ALREADY_CONSTRUCTED, "popups are not supported");
 		}
 		void xdgSurfGeom(wl_client*, wl_resource*, int32_t, int32_t, int32_t, int32_t) {}
-		void xdgSurfAck(wl_client*, wl_resource*, uint32_t) {}
+		void xdgSurfAck(wl_client*, wl_resource* res, uint32_t serial)
+		{
+			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
+			if (s && s->native && s->configured && s->configureSerial == serial) s->acked = true;
+		}
 		const struct xdg_surface_interface xdgSurfaceImpl = {
 			.destroy = xdgSurfDestroy, .get_toplevel = xdgSurfToplevel, .get_popup = xdgSurfPopup,
 			.set_window_geometry = xdgSurfGeom, .ack_configure = xdgSurfAck,
@@ -934,6 +1027,61 @@ namespace banana
 			wl_resource_set_implementation(r, &xdgWmImpl, data, nullptr);
 		}
 
+		void nativeDestroy(wl_client*, wl_resource* res) { wl_resource_destroy(res); }
+		void nativeGone(wl_resource* res)
+		{
+			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
+			if (s) s->im->closeNative(s, false);
+		}
+		void nativeGeometry(wl_client*, wl_resource* res, uint32_t w, uint32_t h, uint32_t rotation)
+		{
+			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
+			if (!s) return;
+			if (!w || !h || rotation > 3 || s->nextGeometry.width)
+			{
+				wl_resource_post_error(res, BANANA_RETRO_SURFACE_V1_ERROR_INVALID_FRAME, "invalid native geometry");
+				return;
+			}
+			s->nextGeometry = {w, h, rotation};
+		}
+		const struct banana_retro_surface_v1_interface nativeImpl = {
+			.destroy = nativeDestroy, .set_geometry = nativeGeometry,
+		};
+		void nativeGetSurface(wl_client* c, wl_resource* res, uint32_t id, wl_resource* surface)
+		{
+			auto* im = (Impl*)wl_resource_get_user_data(res);
+			auto* s = (Impl::Surface*)wl_resource_get_user_data(surface);
+			const bool eligible = c == im->client || (c == im->child && !im->surf && !im->cover);
+			if (!eligible || !s || s->im != im || s->owner != c || !s->top || s->configured ||
+			    s->nativeUsed || s->pend || (im->surf && im->surf != s))
+			{
+				wl_resource_post_error(res, BANANA_RETRO_MANAGER_V1_ERROR_INVALID_SURFACE, "invalid native surface");
+				return;
+			}
+			if (!im->presenter || !im->presenter->acceptsShm())
+			{
+				wl_resource_post_error(res, BANANA_RETRO_MANAGER_V1_ERROR_UNSUPPORTED, "native SHM unavailable");
+				return;
+			}
+			s->native = wl_resource_create(c, &banana_retro_surface_v1_interface, 1, id);
+			if (!s->native) { wl_client_post_no_memory(c); return; }
+			s->nativeUsed = true;
+			s->upright = false;
+			wl_resource_set_implementation(s->native, &nativeImpl, s, nativeGone);
+		}
+		const struct banana_retro_manager_v1_interface nativeManagerImpl = {
+			.destroy = nativeDestroy, .get_surface = nativeGetSurface,
+		};
+		void nativeBind(wl_client* c, void* data, uint32_t, uint32_t id)
+		{
+			auto* im = (Impl*)data;
+			wl_resource* res = wl_resource_create(c, &banana_retro_manager_v1_interface, 1, id);
+			if (!res) { wl_client_post_no_memory(c); return; }
+			wl_resource_set_implementation(res, &nativeManagerImpl, im, nullptr);
+			banana_retro_manager_v1_send_capabilities(res,
+				im->presenter && im->presenter->acceptsShm() ? BANANA_RETRO_MANAGER_V1_CAPABILITY_XRGB8888_SHM : 0);
+		}
+
 		// ---- wl_surface ---------------------------------------------------------------------------------------------
 
 		void surfDestroy(wl_client*, wl_resource* res) { wl_resource_destroy(res); }
@@ -942,6 +1090,21 @@ namespace banana
 			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
 			Impl* im = s->im;
 			Impl::Buffer* b = nullptr;
+			if (s->nativeUsed)
+			{
+				if (!s->native) return;
+				wl_shm_buffer* shm = buf ? wl_shm_buffer_get(buf) : nullptr;
+				if (buf && (!shm || wl_shm_buffer_get_format(shm) != WL_SHM_FORMAT_XRGB8888))
+				{
+					wl_resource_post_error(s->native, BANANA_RETRO_SURFACE_V1_ERROR_INVALID_FRAME, "expected XRGB8888 SHM");
+					return;
+				}
+				if (s->pend) im->bufferDrop(s->pend);
+				s->pend = shm ? shmBuffer(im, buf, shm) : nullptr;
+				if (s->pend) s->pend->refs++;
+				s->attached = true;
+				return;
+			}
 			if (buf)
 			{
 				if (wl_shm_buffer* shm = wl_shm_buffer_get(buf))
@@ -974,6 +1137,12 @@ namespace banana
 			if (!cb) { wl_client_post_no_memory(c); return; }
 			wl_list_init(wl_resource_get_link(cb));	// wl_resource_create leaves it zeroed
 			wl_resource_set_implementation(cb, nullptr, nullptr, cbUnlink);
+			if (s->nativeUsed)
+			{
+				wl_list_insert(s->nativeCbs.prev, wl_resource_get_link(cb));
+				if (!s->native) im->fireCbs(s->nativeCbs);
+				return;
+			}
 			if (im->top() && im->top() != s)
 			{
 				// not the surface on screen: nothing will pace it, and SDL waits on this before its next swap
@@ -986,21 +1155,72 @@ namespace banana
 			wl_list_insert(im->pendCbs.prev, wl_resource_get_link(cb));
 		}
 		void surfRegion(wl_client*, wl_resource*, wl_resource*) {}
+		void commitNative(Impl::Surface* s)
+		{
+			if (!s->native) return;
+			auto* im = s->im;
+			if (!s->attached && !s->nextGeometry.width) return;
+			auto* b = s->pend;
+			if (s->attached && !b && s->acked && !s->nextGeometry.width)
+			{
+				im->closeNative(s, true);
+				return;
+			}
+			if (!s->acked || !b || !b->res || b->refs != 2 || !s->nextGeometry.width)
+			{
+				wl_resource_post_error(s->native, BANANA_RETRO_SURFACE_V1_ERROR_INVALID_FRAME,
+				                       "native commit needs configure acknowledgement, geometry and a free buffer");
+				return;
+			}
+			b->nativeBusy = true;
+			b->upright = false;
+			b->shmDirty = true;
+			b->nativeGeometry = s->nextGeometry;
+			s->attached = false;
+			s->nextGeometry = {};
+			s->pend = nullptr;
+			if (im->cover || (im->surf && im->surf != s))
+			{
+				banana_retro_surface_v1_send_frame_failed(s->native);
+				im->bufferRelease(b);
+				im->fireCbs(s->nativeCbs);
+				return;
+			}
+			im->surf = s;
+			im->dropPending();
+			im->fireCbs(im->pendingCbs);
+			im->moveCbs(s->nativeCbs, im->pendingCbs);
+			im->pending = b;
+			im->pendingNative = s;
+			im->frame();
+		}
 		void surfCommit(wl_client*, wl_resource* res)
 		{
 			auto* s = (Impl::Surface*)wl_resource_get_user_data(res);
 			Impl* im = s->im;
 			if (!s->configured)
 			{
+				if (s->native && (s->attached || s->nextGeometry.width))
+				{
+					wl_resource_post_error(s->native, BANANA_RETRO_SURFACE_V1_ERROR_INVALID_FRAME, "initial native commit must be empty");
+					return;
+				}
 				// the first commit after the role is assigned: answer with one fullscreen configure (a commit
 				// before the role exists only sets up the surface; keep waiting for the one that asks)
 				if (s->top && s->xdg)
 				{
+					// A connection behind a short-lived probe waits for the kiosk slot.
+					if (s->native && s->owner != im->client)
+					{
+						s->waitingConfigure = true;
+						return;
+					}
 					im->sendConfigure(s);
 					s->configured = true;
 				}
 				return;
 			}
+			if (s->nativeUsed) { commitNative(s); return; }
 			if (s->pend) s->pend->upright = s->upright;
 			Impl::Surface*& slot = s->owner == im->child ? im->cover : im->surf;
 			if (s->pend && slot && slot != s)
@@ -1061,6 +1281,7 @@ namespace banana
 			auto* s = new Impl::Surface();
 			s->im = im;
 			s->owner = c;
+			wl_list_init(&s->nativeCbs);
 			s->res = wl_resource_create(c, &wl_surface_interface, wl_resource_get_version(res), id);
 			wl_resource_set_implementation(s->res, &surfaceImpl, s, [](wl_resource* r) {
 				if (auto* gone = (Impl::Surface*)wl_resource_get_user_data(r)) gone->im->surfaceGone(gone);
@@ -1452,6 +1673,7 @@ namespace banana
 		wl_global_create(im->wl, &wl_output_interface, 3, im, outputBind);
 		wl_global_create(im->wl, &wl_seat_interface, 5, im, seatBind);
 		wl_global_create(im->wl, &xdg_wm_base_interface, 1, im, xdgBind);
+		wl_global_create(im->wl, &banana_retro_manager_v1_interface, 1, im, nativeBind);
 		wl_global_create(im->wl, &zwp_linux_dmabuf_v1_interface, 4, im, dmabufBind);
 		wl_global_create(im->wl, &wl_drm_interface, 2, im, drmBind);
 		wl_display_init_shm(im->wl);

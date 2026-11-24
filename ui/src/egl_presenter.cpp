@@ -118,7 +118,7 @@ namespace banana
 		GLuint vboUp = 0;		// the quad without the turn, for a pre-rotated source that cannot be scanned out
 		uint32_t scanFb = 0;	// a client's own framebuffer: the one scanout() returned last
 		uint32_t shownFb = 0;	// ... and the one presentedScanout() put on the plane (0: a slot or nothing)
-		GLint aPos = -1, aUv = -1, uTex = -1;
+		GLint aPos = -1, aUv = -1, uTex = -1, uRotation = -1;
 		Slot slot[3];
 		Slot* current = nullptr;
 		Slot* rendered = nullptr;
@@ -451,7 +451,8 @@ namespace banana
 		std::string serr;
 		GLuint vs = compile(GL_VERTEX_SHADER,
 			"attribute vec2 aPos; attribute vec2 aUv; varying highp vec2 vUv;\n"
-			"void main() { vUv = aUv; gl_Position = vec4(aPos, 0.0, 1.0); }\n", serr);
+			"uniform mat2 uRotation;\n"
+			"void main() { vUv = uRotation * (aUv - 0.5) + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }\n", serr);
 		GLuint fs = vs ? compile(GL_FRAGMENT_SHADER,
 			// highp: a mediump (fp16 on Adreno) UV lands on the neighbour texel for ~1 column in 12 under
 			// GL_NEAREST, which broke 1-px LCD grids and overlay lines (measured with /run/banana/3c-dump-now)
@@ -470,6 +471,7 @@ namespace banana
 		im->aPos = glGetAttribLocation(im->program, "aPos");
 		im->aUv = glGetAttribLocation(im->program, "aUv");
 		im->uTex = glGetUniformLocation(im->program, "uTex");
+		im->uRotation = glGetUniformLocation(im->program, "uRotation");
 		// the quad: target corners -> source UVs for the 90-degree clockwise turn (ui/src/rotate.h)
 		const float verts[] = {
 			-1, -1, 0, 1,
@@ -610,10 +612,15 @@ namespace banana
 				               (uint32_t)im->holeW, (uint32_t)im->holeH, vx, vy, vw, vh);
 			else fitUprightHole(b.w, b.h, (uint32_t)im->sh, (uint32_t)im->sw, 0, 0, (uint32_t)im->sh, (uint32_t)im->sw, vx, vy, vw, vh);
 		}
-		else if (im->holeW)
-			fitRotatedHole(b.w, b.h, (uint32_t)im->sh, (uint32_t)im->sw, (uint32_t)im->holeX, (uint32_t)im->holeY,
-			               (uint32_t)im->holeW, (uint32_t)im->holeH, vx, vy, vw, vh);
-		else fitRotated(b.w, b.h, (uint32_t)im->sh, (uint32_t)im->sw, vx, vy, vw, vh);
+		else
+		{
+			uint32_t w = b.w, h = b.h;
+			b.nativeGeometry.displayAspect(w, h);
+			if (im->holeW)
+				fitRotatedHole(w, h, (uint32_t)im->sh, (uint32_t)im->sw, (uint32_t)im->holeX, (uint32_t)im->holeY,
+				               (uint32_t)im->holeW, (uint32_t)im->holeH, vx, vy, vw, vh);
+			else fitRotated(w, h, (uint32_t)im->sh, (uint32_t)im->sw, vx, vy, vw, vh);
+		}
 		if (b.w != im->lastW || b.h != im->lastH)
 		{
 			logf("source %ux%u -> viewport %u,%u %ux%u", b.w, b.h, vx, vy, vw, vh);
@@ -625,6 +632,7 @@ namespace banana
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, src->tex);
 		glUniform1i(im->uTex, 0);
+		glUniformMatrix2fv(im->uRotation, 1, GL_FALSE, b.nativeGeometry.uvRotation());
 		glBindBuffer(GL_ARRAY_BUFFER, b.upright ? im->vboUp : im->vbo);
 		glEnableVertexAttribArray(im->aPos);
 		glVertexAttribPointer(im->aPos, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
