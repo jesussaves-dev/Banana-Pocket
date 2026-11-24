@@ -82,6 +82,11 @@ static void assert_saved_byte(const char *root,const char *core,const char *rom,
 	struct saves *s=saves_open(root,core,rom);assert(s);uint8_t got=0;assert(saves_load_memory(s,&got,1,NULL,0));assert(got==value);saves_close(s);
 }
 
+static unsigned path_components(const char *path)
+{
+	unsigned count=0;while(*path){while(*path=='/')++path;if(!*path)break;++count;while(*path&&*path!='/')++path;}return count;
+}
+
 int main(int argc,char **argv)
 {
 	char tmp[]="/tmp/banana-retro-saves.XXXXXX";char *base=mkdtemp(tmp);assert(base);
@@ -108,6 +113,12 @@ int main(int argc,char **argv)
 	struct saves *optioned=saves_open_with_options(root,core,content,"region=ntsc;rtc=on");assert(optioned);assert(!saves_load_memory(optioned,NULL,0,NULL,0));assert(saves_commit(optioned,sram,sizeof(sram),rtc,sizeof(rtc),-1,NULL,0));struct saves *option_mismatch=saves_open_with_options(root,core,content,"region=pal;rtc=on");assert(option_mismatch);assert(!saves_load_memory(option_mismatch,NULL,0,NULL,0));saves_close(option_mismatch);saves_close(optioned);
 	put(core,"core-build-two",14);struct saves *incompatible=saves_open(root,core,content);assert(incompatible);assert(!saves_load_memory(incompatible,NULL,0,NULL,0));saves_close(incompatible);put(core,"core-build-one",14);
 	uint8_t serialized[4]={0},decoded[4]={0},source[]={6,2,6,4};assert(saves_state_capture(serialize_ok,source,serialized,sizeof(serialized)));assert(!memcmp(source,serialized,sizeof(source)));assert(!saves_state_capture(serialize_fail,source,serialized,sizeof(serialized)));assert(saves_state_restore(unserialize_ok,decoded,serialized,sizeof(serialized)));assert(!memcmp(source,decoded,sizeof(source)));assert(!saves_state_restore(unserialize_fail,decoded,serialized,sizeof(serialized)));
+	/* New nested roots retry parent syncs after a failed mkdir publication. */
+	char nested_root[4096],identity_root[4096],existing_root[4096];assert(snprintf(nested_root,sizeof(nested_root),"%s/new/nested/save-root",base)>0);saves_test_fail_event(SAVES_TEST_PARENT_DIR_FSYNC,path_components(base)+1);assert(!saves_open(nested_root,core,content));struct saves *nested=saves_open(nested_root,core,content);assert(nested);uint8_t durable_byte=0x6d;assert(saves_commit(nested,&durable_byte,1,NULL,0,-1,NULL,0));saves_close(nested);assert_saved_byte(nested_root,core,content,durable_byte);
+	/* A failed identity-parent sync is retried even though the identity dir exists. */
+	assert(snprintf(identity_root,sizeof(identity_root),"%s/identity/nested/root",base)>0);saves_test_fail_event(SAVES_TEST_PARENT_DIR_FSYNC,path_components(identity_root)+1);assert(!saves_open(identity_root,core,content));struct saves *identity=saves_open(identity_root,core,content);assert(identity);assert(saves_commit(identity,&durable_byte,1,NULL,0,-1,NULL,0));saves_close(identity);assert_saved_byte(identity_root,core,content,durable_byte);
+	/* A failed sync while reopening an existing identity leaves its generation usable. */
+	assert(snprintf(existing_root,sizeof(existing_root),"%s/existing-root",base)>0);preserve_seed(existing_root,core,content,0x39);saves_test_fail_event(SAVES_TEST_PARENT_DIR_FSYNC,path_components(existing_root)+1);assert(!saves_open(existing_root,core,content));assert_saved_byte(existing_root,core,content,0x39);
 	/* A rejected payload leaves caller memory untouched when no fallback exists. */
 	char invalid_root[4096],invalid_ident[4096],invalid_gen[4096],invalid_payload[4096];assert(snprintf(invalid_root,sizeof(invalid_root),"%s/invalid",base)>0);struct saves *invalid=saves_open(invalid_root,core,content);assert(invalid);uint8_t valid_byte=0x41,untouched=0xa5,state_data[]={8,6,7},state_out[]={0xaa,0xaa,0xaa};assert(saves_commit(invalid,&valid_byte,1,NULL,0,0,state_data,sizeof(state_data)));only_entry(invalid_root,invalid_ident,sizeof(invalid_ident));uint64_t ig=current(invalid_ident);assert(snprintf(invalid_gen,sizeof(invalid_gen),"%s/g%016llx",invalid_ident,(unsigned long long)ig)>0);assert(snprintf(invalid_payload,sizeof(invalid_payload),"%s/memory",invalid_gen)>0);put(invalid_payload,"x",1);assert(!saves_load_memory(invalid,&untouched,1,NULL,0));assert(untouched==0xa5);put(invalid_payload,&valid_byte,1);assert(snprintf(invalid_payload,sizeof(invalid_payload),"%s/state-00",invalid_gen)>0);put(invalid_payload,"bad",3);assert(!saves_load_state(invalid,0,state_out,sizeof(state_out)));assert(state_out[0]==0xaa&&state_out[1]==0xaa&&state_out[2]==0xaa);saves_close(invalid);
 	/* Revalidate the exact restore buffer after a deterministic replacement race. */

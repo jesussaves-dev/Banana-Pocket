@@ -151,12 +151,38 @@ static bool write_file_at(int dirfd,const char *name,const void *data,size_t siz
 	if(!ok)(void)unlinkat(dirfd,name,0);
 	return ok;
 }
-static bool make_dirs(const char *path)
+static bool sync_parent_directory(int fd)
 {
-	char b[PATH_MAX];size_t n=strlen(path);if(n==0||n>=sizeof(b))return false;memcpy(b,path,n+1);
-	for(char *p=b+1;*p;p++)if(*p=='/'){*p=0;if(mkdir(b,0700)<0&&errno!=EEXIST)return false;*p='/';}
-	if(mkdir(b,0700)<0&&errno!=EEXIST)return false;
-	struct stat st;return stat(b,&st)==0&&S_ISDIR(st.st_mode);
+#ifdef SAVES_TESTING
+	if(test_event(SAVES_TEST_PARENT_DIR_FSYNC))return false;
+#endif
+	int rc;do{rc=fsync(fd);}while(rc<0&&errno==EINTR);return rc==0;
+}
+static int make_dirs(const char *path)
+{
+	if(!path||!*path)return -1;
+	bool absolute=path[0]=='/';
+	int fd=open(absolute?"/":".",O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+	if(fd<0)return -1;
+	const char *p=path;
+	while(*p=='/')++p;
+	while(*p){
+		const char *start=p;while(*p&&*p!='/')++p;size_t n=(size_t)(p-start);
+		while(*p=='/')++p;
+		if(n==1&&start[0]=='.')continue;
+		if((n==2&&start[0]=='.'&&start[1]=='.')||n==0||n>NAME_MAX){close(fd);errno=EINVAL;return -1;}
+		char component[NAME_MAX+1];memcpy(component,start,n);component[n]=0;
+		if(mkdirat(fd,component,0700)<0&&errno!=EEXIST){close(fd);return -1;}
+		int child=openat(fd,component,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+		if(child<0){close(fd);return -1;}
+		struct stat st;if(fstat(child,&st)<0){int saved=errno;close(child);close(fd);errno=saved;return -1;}
+		if(!S_ISDIR(st.st_mode)){close(child);close(fd);errno=ENOTDIR;return -1;}
+		/* Retry the parent sync even for existing entries after a prior failure. */
+		if(!sync_parent_directory(fd)){int saved=errno;close(child);close(fd);errno=saved;return -1;}
+		if(close(fd)<0){close(child);return -1;}
+		fd=child;
+	}
+	return fd;
 }
 static bool generation_name(char name[32],uint64_t g)
 {int n=snprintf(name,32,"g%016" PRIx64,g);return n==17;}
@@ -258,9 +284,19 @@ struct saves *saves_open_with_options(const char *root,const char *core_path,con
 	if(!root||!core_path||!content_path||!options||strlen(options)>4096)return NULL;
 	char *core=realpath(core_path,NULL),*content=realpath(content_path,NULL);if(!core||!content){free(core);free(content);return NULL;}
 	struct saves *s=calloc(1,sizeof(*s));if(!s){free(core);free(content);return NULL;}s->directory_fd=-1;bool ok=digest_file(core,s->core)&&digest_file(content,s->content);digest_bytes(content,strlen(content),s->path);digest_bytes(options,strlen(options),s->options);
-	char directory[PATH_MAX];
-	if(ok&&make_dirs(root)){struct sha256 h;unsigned char key[HASH_SIZE];sha_init(&h);sha_update(&h,s->core,HASH_SIZE);sha_update(&h,s->content,HASH_SIZE);sha_update(&h,s->path,HASH_SIZE);sha_update(&h,s->options,HASH_SIZE);sha_final(&h,key);static const char hex[]="0123456789abcdef";char leaf[HASH_SIZE*2+1];for(unsigned i=0;i<HASH_SIZE;i++){leaf[2*i]=hex[key[i]>>4];leaf[2*i+1]=hex[key[i]&15];}leaf[64]=0;int n=snprintf(directory,sizeof(directory),"%s/%s",root,leaf);ok=n>0&&(size_t)n<sizeof(directory)&&make_dirs(directory);}else ok=false;
-	if(ok){s->directory_fd=open(directory,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);struct stat st;ok=s->directory_fd>=0&&fstat(s->directory_fd,&st)==0&&S_ISDIR(st.st_mode);}
+	int root_fd=ok?make_dirs(root):-1;
+	if(root_fd<0)ok=false;
+	if(ok){struct sha256 h;unsigned char key[HASH_SIZE];sha_init(&h);sha_update(&h,s->core,HASH_SIZE);sha_update(&h,s->content,HASH_SIZE);sha_update(&h,s->path,HASH_SIZE);sha_update(&h,s->options,HASH_SIZE);sha_final(&h,key);static const char hex[]="0123456789abcdef";char leaf[HASH_SIZE*2+1];for(unsigned i=0;i<HASH_SIZE;i++){leaf[2*i]=hex[key[i]>>4];leaf[2*i+1]=hex[key[i]&15];}leaf[64]=0;
+		if(mkdirat(root_fd,leaf,0700)<0&&errno!=EEXIST)ok=false;
+		int identity_fd=-1;
+		if(ok){identity_fd=openat(root_fd,leaf,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);if(identity_fd<0)ok=false;}
+		struct stat st;
+		if(ok&&(fstat(identity_fd,&st)<0||!S_ISDIR(st.st_mode)))ok=false;
+		/* Also sync on EEXIST so a retry completes a prior failed publication. */
+		if(ok&&!sync_parent_directory(root_fd))ok=false;
+		if(ok)s->directory_fd=identity_fd;else if(identity_fd>=0)close(identity_fd);
+	}
+	if(root_fd>=0)close(root_fd);
 	free(core);free(content);if(!ok){if(s->directory_fd>=0)close(s->directory_fd);free(s);return NULL;}return s;
 }
 struct saves *saves_open(const char *root,const char *core_path,const char *content_path)
