@@ -16,19 +16,22 @@ VIDEO = src/video_wayland.c src/video_wayland.h include/libretro.h $(WL_HEADERS)
 INPUT = src/input_evdev.c src/input_evdev.h
 VIDEO_CFLAGS = -Iinclude -I$(OUT) $(shell $(PKG_CONFIG) --cflags wayland-client)
 VIDEO_LIBS = $(shell $(PKG_CONFIG) --libs wayland-client)
+ALSA_CFLAGS = $(shell $(PKG_CONFIG) --cflags alsa)
+ALSA_LIBS = $(shell $(PKG_CONFIG) --libs alsa)
 CHECK_SERVER_PKGS = wayland-server libdrm xkbcommon
 CHECK_SERVER_HEADERS = $(addprefix $(OUT)/,xdg-shell-server-protocol.h banana-retro-server-protocol.h \
 	linux-dmabuf-unstable-v1-server-protocol.h wayland-drm-server-protocol.h viewporter-server-protocol.h)
 CHECK_VIDEO_OBJS = $(OUT)/video_wayland.o $(WL_CODE:.c=.o)
 
-strict_cflags = -std=c99 -Wall -Wextra -Werror -pedantic
+strict_cflags = -std=c11 -Wall -Wextra -Werror -pedantic
 
-.PHONY: all check check-binaries check-video check-input
+.PHONY: all check check-binaries check-video check-input check-audio
 all: $(OUT)/banana-retro
 
-$(OUT)/banana-retro: src/main.c src/core.c src/core.h $(INPUT) $(VIDEO)
-	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(CFLAGS) $(strict_cflags) $(LDFLAGS) -o $@ \
-		src/main.c src/core.c src/input_evdev.c src/video_wayland.c $(WL_CODE) -Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(LDLIBS)
+$(OUT)/banana-retro: src/main.c src/core.c src/core.h src/audio_alsa.c src/audio_alsa.h $(INPUT) $(VIDEO)
+	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(CFLAGS) $(strict_cflags) $(LDFLAGS) -o $@ \
+		src/main.c src/core.c src/input_evdev.c src/audio_alsa.c src/video_wayland.c $(WL_CODE) \
+		-Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(ALSA_LIBS) -pthread $(LDLIBS)
 
 $(OUT)/xdg-shell-client-protocol.h: $(XDG_XML)
 	$(WAYLAND_SCANNER) client-header $< $@
@@ -75,6 +78,13 @@ $(OUT)/fixture-check-input: tests/check-input.c src/input_evdev.c src/input_evde
 check-input: $(OUT)/fixture-check-input
 	$(OUT)/fixture-check-input
 
+$(OUT)/fixture-check-audio: tests/check-audio.c src/audio_alsa.c src/audio_alsa.h
+	$(CC) $(CPPFLAGS) $(ALSA_CFLAGS) $(CFLAGS) $(strict_cflags) $(LDFLAGS) -o $@ \
+		tests/check-audio.c src/audio_alsa.c $(ALSA_LIBS) -pthread $(LDLIBS)
+
+check-audio: $(OUT)/fixture-check-audio
+	$(OUT)/fixture-check-audio
+
 check:
 	@set -eu; \
 	work=$$(mktemp -d "$${TMPDIR:-/tmp}/banana-retro-check.XXXXXX"); \
@@ -83,4 +93,5 @@ check:
 	$(MAKE) -s OUT="$$work" check-binaries; \
 	sh tests/check-core.sh "$$work"; \
 	$(MAKE) -s OUT="$$work" check-video; \
-	$(MAKE) -s OUT="$$work" check-input
+	$(MAKE) -s OUT="$$work" check-input; \
+	$(MAKE) -s OUT="$$work" check-audio

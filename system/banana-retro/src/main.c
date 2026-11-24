@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "video_wayland.h"
 #include "input_evdev.h"
+#include "audio_alsa.h"
 
 #include <errno.h>
 #include <poll.h>
@@ -42,6 +43,7 @@ static void input_snapshot(void *data, uint16_t masks[RETRO_INPUT_MAX_DEVICES])
 /* Service input and Wayland without letting frame callbacks pace retro_run(). */
 struct native_runtime {
     struct input_evdev *input;
+    struct audio_alsa *audio;
     int signal_fd;
     bool stopped;
 };
@@ -172,6 +174,30 @@ int main(int argc, char **argv)
     }
     ok = core_load(argv[1], argv[2], native ? &sink : NULL);
     if (ok && video) ok = wayland_video_configure(video, core_geometry());
+    if (ok && video) {
+        double sample_rate = core_sample_rate();
+        if (sample_rate < 8000.0 || sample_rate > 192000.0) {
+            fprintf(stderr, "Unsupported core audio sample rate %.3f Hz\n", sample_rate);
+            ok = false;
+        } else {
+            runtime.audio = audio_alsa_open((unsigned)(sample_rate + 0.5));
+        }
+        if (!runtime.audio) ok = false;
+        if (ok && runtime.audio) {
+            core_set_audio_output(runtime.audio);
+            if (!audio_alsa_wait_ready(runtime.audio, 3000)) {
+                struct audio_alsa_status status;
+                audio_alsa_get_status(runtime.audio, &status);
+                fprintf(stderr, "Audio unavailable: state=%d retries=%llu\n",
+                        (int)status.state, (unsigned long long)status.reopen_attempts);
+            } else {
+                struct audio_alsa_status status;
+                audio_alsa_get_status(runtime.audio, &status);
+                fprintf(stderr, "Audio ALSA default: rate=%u period=%u buffer=%u frames\n",
+                        status.output_rate, status.period_frames, status.buffer_frames);
+            }
+        }
+    }
     if (ok && video) ok = retro_paced_start(&runner, core_refresh_rate(), monotonic_ns());
     struct retro_paced_ops paced_ops = {
         .data = &runtime,
@@ -202,6 +228,20 @@ int main(int argc, char **argv)
         ok = false;
     }
     if (!core_release()) ok = false;
+    core_set_audio_output(NULL);
+    if (runtime.audio) {
+        struct audio_alsa_status status;
+        audio_alsa_get_status(runtime.audio, &status);
+        fprintf(stderr, "Audio status: accepted=%llu overflow=%llu underrun=%llu xrun=%llu "
+                "reopens=%llu queue=%u delay=%lld\n",
+                (unsigned long long)status.accepted_frames,
+                (unsigned long long)status.overflow_frames,
+                (unsigned long long)status.underrun_frames,
+                (unsigned long long)status.xrun_recoveries,
+                (unsigned long long)status.reopen_successes, status.queued_frames,
+                (long long)status.delay_frames);
+        audio_alsa_close(runtime.audio);
+    }
     wayland_video_close(video);
     input_evdev_close(input);
     if (signal_fd >= 0) close(signal_fd);

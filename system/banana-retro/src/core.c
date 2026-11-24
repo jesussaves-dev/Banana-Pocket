@@ -2,6 +2,7 @@
 
 #include "core.h"
 #include "input_evdev.h"
+#include "audio_alsa.h"
 
 #include <dlfcn.h>
 #include <errno.h>
@@ -67,6 +68,8 @@ static struct {
     void *input_data;
     void (*input_snapshot)(void *data, uint16_t masks[RETRO_INPUT_MAX_DEVICES]);
     uint16_t input_masks[RETRO_INPUT_MAX_DEVICES];
+    void *audio_data;
+    size_t (*audio_submit)(void *data, const int16_t *samples, size_t frames);
 } session;
 
 static void *required_export(const char *name)
@@ -164,9 +167,14 @@ static bool environment(unsigned command, void *data)
         const struct retro_system_av_info *av = data;
         if (!session.video.submit || !session.running || !valid_av(av) ||
             av->geometry.max_width > session.capacity_width ||
-            av->geometry.max_height > session.capacity_height)
+            av->geometry.max_height > session.capacity_height ||
+            (session.audio_data && (av->timing.sample_rate < 8000.0 ||
+                                    av->timing.sample_rate > 192000.0)))
             return false;
         session.av = *av;
+        if (session.audio_data)
+            audio_alsa_set_input_rate(session.audio_data,
+                                      (unsigned)(av->timing.sample_rate + 0.5));
         return true;
     }
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
@@ -238,6 +246,10 @@ static size_t audio_batch(const int16_t *data, size_t frames)
         return 0;
     }
 
+    size_t accepted = frames;
+    if (session.audio_submit)
+        accepted = session.audio_submit(session.audio_data, data, frames);
+
     if (frame->audio_frames == 0) {
         frame->first_left = data[0];
         frame->first_right = data[1];
@@ -245,7 +257,23 @@ static size_t audio_batch(const int16_t *data, size_t frames)
     frame->last_left = data[2 * (frames - 1)];
     frame->last_right = data[2 * (frames - 1) + 1];
     frame->audio_frames += frames;
-    return frames;
+    return accepted;
+}
+
+static size_t audio_submit(void *data, const int16_t *samples, size_t frames)
+{
+    return audio_alsa_write(data, samples, frames);
+}
+
+void core_set_audio_output(struct audio_alsa *audio)
+{
+    session.audio_data = audio;
+    session.audio_submit = audio ? audio_submit : NULL;
+}
+
+double core_sample_rate(void)
+{
+    return session.av.timing.sample_rate;
 }
 
 static void audio_sample(int16_t left, int16_t right)
