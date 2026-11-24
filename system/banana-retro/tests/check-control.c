@@ -603,6 +603,68 @@ static void test_owner_identity(void)
 	assert(unsetenv("BANANA_RETRO_CONTROL_SLEEP_PID") == 0);
 }
 
+static void test_replay_history_eviction(void)
+{
+	char directory[] = "/tmp/banana-retro-control-history.XXXXXX";
+	assert(mkdtemp(directory));
+	char path[sizeof(((struct sockaddr_un *)0)->sun_path)];
+	assert(snprintf(path, sizeof(path), "%s/control.sock", directory) > 0);
+	assert(setenv("BANANA_RETRO_CONTROL_SOCKET", path, 1) == 0);
+	char pid[32]; assert(snprintf(pid, sizeof(pid), "%ld", (long)getpid()) > 0);
+	assert(setenv("BANANA_RETRO_CONTROL_UI_PID", pid, 1) == 0);
+	assert(unsetenv("BANANA_RETRO_CONTROL_SLEEP_PID") == 0);
+	unsigned char session[16]; memset(session, 0x8c, sizeof(session));
+	struct fake fake = {0};
+	struct control_ops ops = { .data=&fake, .status=status, .pause=pause_hold };
+	struct control_server *server = control_open_from_env(&ops, session);
+	assert(server);
+	unsigned char request[BANANA_RETRO_CONTROL_MAX_PACKET];
+	unsigned char reply[BANANA_RETRO_CONTROL_MAX_PACKET];
+	int fd = connect_client(path);
+	control_handle_ready(server, true, false);
+	size_t n = make_packet(request, BANANA_RETRO_CTL_HELLO, 1, session, NULL, 0);
+	assert(exchange(fd, server, request, n, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
+	unsigned char hold[9] = { BANANA_RETRO_CTL_OWNER_UI };
+	put64(hold + 1, 0);
+	n = make_packet(request, BANANA_RETRO_CTL_PAUSE, 2, session, hold, sizeof(hold));
+	assert(exchange(fd, server, request, n, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
+	assert(fake.pauses == 1);
+	close(fd);
+	control_handle_ready(server, false, 1u);
+
+	/* Fifteen later successes fill the other history slots without evicting request 2. */
+	fd = connect_client(path);
+	control_handle_ready(server, true, false);
+	n = make_packet(request, BANANA_RETRO_CTL_HELLO, 3, session, NULL, 0);
+	assert(exchange(fd, server, request, n, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
+	for (uint64_t id = 4; id <= 17; ++id) {
+		n = make_packet(request, BANANA_RETRO_CTL_GET_STATUS, id, session, NULL, 0);
+		assert(exchange(fd, server, request, n, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
+	}
+	n = make_packet(request, BANANA_RETRO_CTL_PAUSE, 2, session, hold, sizeof(hold));
+	assert(exchange(fd, server, request, n, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
+	assert(fake.pauses == 1); /* The retained response is replayed across reconnect. */
+
+	/* The sixteenth later success wraps the 16-entry role history and evicts request 2. */
+	n = make_packet(request, BANANA_RETRO_CTL_GET_STATUS, 18, session, NULL, 0);
+	assert(exchange(fd, server, request, n, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
+	close(fd);
+	control_handle_ready(server, false, 1u);
+	fd = connect_client(path);
+	control_handle_ready(server, true, false);
+	n = make_packet(request, BANANA_RETRO_CTL_HELLO, 19, session, NULL, 0);
+	assert(exchange(fd, server, request, n, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
+	n = make_packet(request, BANANA_RETRO_CTL_PAUSE, 2, session, hold, sizeof(hold));
+	assert(exchange(fd, server, request, n, reply, sizeof(reply)) == BANANA_RETRO_CTL_STALE_SESSION);
+	assert(fake.pauses == 1); /* Evicted mutation IDs are rejected without re-execution. */
+	close(fd);
+	control_handle_ready(server, false, 1u);
+	control_close(server);
+	assert(rmdir(directory) == 0);
+	assert(unsetenv("BANANA_RETRO_CONTROL_UI_PID") == 0);
+	assert(unsetenv("BANANA_RETRO_CONTROL_SOCKET") == 0);
+}
+
 static void test_options(void)
 {
 	options_reset();
@@ -664,6 +726,9 @@ static void test_option_environment(void)
 	struct retro_variable get = { .key="env_speed" };
 	assert(core_environment_test(RETRO_ENVIRONMENT_GET_VARIABLE, &get));
 	assert(strcmp(get.value, "slow") == 0);
+	struct retro_variable unknown_get = { .key="env_unknown", .value="sentinel" };
+	assert(core_environment_test(RETRO_ENVIRONMENT_GET_VARIABLE, &unknown_get));
+	assert(unknown_get.value == NULL);
 	struct retro_variable bad_get = { .key=NULL };
 	assert(!core_environment_test(RETRO_ENVIRONMENT_GET_VARIABLE, &bad_get));
 	struct retro_variable bad_set = { .key="env_speed", .value=NULL };
@@ -813,6 +878,7 @@ int main(int argc, char **argv)
 	test_wayland_while_paused();
 	test_two_clients();
 	test_owner_identity();
+	test_replay_history_eviction();
 	char directory[] = "/tmp/banana-retro-control.XXXXXX";
 	assert(mkdtemp(directory));
 	char path[sizeof(((struct sockaddr_un *)0)->sun_path)];

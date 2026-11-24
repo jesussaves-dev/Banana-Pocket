@@ -235,8 +235,10 @@ static bool environment(unsigned command, void *data)
         return true;
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
         struct retro_variable *variable = data;
+        if (variable->key == NULL)
+            return false;
         variable->value = options_get(variable->key);
-        return variable->value != NULL;
+        return true;
     }
     case RETRO_ENVIRONMENT_SET_VARIABLE: {
         const struct retro_variable *variable = data;
