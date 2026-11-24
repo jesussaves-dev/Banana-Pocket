@@ -14,6 +14,8 @@ FX=$OUT/fixture
 rm -rf "$OUT"; mkdir -p "$OUT"
 "$HERE/tests/fixture.sh" "$FX" >/dev/null
 fail=0
+"$HERE/tests/legacy-import-test.sh" "$OUT" > "$OUT/legacy-import.log" 2>&1 ||
+    { echo "FAIL: legacy-import UI integration"; cat "$OUT/legacy-import.log"; fail=1; }
 # the panel rotation's transpose (src/turn.h): the tiled path must match the scalar loop for any rectangle. QEMU's
 # panel reports no orientation, so this is what covers the handheld's 90-degree panel.
 ${CXX:-c++} -O2 -std=c++17 -Wno-unused-function -o "$OUT/turn-test" "$HERE/tests/turn-test.cpp" 2> "$OUT/turn-build.log" ||

@@ -699,6 +699,17 @@ namespace banana
 		}
 		std::sort(cores.begin(), cores.end());
 		opt("Emulator", "The core this one game runs with. Default follows the system's own emulator (Settings > RetroArch).", core, cores);
+		gameNativeCore = core;
+		if (gameNativeCore.empty())
+		{
+			const std::map<std::string, std::string> defaults = {
+				{ "gba", "gpsp" }, { "gb", "gambatte" }, { "gbc", "gambatte" }, { "nes", "fceumm" }
+			};
+			auto d = defaults.find(system);
+			std::string value = d == defaults.end() ? "" : d->second;
+			value = getConfValue("/etc/banana/settings.conf", "core." + system, value);
+			gameNativeCore = getConfValue(data + "/settings.conf", "core." + system, value);
+		}
 		opt("Shader", "The look for this one game, over RetroArch's own. Default leaves RetroArch's shader choice alone.", shader,
 			{ { "Off", "off" }, { "LCD", "lcd" }, { "CRT", "crt" }, { "Sharp pixels", "sharp" } });
 		if (framable)
@@ -716,6 +727,21 @@ namespace banana
 			it.help = "The save states this game has on the card: browse them, delete one, or keep a backup copy. "
 				"RetroArch writes them (Quick resume, and the slots you save to) under banana/states.";
 			it.kind = Item::PAGE; it.key = "states";
+			items.push_back(it);
+		}
+		const bool native_profile = (system == "gba" && gameNativeCore == "mgba") ||
+			((system == "gb" || system == "gbc") && gameNativeCore == "gambatte") ||
+			(system == "nes" && gameNativeCore == "fceumm");
+		const std::string runtime_key = "runtime." + system + "." + gameNativeCore;
+		const char* libretro_env = getenv("BANANA_LIBRETRO");
+		const std::string libretro_dir = libretro_env && *libretro_env ? libretro_env : "/usr/lib/libretro";
+		if (native_profile && access((libretro_dir + "/" + gameNativeCore + "_libretro.so").c_str(), R_OK) == 0 &&
+			getConfValue(data + "/retro/runtime.conf", runtime_key, "") == "banana-retro")
+		{
+			Item it;
+			it.section = title; it.icon = "gear"; it.label = "Import legacy save";
+			it.help = "Preview a matching raw SRAM/RTC save from RetroArch's saves folder. Press A again after preview to copy it into this native profile; the original is kept.";
+			it.kind = Item::ACTION; it.key = "legacy_import"; it.names = { "" }; it.values = { "" };
 			items.push_back(it);
 		}
 		groups = { title };
@@ -856,6 +882,52 @@ namespace banana
 		}
 		if (it.kind == Item::ACTION)
 		{
+			if (it.key == "legacy_import")
+			{
+				if (backupJob.running()) return MOVED;
+				const std::string effective_core = items.empty() ? gameNativeCore :
+					(items[0].values[items[0].at].empty() ? gameNativeCore : items[0].values[items[0].at]);
+				const bool supported = (gameSys == "gba" && effective_core == "mgba") ||
+					((gameSys == "gb" || gameSys == "gbc") && effective_core == "gambatte") ||
+					(gameSys == "nes" && effective_core == "fceumm");
+				if (!supported || getConfValue(data + "/retro/runtime.conf",
+					"runtime." + gameSys + "." + effective_core, "") != "banana-retro")
+				{
+					message = "This game no longer has an opted-in native profile.";
+					armed = -1; return MOVED;
+				}
+				const char* retroarch_cfg_env = getenv("BANANA_RETROARCH_CFG");
+				const std::string retroarch_cfg = retroarch_cfg_env && *retroarch_cfg_env
+					? retroarch_cfg_env : data + "/retroarch/retroarch.cfg";
+				const std::string legacy_root = getConfValue(retroarch_cfg, "savefile_directory",
+					getConfValue("/etc/banana/retroarch.cfg", "savefile_directory", "/data/saves"));
+				if (legacy_root.empty() || legacy_root[0] != '/')
+				{
+					message = "The RetroArch save directory is not an absolute path.";
+					armed = -1; return MOVED;
+				}
+				if (armed != sel)
+				{
+					armed = -1; legacyActionSel = sel; backupWhat = 3; message = "Checking the matching RetroArch save...";
+					std::string tool = (getenv("BANANA_RETRO_TOOL") && *getenv("BANANA_RETRO_TOOL"))
+						? getenv("BANANA_RETRO_TOOL") : "/usr/bin/banana-retro";
+					const char* libretro_env = getenv("BANANA_LIBRETRO");
+					std::string ldir = libretro_env && *libretro_env ? libretro_env : "/usr/lib/libretro";
+					std::string core_path = ldir + "/" + effective_core + "_libretro.so";
+					backupJob.start(banana::shellQuote(tool) + " --legacy-preview " + banana::shellQuote(core_path) + " " +
+						banana::shellQuote(gameRom) + " " + banana::shellQuote(legacy_root) + " " + banana::shellQuote(data + "/retro/saves"), sync);
+					return MOVED;
+				}
+				armed = -1; legacyActionSel = sel; backupWhat = 4; message = "Importing the previewed save...";
+				std::string tool = (getenv("BANANA_RETRO_TOOL") && *getenv("BANANA_RETRO_TOOL"))
+					? getenv("BANANA_RETRO_TOOL") : "/usr/bin/banana-retro";
+				const char* libretro_env = getenv("BANANA_LIBRETRO");
+				std::string ldir = libretro_env && *libretro_env ? libretro_env : "/usr/lib/libretro";
+				std::string core_path = ldir + "/" + effective_core + "_libretro.so";
+				backupJob.start(banana::shellQuote(tool) + " --legacy-import " + banana::shellQuote(core_path) + " " +
+					banana::shellQuote(gameRom) + " " + banana::shellQuote(legacy_root) + " " + banana::shellQuote(data + "/retro/saves"), sync);
+				return MOVED;
+			}
 			if (dir <= 0) { armed = -1; return MOVED; }
 			if (armed != sel) { armed = sel; return MOVED; }
 			if (recoveryPage && (it.key == "reset_system" || it.key == "fsck" || it.key == "transfer")) return changeRecovery();
@@ -1998,6 +2070,29 @@ namespace banana
 				const bool good = line.compare(0, 3, "ok ") == 0;
 				const std::string detail = line.compare(0, 3, "ok ") == 0 ? line.substr(3)
 					: line.compare(0, 7, "error: ") == 0 ? line.substr(7) : (line.empty() ? "the backup tool said nothing" : line);
+				if (what == 3)
+				{
+					if (good && line.compare(0, 9, "ok ready ") == 0)
+					{
+						message = "Preview: " + line.substr(3) + ". Press A again to import; the original stays in RetroArch's saves folder.";
+						if (legacyActionSel >= 0 && legacyActionSel < (int)items.size() &&
+							items[legacyActionSel].key == "legacy_import") armed = legacyActionSel;
+					}
+					else
+					{
+						message = good ? "Legacy save preview: " + detail : "Legacy save preview failed: " + detail;
+						armed = -1;
+					}
+					return true;
+				}
+				if (what == 4)
+				{
+					message = good && line.compare(0, 12, "ok imported ") == 0
+						? "Legacy SRAM/RTC copied into the native save store. The RetroArch original was kept."
+						: "Legacy save import failed: " + detail;
+					legacyActionSel = -1;
+					return true;
+				}
 				if (good && what == 2)
 				{
 					// settings.conf (and the rest) just changed under this process: let init respawn the menu, which

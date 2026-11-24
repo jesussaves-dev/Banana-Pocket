@@ -28,10 +28,74 @@ bool core_option_set(const char *key, const char *value);
 size_t core_option_count(void);
 const struct core_option *core_option_at(size_t index);
 bool core_persistence_flush(struct saves *saves);
+bool core_save_memory_sizes(size_t *sram_size, size_t *rtc_size);
 
 enum { MAX_FRAMES = 10000 };
 
 static struct wl_display *native_display;
+
+static struct saves *open_saves_profile(const char *root,const char *core,const char *content)
+{
+    char fingerprint[4097];
+    size_t used = 0;
+    int n = snprintf(fingerprint, sizeof(fingerprint), "banana-retro-options-v1:");
+    if (n < 0 || (size_t)n >= sizeof(fingerprint)) return NULL;
+    used = (size_t)n;
+    for (size_t i = 0; i < core_option_count(); ++i) {
+        const struct core_option *option = core_option_at(i);
+        if (!option) return NULL;
+        n = snprintf(fingerprint + used, sizeof(fingerprint) - used,
+                     "%zu:%s%zu:%s", strlen(option->key), option->key,
+                     strlen(option->value), option->value);
+        if (n < 0 || (size_t)n >= sizeof(fingerprint) - used) return NULL;
+        used += (size_t)n;
+    }
+    struct saves *saves = saves_open_with_options(root, core, content, fingerprint);
+    if (saves) (void)saves_set_legacy_core_name(saves, core_name());
+    return saves;
+}
+
+static int legacy_command(int argc, char **argv)
+{
+    bool importing;
+    if (argc < 2 || (strcmp(argv[1], "--legacy-preview") != 0 &&
+                     strcmp(argv[1], "--legacy-import") != 0)) return -1;
+    importing = strcmp(argv[1], "--legacy-import") == 0;
+    if (argc != 6) {
+        fprintf(stderr, "usage: %s --legacy-%s CORE CONTENT LEGACY_ROOT NATIVE_ROOT\n",
+                argv[0], importing ? "import" : "preview");
+        return 2;
+    }
+    if (!core_load(argv[2], argv[3], NULL)) {
+        fputs("error: core or content could not be loaded\n", stderr);
+        return 1;
+    }
+    size_t sram_size = 0, rtc_size = 0;
+    struct saves *saves = NULL;
+    int exit_code = 1;
+    if (!core_save_memory_sizes(&sram_size, &rtc_size)) {
+        fputs("error: core save-memory sizes are unavailable\n", stderr);
+    } else if (!(saves = open_saves_profile(argv[5], argv[2], argv[3]))) {
+        fputs("error: native save store is unavailable\n", stderr);
+    } else {
+        enum saves_legacy_result result = importing
+            ? saves_legacy_import(saves, argv[4], sram_size, rtc_size)
+            : saves_legacy_preview(saves, argv[4], sram_size, rtc_size);
+        const char *status = "invalid";
+        switch (result) {
+        case SAVES_LEGACY_NONE: status = "none"; break;
+        case SAVES_LEGACY_READY: status = importing ? "imported" : "ready"; break;
+        case SAVES_LEGACY_ALREADY_IMPORTED: status = "already-imported"; break;
+        case SAVES_LEGACY_AMBIGUOUS: status = "ambiguous"; break;
+        case SAVES_LEGACY_INVALID: status = "invalid"; break;
+        }
+        printf("ok %s sram=%zu rtc=%zu\n", status, sram_size, rtc_size);
+        exit_code = result == SAVES_LEGACY_INVALID ? 1 : 0;
+    }
+    saves_close(saves);
+    if (!core_release()) exit_code = 1;
+    return exit_code;
+}
 
 struct wl_display *__real_wl_display_connect(const char *name);
 struct wl_display *__wrap_wl_display_connect(const char *name)
@@ -120,6 +184,7 @@ struct native_runtime {
     bool stopped;
     bool failed_load;
     bool committed;
+    bool checkpoint_invalid;
     bool ui_paused;
     bool sleep_paused;
     uint64_t sleep_epoch;
@@ -231,11 +296,13 @@ static bool control_option(void *data, size_t index, const char **key,
 static bool control_set_option(void *data, const char *key, const char *value,
                                unsigned scope, bool *restart_required)
 {
-    (void)data;
+    struct native_runtime *runtime = data;
     if (scope != BANANA_RETRO_CTL_SCOPE_SESSION) return false;
     const char *previous = core_option_get(key);
     bool changed = previous && strcmp(previous, value) != 0;
     if (!core_option_set(key, value)) return false;
+    runtime->checkpoint_invalid = true;
+    if (runtime->saves) (void)saves_resume_clear(runtime->saves);
     *restart_required = changed;
     return true;
 }
@@ -254,8 +321,14 @@ static bool control_reset(void *data)
 static bool control_quit(void *data)
 {
     struct native_runtime *runtime = data;
-    if (!runtime->saves || !mark_commit_intent() ||
+    if (!runtime->saves || !mark_commit_intent()) return false;
+    if (runtime->save_state_slot >= 0 &&
         !core_persistence_commit(runtime->saves, runtime->save_state_slot)) return false;
+    if (runtime->checkpoint_invalid) {
+        if (runtime->save_state_slot < 0 && !core_persistence_flush(runtime->saves)) return false;
+        if (!saves_resume_clear(runtime->saves)) return false;
+    } else if (!core_persistence_checkpoint(runtime->saves) ||
+               !saves_resume_record(runtime->saves)) return false;
     runtime->committed = true;
     runtime->stopped = true;
     return true;
@@ -263,8 +336,10 @@ static bool control_quit(void *data)
 
 static bool power_checkpoint(struct native_runtime *runtime)
 {
-    if (!runtime->saves || !mark_commit_intent()) return false;
-    return core_persistence_commit(runtime->saves, runtime->save_state_slot);
+    if (!runtime->saves || runtime->checkpoint_invalid || !mark_commit_intent()) return false;
+    if (runtime->save_state_slot >= 0 &&
+        !core_persistence_commit(runtime->saves, runtime->save_state_slot)) return false;
+    return core_persistence_checkpoint(runtime->saves) && saves_resume_record(runtime->saves);
 }
 
 static bool parse_session_id(const char *text, unsigned char session_id[16])
@@ -398,6 +473,8 @@ static double refresh_rate(void *data)
 
 int main(int argc, char **argv)
 {
+    int legacy_result = legacy_command(argc, argv);
+    if (legacy_result >= 0) return legacy_result;
     unsigned long frames = MAX_FRAMES;
     char *end = NULL;
     bool forever = argc >= 4 && strcmp(argv[3], "--wayland") == 0;
@@ -417,8 +494,11 @@ int main(int argc, char **argv)
 #ifdef SAVES_TESTING
     const char *test_persist_env = getenv("BANANA_RETRO_TEST_PERSISTENCE");
     bool test_persistence = test_persist_env && strcmp(test_persist_env, "1") == 0;
+    const char *test_resume_env = getenv("BANANA_RETRO_TEST_QUICK_RESUME");
+    bool quick_resume = test_resume_env && strcmp(test_resume_env, "1") == 0;
 #else
     bool test_persistence = false;
+    bool quick_resume = false;
 #endif
 
     if (!forever && (argc < 5 || strcmp(argv[3], "--frames") != 0)) {
@@ -462,6 +542,7 @@ int main(int argc, char **argv)
         fputs("State slots require --wayland\n", stderr);
         return 2;
     }
+    quick_resume = quick_resume || native;
     if (native) {
         video = wayland_video_open();
         if (!video || !native_display) {
@@ -503,18 +584,27 @@ int main(int argc, char **argv)
     if (ok && (native || test_persistence)) {
         const char *root = getenv("BANANA_RETRO_NATIVE_DIR");
         if (!root || !*root) root = "/data/banana/retro/saves";
-        runtime.saves = saves_open(root, argv[1], argv[2]);
+        runtime.saves = open_saves_profile(root, argv[1], argv[2]);
         if (!runtime.saves) {
             startup_error_code = "persistence-init";
             fputs("Native save storage unavailable\n", stderr);
             skip_save_commit = load_state_slot >= 0;
             ok = false;
-        } else if (!core_persistence_load(runtime.saves, load_state_slot)) {
-            startup_error_code = "persistence-load";
-            fputs("No compatible native save or requested state slot\n", stderr);
-            if (load_state_slot >= 0) {
-                skip_save_commit = true;
-                ok = false;
+        } else {
+            bool checkpoint_load = quick_resume && load_state_slot < 0 &&
+                saves_resume_available(runtime.saves);
+            if (quick_resume && load_state_slot < 0 && !checkpoint_load)
+                (void)saves_resume_clear(runtime.saves);
+            bool loaded = checkpoint_load
+                ? core_persistence_restore_checkpoint(runtime.saves)
+                : core_persistence_load(runtime.saves, load_state_slot);
+            if (!loaded) {
+                startup_error_code = "persistence-load";
+                fputs("No compatible native save or requested state slot\n", stderr);
+                if (load_state_slot >= 0 || checkpoint_load) {
+                    skip_save_commit = true;
+                    ok = false;
+                }
             }
         }
     }
@@ -636,7 +726,19 @@ int main(int argc, char **argv)
     if (runtime.control) control_close(runtime.control);
     bool readiness_gated_launch = getenv("BANANA_RETRO_READY_FILE") != NULL;
     if (runtime.saves && !skip_save_commit && (!readiness_gated_launch || readiness_reached)) {
-        if (!mark_commit_intent() || !core_persistence_commit(runtime.saves, save_state_slot)) {
+        bool committed = mark_commit_intent();
+        if (committed && quick_resume && !runtime.checkpoint_invalid && save_state_slot < 0) {
+            committed = core_persistence_checkpoint(runtime.saves) &&
+                saves_resume_record(runtime.saves);
+        } else if (committed) {
+            committed = core_persistence_commit(runtime.saves, save_state_slot);
+            if (committed && quick_resume && !runtime.checkpoint_invalid)
+                committed = core_persistence_checkpoint(runtime.saves) &&
+                    saves_resume_record(runtime.saves);
+            else if (committed && quick_resume && runtime.checkpoint_invalid)
+                committed = saves_resume_clear(runtime.saves);
+        }
+        if (!committed) {
             fputs("Native save generation commit failed\n", stderr);
             ok = false;
         }

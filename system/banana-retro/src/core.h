@@ -2,6 +2,7 @@
 #define BANANA_RETRO_CORE_H
 
 #include "libretro.h"
+#include "saves.h"
 
 struct core_video {
     void *data;
@@ -12,8 +13,12 @@ struct core_video {
 
 /* One synchronous core per process. Paths and video callbacks must outlive core_release(). */
 bool core_load(const char *core_path, const char *content_path, const struct core_video *video);
+const char *core_name(void);
 const struct retro_game_geometry *core_geometry(void);
 bool core_step(unsigned frame);
+bool core_save_memory_sizes(size_t *sram_size, size_t *rtc_size);
+bool core_persistence_checkpoint(struct saves *saves);
+bool core_persistence_restore_checkpoint(struct saves *saves);
 bool core_release(void);
 
 #endif

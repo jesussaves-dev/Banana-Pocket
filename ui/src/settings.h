@@ -232,6 +232,7 @@ namespace banana
 		void openRecovery();
 		Result changeRecovery();
 		std::string gameSys, gameRel, gameTitle;
+		std::string gameNativeCore;
 		std::vector<Item> savedItems;		// the main list, while a game's page holds items instead
 		std::vector<std::string> savedGroups;
 		// the states page (from a game's Save states row): the states the game has, in banana/states (RetroArch's
@@ -282,7 +283,8 @@ namespace banana
 		std::string wifiTool, wifiConf, backupTool;
 		bool sync = false;
 		wifi::Job scanJob, statusJob, backupJob;
-		int backupWhat = 0;	// 0 none, 1 a backup being written, 2 a restore (the menu restarts after it)
+		int backupWhat = 0;	// 0 none, 1 backup, 2 restore, 3 save preview, 4 save import
+		int legacyActionSel = -1;
 		std::vector<wifi::Network> nets;
 		wifi::Status wstat;
 		bool scanning = false, scannedOnce = false, wifiEnabled = true;

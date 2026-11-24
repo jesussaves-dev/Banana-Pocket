@@ -19,6 +19,7 @@ static retro_audio_sample_batch_t batch;
 static retro_input_poll_t poll_input;
 static retro_input_state_t read_input;
 static unsigned frame;
+static uint8_t save_ram[4], save_rtc[2];
 static const char *content_bytes;
 static const char expected_content[] = "BRC1\n";
 
@@ -106,7 +107,7 @@ void retro_get_system_info(struct retro_system_info *info)
     *info = (struct retro_system_info){
         .library_name = "Banana lifecycle fixture",
         .library_version = "1",
-        .valid_extensions = "rom",
+        .valid_extensions = "rom|gba|gb|nes",
         .need_fullpath = mode_is("path"),
         .block_extract = true
     };
@@ -217,9 +218,19 @@ void retro_deinit(void)
 }
 
 void retro_reset(void) {}
-size_t retro_serialize_size(void) { return 0; }
-bool retro_serialize(void *data, size_t len) { (void)data; (void)len; return false; }
-bool retro_unserialize(const void *data, size_t len) { (void)data; (void)len; return false; }
+size_t retro_serialize_size(void) { return sizeof(frame); }
+bool retro_serialize(void *data, size_t len)
+{
+    if (data == NULL || len != sizeof(frame)) return false;
+    memcpy(data, &frame, sizeof(frame));
+    return true;
+}
+bool retro_unserialize(const void *data, size_t len)
+{
+    if (data == NULL || len != sizeof(frame)) return false;
+    memcpy(&frame, data, sizeof(frame));
+    return true;
+}
 void retro_cheat_reset(void) {}
 void retro_cheat_set(unsigned index, bool enabled, const char *code)
 {
@@ -235,7 +246,17 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info *info, 
     return false;
 }
 unsigned retro_get_region(void) { return RETRO_REGION_NTSC; }
-void *retro_get_memory_data(unsigned id) { (void)id; return NULL; }
+void *retro_get_memory_data(unsigned id)
+{
+    if (id == RETRO_MEMORY_SAVE_RAM) return save_ram;
+    if (id == RETRO_MEMORY_RTC) return save_rtc;
+    return NULL;
+}
 #ifndef FIXTURE_MISSING_EXPORT
-size_t retro_get_memory_size(unsigned id) { (void)id; return 0; }
+size_t retro_get_memory_size(unsigned id)
+{
+    if (id == RETRO_MEMORY_SAVE_RAM) return sizeof(save_ram);
+    if (id == RETRO_MEMORY_RTC) return sizeof(save_rtc);
+    return 0;
+}
 #endif

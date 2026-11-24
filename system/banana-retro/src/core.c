@@ -695,3 +695,59 @@ bool core_persistence_flush(struct saves *saves)
 {
     return core_persistence_commit(saves, -1);
 }
+
+bool core_save_memory_sizes(size_t *sram_size, size_t *rtc_size)
+{
+    if (!sram_size || !rtc_size || !session.loaded ||
+        !session.api.retro_get_memory_data || !session.api.retro_get_memory_size)
+        return false;
+    size_t sram = session.api.retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    size_t rtc = session.api.retro_get_memory_size(RETRO_MEMORY_RTC);
+    if (sram > 64u * 1024u * 1024u || rtc > 64u * 1024u * 1024u ||
+        sram > 64u * 1024u * 1024u - rtc)
+        return false;
+    *sram_size = sram;
+    *rtc_size = rtc;
+    return true;
+}
+
+bool core_persistence_checkpoint(struct saves *saves)
+{
+    size_t sram_size = 0, rtc_size = 0;
+    if (!saves || !session.loaded || !session.api.retro_get_memory_data ||
+        !session.api.retro_get_memory_size || !session.api.retro_serialize_size ||
+        !session.api.retro_serialize || !core_save_memory_sizes(&sram_size, &rtc_size))
+        return false;
+    size_t state_size = session.api.retro_serialize_size();
+    if (!state_size || state_size > 256u * 1024u * 1024u) return false;
+    void *state = malloc(state_size);
+    if (!state || !saves_state_capture(persistence_serialize, &session.api, state, state_size)) {
+        free(state);
+        return false;
+    }
+    void *sram = session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    void *rtc = session.api.retro_get_memory_data(RETRO_MEMORY_RTC);
+    bool ok = saves_commit_checkpoint(saves, sram, sram_size, rtc, rtc_size, state, state_size);
+    free(state);
+    return ok;
+}
+
+bool core_persistence_restore_checkpoint(struct saves *saves)
+{
+    size_t sram_size = 0, rtc_size = 0;
+    if (!saves || !session.loaded || !session.api.retro_get_memory_data ||
+        !session.api.retro_get_memory_size || !session.api.retro_serialize_size ||
+        !session.api.retro_unserialize || !core_save_memory_sizes(&sram_size, &rtc_size))
+        return false;
+    size_t state_size = session.api.retro_serialize_size();
+    if (!state_size || state_size > 256u * 1024u * 1024u) return false;
+    void *state = malloc(state_size);
+    if (!state) return false;
+    bool ok = saves_load_checkpoint(saves, state, state_size);
+    if (ok) ok = saves_load_memory(saves,
+        session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sram_size,
+        session.api.retro_get_memory_data(RETRO_MEMORY_RTC), rtc_size);
+    if (ok) ok = saves_state_restore(persistence_unserialize, &session.api, state, state_size);
+    free(state);
+    return ok;
+}
