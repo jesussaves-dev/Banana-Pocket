@@ -60,6 +60,26 @@ case ${NATIVE_MODE:-fail} in
         while [ ! -e "$NATIVE_RELEASE" ]; do sleep 0.01; done
         exit 45
         ;;
+    never-ready)
+        echo $$ > "$NATIVE_PID_MARKER"
+        trap 'exit 46' TERM
+        while :; do sleep 1; done
+        ;;
+    ignore-term)
+        echo $$ > "$NATIVE_PID_MARKER"
+        trap '' TERM
+        exec sleep 30
+        ;;
+    late-commit)
+        echo $$ > "$NATIVE_PID_MARKER"
+        trap ': > "$BANANA_RETRO_COMMITTED_FILE"; exit 47' TERM
+        while :; do sleep 1; done
+        ;;
+    late-ready)
+        echo $$ > "$NATIVE_PID_MARKER"
+        trap ': > "$BANANA_RETRO_READY_FILE"; exit 48' TERM
+        while :; do sleep 1; done
+        ;;
     *) exit 42 ;;
 esac
 EOF
@@ -100,6 +120,33 @@ rm -f "$W/fallback.log" "$W/run"/*
 NATIVE_MODE=ready-exit launch >"$W/out" 2>&1
 status=$?
 if [ "$status" -eq 44 ] && [ ! -s "$W/fallback.log" ]; then ok "rapid exit after readiness does not switch runtimes"; else bad "post-readiness exit switched or lost status ($status)"; cat "$W/out"; fi
+
+for mode in never-ready ignore-term; do
+    rm -f "$W/fallback.log" "$W/native.pid" "$W/run"/*
+    NATIVE_PID_MARKER="$W/native.pid" NATIVE_MODE=$mode launch >"$W/out" 2>&1
+    status=$?
+    child=$(cat "$W/native.pid" 2>/dev/null || :)
+    if [ "$status" -eq 0 ] && [ -s "$W/fallback.log" ] &&
+       { [ -z "$child" ] || ! kill -0 "$child" 2>/dev/null; } &&
+       ! grep -q 'refusing fallback' "$W/out"; then
+        ok "$mode startup child is terminated and reaped before fallback"
+    else
+        bad "$mode startup fallback was not safely bounded (status $status, child ${child:-unknown})"
+        cat "$W/out"
+    fi
+done
+
+for mode in late-commit late-ready; do
+    rm -f "$W/fallback.log" "$W/native.pid" "$W/run"/*
+    NATIVE_PID_MARKER="$W/native.pid" NATIVE_MODE=$mode launch >"$W/out" 2>&1
+    child=$(cat "$W/native.pid" 2>/dev/null || :)
+    if [ ! -s "$W/fallback.log" ] && { [ -z "$child" ] || ! kill -0 "$child" 2>/dev/null; }; then
+        ok "$mode marker discovered after termination prevents fallback"
+    else
+        bad "$mode termination marker allowed fallback or left child alive"
+        cat "$W/out"
+    fi
+done
 
 rm -f "$W/run"/* "$W/fallback.log" "$W/release"
 NATIVE_RELEASE="$W/release" NATIVE_MODE=ready-wait launch >"$W/out" 2>&1 &

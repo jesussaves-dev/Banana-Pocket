@@ -1,5 +1,5 @@
 #include "native_control.h"
-#include "../../system/banana-retro/include/banana-retro-control.h"
+#include "banana-retro-control.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -101,6 +101,11 @@ bool NativeControl::connectSession(const std::string& id, const std::string& rom
 	uint64_t recordedStart = 0, timestamp = 0;
 	if (!(metadata >> version >> token >> pid >> recordedStart >> core >> timestamp >> state) ||
 	    version != "v1" || token != id || state != "ready") return false;
+	if (requestSessionId_ != id)
+	{
+		requestSessionId_ = id;
+		requestId_ = 0;
+	}
 	id_ = id;
 	socket_ = runtimeDirectory() + "/retro-" + id + ".sock";
 	NativeStatus current;
@@ -110,12 +115,13 @@ bool NativeControl::connectSession(const std::string& id, const std::string& rom
 
 void NativeControl::clear()
 {
-	id_.clear(); socket_.clear(); requestId_ = 0; active_ = false;
+	id_.clear(); socket_.clear(); active_ = false;
 }
 
 int NativeControl::request(uint16_t type, const std::vector<unsigned char>& payload,
-			   std::vector<unsigned char>& body)
+			   std::vector<unsigned char>& body, bool* mutationSent)
 {
+	if (mutationSent) *mutationSent = false;
 	if (id_.empty() || requestId_ > UINT64_MAX - 2 || payload.size() > BANANA_RETRO_CONTROL_MAX_PAYLOAD) return -1;
 	int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
 	if (fd < 0) return -1;
@@ -170,6 +176,7 @@ int NativeControl::request(uint16_t type, const std::vector<unsigned char>& payl
 	{ close(fd); return -1; }
 	uint64_t rid = ++requestId_;
 	if (!sendPacket(type, payload, rid)) { close(fd); return -1; }
+	if (mutationSent) *mutationSent = true;
 	int result = receive(type, rid, body);
 	close(fd);
 	return result;
@@ -185,11 +192,26 @@ bool NativeControl::status(NativeStatus& out)
 	return true;
 }
 
-bool NativeControl::pause(bool acquire)
+NativePauseResult NativeControl::pause(bool acquire)
 {
 	std::vector<unsigned char> payload(9, 0), body;
 	payload[0] = BANANA_RETRO_CTL_OWNER_UI;
-	return request(acquire ? BANANA_RETRO_CTL_PAUSE : BANANA_RETRO_CTL_RESUME, payload, body) == BANANA_RETRO_CTL_OK;
+	const uint16_t type = acquire ? BANANA_RETRO_CTL_PAUSE : BANANA_RETRO_CTL_RESUME;
+	for (unsigned attempt = 0; attempt < 2; ++attempt)
+	{
+		bool sent = false;
+		int result = request(type, payload, body, &sent);
+		if (result == BANANA_RETRO_CTL_OK) return NativePauseResult::Applied;
+		if (result >= 0 && result != BANANA_RETRO_CTL_STALE_SESSION)
+			return NativePauseResult::Rejected;
+		if (!sent) return NativePauseResult::Rejected;
+
+		NativeStatus current;
+		if (!status(current)) return NativePauseResult::Ambiguous;
+		bool held = (current.pauseOwners & BANANA_RETRO_CTL_OWNER_UI) != 0;
+		if (held == acquire) return NativePauseResult::Applied;
+	}
+	return NativePauseResult::Ambiguous;
 }
 
 int NativeControl::saveState(unsigned slot)

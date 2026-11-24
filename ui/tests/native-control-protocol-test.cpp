@@ -5,6 +5,7 @@ extern "C" {
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <cstdlib>
@@ -18,7 +19,9 @@ extern "C" {
 
 struct Fixture
 {
-	bool paused = false, restart = false;
+	std::atomic<bool> paused{false}, delayNextPause{false};
+	bool restart = false;
+	std::atomic<unsigned> pauseTransitions{0};
 	unsigned saved = 0, loaded = 0, resets = 0, quits = 0;
 	std::string optionValue = "Auto";
 };
@@ -26,13 +29,23 @@ struct Fixture
 static void status(void* data, control_status* out)
 {
 	Fixture* f = (Fixture*)data;
-	out->flags = 1u | (f->paused ? 2u : 0u);
-	out->pause_owners = f->paused ? BANANA_RETRO_CTL_OWNER_UI : 0;
+	const bool paused = f->paused.load();
+	out->flags = 1u | (paused ? 2u : 0u);
+	out->pause_owners = paused ? BANANA_RETRO_CTL_OWNER_UI : 0;
 	out->capabilities = BANANA_RETRO_CTL_CAP_OPTIONS | BANANA_RETRO_CTL_CAP_STATE;
 	out->core_id = "fixture"; out->core_version = "1"; out->content_id = "/rom/protocol.gba";
 }
 static bool pause(void* data, unsigned owner, uint64_t, bool acquire)
-{ Fixture* f=(Fixture*)data; if (owner != BANANA_RETRO_CTL_OWNER_UI) return false; f->paused=acquire; return true; }
+{
+	Fixture* f=(Fixture*)data;
+	if (owner != BANANA_RETRO_CTL_OWNER_UI) return false;
+	if (f->delayNextPause.exchange(false))
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(1800));
+	}
+	if (f->paused.exchange(acquire) != acquire) ++f->pauseTransitions;
+	return true;
+}
 static bool flush(void*) { return true; }
 static bool save(void* data, unsigned slot) { ((Fixture*)data)->saved=slot+1; return true; }
 static bool load(void* data, unsigned slot) { ((Fixture*)data)->loaded=slot+1; return true; }
@@ -109,7 +122,7 @@ int main()
 	if(!client.connectSession(id,"/rom/protocol.gba",(uint64_t)std::time(nullptr))) return 5;
 	banana::NativeStatus current;
 	if(!client.status(current)||!current.ready()||!(current.capabilities&BANANA_RETRO_CTL_CAP_STATE)) return 6;
-	if(!client.pause(true)||!fixture.paused) return 7;
+	if(client.pause(true)!=banana::NativePauseResult::Applied||!fixture.paused.load()) return 7;
 	if(client.saveState(3)!=BANANA_RETRO_CTL_OK||fixture.saved!=4) return 8;
 	if(client.loadState(4)!=BANANA_RETRO_CTL_OK||fixture.loaded!=5) return 9;
 	std::vector<banana::NativeOption> options;
@@ -119,8 +132,19 @@ int main()
 	if(client.setOption("region","unsupported",restartRequired)!=BANANA_RETRO_CTL_UNSUPPORTED) return 12;
 	if(client.reset()!=BANANA_RETRO_CTL_OK||fixture.resets!=1) return 13;
 	if(client.quit()!=BANANA_RETRO_CTL_OK||fixture.quits!=1) return 14;
-	if(!client.pause(false)||fixture.paused) return 15;
+	if(client.pause(false)!=banana::NativePauseResult::Applied||fixture.paused.load()) return 15;
+	for (unsigned cycle = 0; cycle < 3; ++cycle)
+	{
+		if (client.pause(true)!=banana::NativePauseResult::Applied || !fixture.paused.load()) return 16;
+		client.clear(); // reopening the pause menu reconnects to the same native session
+		if (!client.connectSession(id,"/rom/protocol.gba",(uint64_t)std::time(nullptr))) return 17;
+		if (client.pause(false)!=banana::NativePauseResult::Applied || fixture.paused.load()) return 18;
+	}
+	fixture.delayNextPause = true;
+	if (client.pause(true)!=banana::NativePauseResult::Applied || !fixture.paused.load()) return 19;
+	if (client.pause(false)!=banana::NativePauseResult::Applied || fixture.paused.load()) return 20;
+	if (fixture.pauseTransitions.load() != 10) return 21;
 	stop.store(true); pump.join(); control_close(server);
-	std::cout<<"native-control-protocol-test: authenticated UI pause, status, state, options, reset, quit and unsupported result passed\n";
+	std::cout<<"native-control-protocol-test: authenticated pause cycles, same-session reconnects, delayed/lost acknowledgment reconciliation and control operations passed\n";
 	return 0;
 }

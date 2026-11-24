@@ -20,6 +20,8 @@ struct NativeStatus
 	bool paused() const { return (flags & 2u) != 0; }
 };
 
+enum class NativePauseResult { Applied, Rejected, Ambiguous };
+
 class NativeControl
 {
 public:
@@ -28,7 +30,7 @@ public:
 	void clear();
 	bool active() const { return active_; }
 	bool status(NativeStatus& out);
-	bool pause(bool acquire);
+	NativePauseResult pause(bool acquire);
 	int saveState(unsigned slot);
 	int loadState(unsigned slot);
 	int reset();
@@ -38,9 +40,10 @@ public:
 
 private:
 	int request(uint16_t type, const std::vector<unsigned char>& payload,
-	            std::vector<unsigned char>& body);
+	            std::vector<unsigned char>& body, bool* mutationSent = nullptr);
 	std::string id_, socket_;
-	uint64_t requestId_ = 0;
+	std::string requestSessionId_; // replay namespace survives clear() and reconnects
+	uint64_t requestId_ = 0;       // monotonic within requestSessionId_
 	bool active_ = false;
 };
 }

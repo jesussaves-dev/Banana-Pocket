@@ -1,10 +1,21 @@
 // banana-ui: the pause menu over a frozen game.
 #include "app.h"
 #include "pause_menu.h"
-#include "../../system/banana-retro/include/banana-retro-control.h"
+#include "banana-retro-control.h"
 #include <cctype>
 #include <cstdlib>
 #include <linux/input.h>
+#include <sys/wait.h>
+
+static void terminateNativeSession(pid_t pid, banana::NativeControl& control,
+				   const std::string& session, const std::string& rom, uint64_t launchEpoch)
+{
+	if (pid <= 0) return;
+	if (control.sessionAttempt(session, rom, launchEpoch)) signalTree(pid, SIGKILL);
+	else kill(pid, SIGKILL); // pid is still banana-ui's unreaped launch child
+	int status = 0;
+	while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+}
 
 static std::string nativeResultText(int result)
 {
@@ -175,7 +186,18 @@ void PauseMenu::show()
 	nativeOptions.clear();
 	nativeAttempt = native.sessionAttempt(gameSessionId, gameRom, gameLaunchEpoch);
 	nativeActive = native.connectSession(gameSessionId, gameRom, gameLaunchEpoch);
-	nativePauseHeld = nativeActive && native.pause(true);
+	NativePauseResult pauseResult = nativeActive ? native.pause(true) : NativePauseResult::Rejected;
+	nativePauseHeld = nativeActive && pauseResult == NativePauseResult::Applied;
+	if (nativeActive && pauseResult == NativePauseResult::Ambiguous)
+	{
+		actionError = "Native pause state is unknown; stopping the session";
+		logf("%s", actionError.c_str());
+		terminateNativeSession(gamePid, native, gameSessionId, gameRom, gameLaunchEpoch);
+		native.clear();
+		nativeActive = nativeAttempt = false;
+		input.grab(false);
+		return;
+	}
 	if (nativeActive && !nativePauseHeld)
 	{
 		nativeActive = false;
@@ -246,11 +268,10 @@ void PauseMenu::close(bool resumeGame)
 	if (!was) return;
 	if (resumeGame && nativePauseHeld)
 	{
-		if (!native.pause(false))
+		if (native.pause(false) != NativePauseResult::Applied)
 		{
-			signalTree(gamePid, SIGCONT);
-			signalTree(gamePid, SIGTERM);
-			logf("native resume handshake failed; continued and terminated the session for recovery");
+			terminateNativeSession(gamePid, native, gameSessionId, gameRom, gameLaunchEpoch);
+			logf("native resume ownership could not be cleared; terminated the session for recovery");
 		}
 	}
 	else if (resumeGame && nativeSignalStopped) signalTree(gamePid, SIGCONT);

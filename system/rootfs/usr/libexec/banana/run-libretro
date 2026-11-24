@@ -64,6 +64,31 @@ proc_start() {
     [ "$#" -ge 20 ] || return 1
     eval 'printf "%s" "${20}"'
 }
+proc_state() {
+    [ -r "/proc/$1/stat" ] || return 1
+    line=$(cat "/proc/$1/stat") || return 1
+    rest=${line##*) }
+    set -- $rest
+    [ "$#" -ge 1 ] || return 1
+    printf '%s' "$1"
+}
+native_exited() {
+    state=$(proc_state "$native_pid") && {
+        [ "$state" = Z ] || [ "$state" = X ]
+        return $?
+    }
+    if kill -0 "$native_pid" 2>/dev/null; then return 1; fi
+    return 0
+}
+wait_native_exit() {
+    ticks=$1
+    while [ "$ticks" -gt 0 ]; do
+        native_exited && return 0
+        sleep 0.05
+        ticks=$((ticks - 1))
+    done
+    native_exited
+}
 publish_session() {
     state=$1
     process_pid=$2
@@ -130,8 +155,23 @@ if [ "$ready" -eq 1 ]; then
     exit "$result"
 fi
 
+if ! native_exited; then
+    kill -TERM "$native_pid" 2>/dev/null || :
+    if ! wait_native_exit 20; then
+        kill -KILL "$native_pid" 2>/dev/null || :
+        if ! wait_native_exit 40; then
+            echo "run-libretro: native child did not exit after bounded TERM/KILL; refusing fallback" >&2
+            exit 1
+        fi
+    fi
+fi
 reap_native
 startup_result=$?
+if [ -e "$ready_file" ]; then
+    echo "run-libretro: native readiness appeared during termination; refusing runtime switch" >&2
+    rm -f "$socket" "$metadata" "$ready_file" "$committed_file" "$error_file"
+    exit "$startup_result"
+fi
 if [ -e "$committed_file" ]; then
     echo "run-libretro: native data commit was attempted before readiness; refusing runtime switch" >&2
     rm -f "$socket" "$metadata" "$ready_file" "$committed_file" "$error_file"
