@@ -5,11 +5,45 @@
 # gone, up to 3 s, instead of a second whatever happened
 G=$(cat /run/banana/game.pid 2>/dev/null)
 [ -n "$G" ] && kill -TERM -"$G" 2>/dev/null
+# The native child is a separate tracked process beneath run-libretro. Validate its start time from the session record
+# before including it in the shutdown wait, so a stale record cannot make us signal a reused PID.
+N=
+NS=
+if [ -r /run/banana/native-session ]; then
+    IFS=' ' read -r V SID N NS CORE STARTED STATE ROM < /run/banana/native-session
+    case $N:$NS in *[!0-9:]*|:|*:) N=; NS= ;; esac
+    if [ "$V" != v1 ] || [ "$STATE" != ready ] || [ -z "$N" ]; then N=; NS=; fi
+fi
+proc_start() {
+    [ -r "/proc/$1/stat" ] || return 1
+    line=$(cat "/proc/$1/stat") || return 1
+    rest=${line##*) }
+    set -- $rest
+    [ "$#" -ge 20 ] || return 1
+    eval 'printf "%s" "${20}"'
+}
+if [ -n "$N" ]; then
+    CURRENT=$(proc_start "$N") || CURRENT=
+    [ "$CURRENT" = "$NS" ] || { N=; NS=; }
+fi
 killall -TERM banana-ui retroarch 2>/dev/null
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
-    pidof banana-ui retroarch >/dev/null || { [ -n "$G" ] && kill -0 "$G" 2>/dev/null; } || break
+    if ! pidof banana-ui retroarch >/dev/null && { [ -z "$G" ] || ! kill -0 "$G" 2>/dev/null; } && \
+       { [ -z "$N" ] || ! kill -0 "$N" 2>/dev/null; }; then break; fi
     sleep 0.1
 done
+if [ -n "$N" ] && kill -0 "$N" 2>/dev/null; then
+    CURRENT=$(proc_start "$N") || CURRENT=
+    if [ "$CURRENT" = "$NS" ]; then
+        kill -KILL "$N" 2>/dev/null
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "$N" 2>/dev/null || break
+            CURRENT=$(proc_start "$N") || CURRENT=
+            [ "$CURRENT" = "$NS" ] || break
+            sleep 0.1
+        done
+    fi
+fi
 # Network shares first: ksmbd/sshd hold /data open, so the transfer-mode handover has to be able to unmount it.
 # (This runs before usb-msc off, which mounts /data again -- and takes it back off if a computer had it.)
 /usr/libexec/banana/share down 2>/dev/null     # a computer's open files on the card

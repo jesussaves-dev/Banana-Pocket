@@ -50,6 +50,7 @@ struct control_server {
 	struct control_replay replay[CONTROL_ROLE_COUNT][CONTROL_REPLAY_HISTORY];
 	size_t replay_next[CONTROL_ROLE_COUNT];
 	uint64_t last_mutation_id;
+	uint64_t power_epoch;
 	uint16_t last_mutation_type;
 	uint16_t last_mutation_result;
 	struct control_ops ops;
@@ -222,6 +223,9 @@ static bool authorized(const struct control_client *c, uint16_t type,
 	}
 	if (c->role == CONTROL_ROLE_SLEEP) {
 		if (type == BANANA_RETRO_CTL_GET_STATUS) return true;
+		if (type == BANANA_RETRO_CTL_PREPARE_SLEEP || type == BANANA_RETRO_CTL_SLEEP_ABORT ||
+		    type == BANANA_RETRO_CTL_WAKE || type == BANANA_RETRO_CTL_SHUTDOWN)
+			return size == 8 && get64(payload) != 0;
 		return (type == BANANA_RETRO_CTL_PAUSE || type == BANANA_RETRO_CTL_RESUME) &&
 			size == 9 && payload[0] == BANANA_RETRO_CTL_OWNER_SLEEP;
 	}
@@ -343,6 +347,29 @@ static uint16_t dispatch(struct control_server *s, struct control_client *c, uin
 	case BANANA_RETRO_CTL_QUIT:
 		if (n != 0) return BANANA_RETRO_CTL_INVALID;
 		return s->ops.quit && s->ops.quit(s->ops.data) ? BANANA_RETRO_CTL_OK : BANANA_RETRO_CTL_IO_ERROR;
+	case BANANA_RETRO_CTL_PREPARE_SLEEP:
+	case BANANA_RETRO_CTL_SLEEP_ABORT:
+	case BANANA_RETRO_CTL_WAKE:
+	case BANANA_RETRO_CTL_SHUTDOWN:
+		if (n != 8 || get64(p) == 0 || c->role != CONTROL_ROLE_SLEEP)
+			return BANANA_RETRO_CTL_INVALID;
+		if (type == BANANA_RETRO_CTL_PREPARE_SLEEP) {
+			if (get64(p) <= s->power_epoch) return BANANA_RETRO_CTL_BAD_STATE;
+			if (!s->ops.pause || !s->ops.pause(s->ops.data, BANANA_RETRO_CTL_OWNER_SLEEP,
+					get64(p), true)) return BANANA_RETRO_CTL_IO_ERROR;
+			s->power_epoch = get64(p);
+			return BANANA_RETRO_CTL_OK;
+		}
+		if (type == BANANA_RETRO_CTL_SHUTDOWN) {
+			if (get64(p) <= s->power_epoch) return BANANA_RETRO_CTL_BAD_STATE;
+			if (!s->ops.quit || !s->ops.quit(s->ops.data)) return BANANA_RETRO_CTL_IO_ERROR;
+			s->power_epoch = get64(p);
+			return BANANA_RETRO_CTL_OK;
+		}
+		if (get64(p) != s->power_epoch || !s->ops.pause ||
+		    !s->ops.pause(s->ops.data, BANANA_RETRO_CTL_OWNER_SLEEP, get64(p), false))
+			return BANANA_RETRO_CTL_BAD_STATE;
+		return BANANA_RETRO_CTL_OK;
 	default:
 		return BANANA_RETRO_CTL_UNSUPPORTED;
 	}
@@ -416,7 +443,9 @@ static void handle_packet(struct control_server *s, struct control_client *c)
 	if (type == BANANA_RETRO_CTL_PAUSE || type == BANANA_RETRO_CTL_RESUME ||
 	    type == BANANA_RETRO_CTL_FLUSH_SRAM || type == BANANA_RETRO_CTL_SAVE_STATE ||
 	    type == BANANA_RETRO_CTL_LOAD_STATE || type == BANANA_RETRO_CTL_SET_OPTION ||
-	    type == BANANA_RETRO_CTL_RESET || type == BANANA_RETRO_CTL_QUIT) {
+	    type == BANANA_RETRO_CTL_RESET || type == BANANA_RETRO_CTL_QUIT ||
+	    type == BANANA_RETRO_CTL_PREPARE_SLEEP || type == BANANA_RETRO_CTL_SLEEP_ABORT ||
+	    type == BANANA_RETRO_CTL_WAKE || type == BANANA_RETRO_CTL_SHUTDOWN) {
 		s->last_mutation_id = id;
 		s->last_mutation_type = type;
 		s->last_mutation_result = result;

@@ -8,6 +8,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -131,6 +132,8 @@ static uint32_t pause_owners(const struct native_runtime *runtime)
     return (runtime->ui_paused ? 1u : 0u) | (runtime->sleep_paused ? 2u : 0u);
 }
 
+static bool power_checkpoint(struct native_runtime *runtime);
+
 static void control_status(void *data, struct control_status *status)
 {
     const struct native_runtime *runtime = data;
@@ -157,6 +160,7 @@ static bool control_pause(void *data, unsigned owner, uint64_t epoch, bool acqui
         if (acquire) {
             if (!epoch || (runtime->sleep_paused && epoch != runtime->sleep_epoch) ||
                 (!runtime->sleep_paused && epoch <= runtime->sleep_epoch)) return false;
+            if (!power_checkpoint(runtime)) return false;
             runtime->sleep_epoch = epoch;
             runtime->sleep_paused = true;
         } else {
@@ -257,6 +261,12 @@ static bool control_quit(void *data)
     return true;
 }
 
+static bool power_checkpoint(struct native_runtime *runtime)
+{
+    if (!runtime->saves || !mark_commit_intent()) return false;
+    return core_persistence_commit(runtime->saves, runtime->save_state_slot);
+}
+
 static bool parse_session_id(const char *text, unsigned char session_id[16])
 {
     if (!text || strlen(text) != 32) return false;
@@ -272,6 +282,30 @@ static bool parse_session_id(const char *text, unsigned char session_id[16])
         session_id[i] = (unsigned char)((hi << 4) | lo);
     }
     return true;
+}
+
+static bool inherit_sleep_peer_pid(void)
+{
+    const char *existing = getenv("BANANA_RETRO_CONTROL_SLEEP_PID");
+    if (existing) {
+        if (!*existing) return false;
+        char *end = NULL;
+        errno = 0;
+        unsigned long value = strtoul(existing, &end, 10);
+        return errno == 0 && end && *end == 0 && value > 0 && value <= INT_MAX;
+    }
+    FILE *file = fopen("/run/banana/bananad.pid", "r");
+    if (!file) return false;
+    char pid[32];
+    bool ok = fgets(pid, sizeof(pid), file) != NULL;
+    fclose(file);
+    if (!ok) return false;
+    pid[strcspn(pid, "\r\n")] = 0;
+    char *end = NULL;
+    errno = 0;
+    unsigned long value = strtoul(pid, &end, 10);
+    return errno == 0 && end && *end == 0 && value > 0 && value <= INT_MAX &&
+        setenv("BANANA_RETRO_CONTROL_SLEEP_PID", pid, 0) == 0;
 }
 
 static int wait_until(void *data, uint64_t deadline_ns)
@@ -514,6 +548,11 @@ int main(int argc, char **argv)
         }
     }
     if (ok && native && getenv("BANANA_RETRO_CONTROL_SOCKET")) {
+        if (!inherit_sleep_peer_pid()) {
+            startup_error_code = "control-init";
+            fputs("Native power peer unavailable\n", stderr);
+            ok = false;
+        }
         unsigned char session_id[16];
         struct control_ops control_ops = {
             .data = &runtime,
@@ -529,10 +568,10 @@ int main(int argc, char **argv)
             .quit = control_quit
         };
         const char *session_text = getenv("BANANA_RETRO_SESSION_ID");
-        if (parse_session_id(session_text, session_id))
+        if (ok && parse_session_id(session_text, session_id))
             runtime.control = control_open_from_env(&control_ops, session_id);
-        else errno = EINVAL;
-        if (!runtime.control) {
+        else if (ok) errno = EINVAL;
+        if (ok && !runtime.control) {
             startup_error_code = "control-init";
             fprintf(stderr, "Native control unavailable: %s\n", strerror(errno));
             ok = false;

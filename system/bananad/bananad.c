@@ -44,6 +44,9 @@
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/un.h>
+
+#include "../banana-retro/include/banana-retro-control.h"
 
 #define MAXDEV 32
 
@@ -102,6 +105,10 @@ static void sleep_quiet_end(void);	/* and back, on the way out of it */
 
 static volatile sig_atomic_t reload;
 static void on_hup(int sig) { (void)sig; reload = 1; }
+static uint64_t retro_request_id;
+static uint64_t retro_power_epoch;
+static int retro_suspend_prepared;
+static int retro_suspend_native;
 
 static double mono(void)
 {
@@ -363,6 +370,207 @@ static pid_t pid_of(const char *pidfile)
 		if (up > 0 && age < file - 3.0) return 0;	/* it began after the file named it: a reused pid */
 	}
 	return p;
+}
+
+enum retro_power_result { RETRO_POWER_NONE, RETRO_POWER_OK, RETRO_POWER_FAILED, RETRO_POWER_BAD_STATE };
+
+static void retro_put16(unsigned char *p, uint16_t v)
+{ p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); }
+static void retro_put64(unsigned char *p, uint64_t v)
+{ for (unsigned i = 0; i < 8; ++i) p[i] = (unsigned char)(v >> (i * 8)); }
+static uint16_t retro_get16(const unsigned char *p)
+{ return (uint16_t)p[0] | (uint16_t)((uint16_t)p[1] << 8); }
+static uint64_t retro_get64(const unsigned char *p)
+{
+	uint64_t v = 0;
+	for (unsigned i = 0; i < 8; ++i) v |= (uint64_t)p[i] << (i * 8);
+	return v;
+}
+
+static int retro_session(char session[33], char socket_path[sizeof(((struct sockaddr_un *)0)->sun_path)])
+{
+	char version[8], state[16], core[64], rom[PATH_MAX];
+	unsigned long long start;
+	long started;
+	int child;
+	FILE *f = fopen("/run/banana/native-session", "r");
+	if (!f) return 0;
+	int n = fscanf(f, "%7s %32s %d %llu %63s %ld %15s %4095s",
+		version, session, &child, &start, core, &started, state, rom);
+	fclose(f);
+	if (n != 8 || strcmp(version, "v1") != 0 || strlen(session) != 32 ||
+	    strcmp(state, "ready") != 0 || child <= 0 || start == 0 || started <= 0 ||
+	    pid_of("/run/banana/game.pid") <= 0 ||
+	    proc_start_ticks(child) != start || proc_start_ticks(child) == 0 ||
+	    getpgid(child) <= 0 ||
+	    getpgid(child) != getpgid(pid_of("/run/banana/game.pid"))) return 0;
+	char proc_path[64], proc_line[512];
+	snprintf(proc_path, sizeof proc_path, "/proc/%d/stat", child);
+	f = fopen(proc_path, "r");
+	if (!f) return 0;
+	int alive = fgets(proc_line, sizeof proc_line, f) != NULL;
+	fclose(f);
+	if (!alive) return 0;
+	char *state_at = strrchr(proc_line, ')');
+	if (!state_at || state_at[1] != ' ' || strchr("TtZXx", state_at[2])) return 0;
+	for (size_t i = 0; i < 32; ++i)
+		if (!((session[i] >= '0' && session[i] <= '9') ||
+		      (session[i] >= 'a' && session[i] <= 'f'))) return 0;
+	struct sockaddr_un address;
+	int len = snprintf(socket_path, sizeof(address.sun_path), "/run/banana/retro-%s.sock", session);
+	return len > 0 && (size_t)len < sizeof(address.sun_path);
+}
+
+static int retro_wait_fd(int fd, short events, double deadline)
+{
+	for (;;) {
+		double left = deadline - mono();
+		if (left <= 0) { errno = ETIMEDOUT; return 0; }
+		int ms = (int)(left * 1000.0);
+		if (ms < 1) ms = 1;
+		struct pollfd pfd = { fd, events, 0 };
+		int rc = poll(&pfd, 1, ms);
+		if (rc < 0 && errno == EINTR) continue;
+		if (rc <= 0) { if (rc == 0) errno = ETIMEDOUT; return 0; }
+		if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) { errno = EPIPE; return 0; }
+		return (pfd.revents & events) != 0;
+	}
+}
+
+static int retro_send_request(int fd, const unsigned char session[16], uint16_t type,
+			      uint64_t id, uint64_t epoch, double deadline)
+{
+	unsigned char packet[BANANA_RETRO_CONTROL_HEADER_SIZE + 8] = {0};
+	memcpy(packet, BANANA_RETRO_CONTROL_MAGIC, 4);
+	retro_put16(packet + BANANA_RETRO_CTL_VERSION, BANANA_RETRO_CONTROL_VERSION);
+	retro_put16(packet + BANANA_RETRO_CTL_TYPE, type);
+	for (unsigned i = 0; i < 8; ++i) packet[BANANA_RETRO_CTL_REQUEST_ID + i] = (unsigned char)(id >> (i * 8));
+	memcpy(packet + BANANA_RETRO_CTL_SESSION_ID, session, 16);
+	if (epoch) retro_put64(packet + BANANA_RETRO_CONTROL_HEADER_SIZE, epoch);
+	retro_put16(packet + BANANA_RETRO_CTL_LENGTH, epoch ? 8 : 0);
+	size_t size = BANANA_RETRO_CONTROL_HEADER_SIZE + (epoch ? 8 : 0);
+	ssize_t sent;
+	for (;;) {
+		if (!retro_wait_fd(fd, POLLOUT, deadline)) return 0;
+		sent = send(fd, packet, size, MSG_NOSIGNAL);
+		if (sent < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+		break;
+	}
+	if (sent != (ssize_t)size) return 0;
+	ssize_t got;
+	for (;;) {
+		if (!retro_wait_fd(fd, POLLIN, deadline)) return 0;
+		got = recv(fd, packet, sizeof(packet), 0);
+		if (got < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+		break;
+	}
+	if (got != (ssize_t)(BANANA_RETRO_CONTROL_HEADER_SIZE + 2) ||
+	    memcmp(packet, BANANA_RETRO_CONTROL_MAGIC, 4) != 0 ||
+	    retro_get16(packet + BANANA_RETRO_CTL_VERSION) != BANANA_RETRO_CONTROL_VERSION ||
+	    retro_get16(packet + BANANA_RETRO_CTL_TYPE) != (uint16_t)(type | 0x8000u) ||
+	    retro_get64(packet + BANANA_RETRO_CTL_REQUEST_ID) != id ||
+	    memcmp(packet + BANANA_RETRO_CTL_SESSION_ID, session, 16) != 0 ||
+	    retro_get16(packet + BANANA_RETRO_CTL_FLAGS) != 0 ||
+	    retro_get16(packet + BANANA_RETRO_CTL_LENGTH) != 2) return 0;
+	return (int)retro_get16(packet + BANANA_RETRO_CONTROL_HEADER_SIZE);
+}
+
+static int retro_control_request(uint16_t type, uint64_t epoch, unsigned timeout_ms)
+{
+	char hex[33], path[sizeof(((struct sockaddr_un *)0)->sun_path)];
+	if (!retro_session(hex, path)) return RETRO_POWER_NONE;
+	unsigned char session[16];
+	for (unsigned i = 0; i < 16; ++i) {
+		unsigned a = (unsigned)(hex[2 * i] <= '9' ? hex[2 * i] - '0' : hex[2 * i] - 'a' + 10);
+		unsigned b = (unsigned)(hex[2 * i + 1] <= '9' ? hex[2 * i + 1] - '0' : hex[2 * i + 1] - 'a' + 10);
+		session[i] = (unsigned char)((a << 4) | b);
+	}
+	struct sockaddr_un address = { .sun_family = AF_UNIX };
+	memcpy(address.sun_path, path, strlen(path) + 1);
+	double deadline = mono() + (double)timeout_ms / 1000.0;
+	int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+	if (fd < 0) return RETRO_POWER_FAILED;
+	if (connect(fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+		if (errno != EINPROGRESS && errno != EAGAIN && errno != EWOULDBLOCK) {
+			close(fd); return RETRO_POWER_FAILED;
+		}
+		if (!retro_wait_fd(fd, POLLOUT, deadline)) { close(fd); return RETRO_POWER_FAILED; }
+		int error = 0;
+		socklen_t error_size = sizeof(error);
+		if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &error_size) < 0 || error != 0) {
+			if (error) errno = error;
+			close(fd); return RETRO_POWER_FAILED;
+		}
+	}
+	if (retro_request_id > UINT64_MAX - 2) { close(fd); return RETRO_POWER_FAILED; }
+	uint64_t hello_id = ++retro_request_id;
+	int ok = retro_send_request(fd, session, BANANA_RETRO_CTL_HELLO, hello_id, 0, deadline);
+	if (ok == BANANA_RETRO_CTL_OK)
+		ok = retro_send_request(fd, session, type, ++retro_request_id, epoch, deadline);
+	close(fd);
+	if (ok == BANANA_RETRO_CTL_OK) return RETRO_POWER_OK;
+	if (ok == BANANA_RETRO_CTL_BAD_STATE) return RETRO_POWER_BAD_STATE;
+	return RETRO_POWER_FAILED;
+}
+
+struct retro_power_ops {
+	void *data;
+	int (*request)(void *data, uint16_t type, uint64_t epoch, unsigned timeout_ms);
+	int (*signal_group)(void *data, pid_t pg, int signal_number);
+};
+
+static int retro_system_request(void *data, uint16_t type, uint64_t epoch, unsigned timeout_ms)
+{ (void)data; return retro_control_request(type, epoch, timeout_ms); }
+static int retro_system_signal(void *data, pid_t pg, int signal_number)
+{ (void)data; return pg > 0 ? kill(-pg, signal_number) : -1; }
+static const struct retro_power_ops retro_system_ops = {
+	.request = retro_system_request, .signal_group = retro_system_signal
+};
+
+static int retro_prepare_suspend(const struct retro_power_ops *ops, pid_t game, pid_t pg,
+				 uint64_t epoch, int allow_stop)
+{
+	int result = game && allow_stop ?
+		ops->request(ops->data, BANANA_RETRO_CTL_PREPARE_SLEEP, epoch, 1500) : RETRO_POWER_NONE;
+	if (result == RETRO_POWER_OK) return RETRO_POWER_OK;
+	if (result == RETRO_POWER_FAILED)
+		(void)ops->request(ops->data, BANANA_RETRO_CTL_SLEEP_ABORT, epoch, 500);
+	if (allow_stop && pg > 0 && ops->signal_group(ops->data, pg, SIGSTOP) < 0) {
+		int e = errno;
+		sleep_log("game: pre-suspend SIGSTOP failed (pid group %d, errno %d: %s)",
+		    (int)pg, e, strerror(e));
+	}
+	return result;
+}
+
+static int retro_finish_suspend(const struct retro_power_ops *ops, int prepared, uint16_t type,
+				uint64_t epoch, pid_t pg)
+{
+	int result = prepared ? ops->request(ops->data, type, epoch, 1500) : RETRO_POWER_NONE;
+	if ((!prepared || result != RETRO_POWER_OK) && pg > 0 &&
+	    ops->signal_group(ops->data, pg, SIGCONT) < 0) {
+		int e = errno;
+		sleep_log("game: suspend recovery SIGCONT failed (pid group %d, errno %d: %s)",
+		    (int)pg, e, strerror(e));
+	}
+	return result;
+}
+
+static int retro_prepare_shutdown(const struct retro_power_ops *ops, pid_t game,
+				 uint64_t epoch)
+{
+	return game ? ops->request(ops->data, BANANA_RETRO_CTL_SHUTDOWN, epoch, 3000) : RETRO_POWER_NONE;
+}
+
+static uint64_t next_retro_power_epoch(void)
+{
+	if (retro_power_epoch == 0) {
+		struct timespec ts;
+		if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+			retro_power_epoch = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+	}
+	if (retro_power_epoch < UINT64_MAX) ++retro_power_epoch;
+	return retro_power_epoch;
 }
 
 /* banana-ui's pid, by its name in /proc. Cached: the scan ran on every wake and on every volume/brightness key's
@@ -1060,12 +1268,12 @@ static void suspend_now(const char *why)
 	}
 	pid_t game = pid_of("/run/banana/game.pid");
 	pid_t pg = game ? getpgid(game) : 0;
-	sleep_save_state(game);
-	if (pg > 0 && !skip("stop") && kill(-pg, SIGSTOP) < 0) {
-		int e = errno;
-		sleep_log("game: pre-suspend SIGSTOP failed (pid %d, pgid %d, errno %d: %s)",
-		    (int)game, (int)pg, e, strerror(e));
-	}	/* an emulator's dynarec mustn't run on while the clocks drop */
+	uint64_t epoch = next_retro_power_epoch();
+	int native = retro_prepare_suspend(&retro_system_ops, game, pg, epoch, !skip("stop"));
+	retro_suspend_prepared = native == RETRO_POWER_OK;
+	retro_suspend_native = native != RETRO_POWER_NONE;
+	if (!retro_suspend_prepared) sleep_save_state(game);
+	/* Native clients stop at a safe point; other games retain the process-group stop. */
 	/* the menu's ambient loop, if any: stop it and have it release the DSP before the ADSP sleeps (SIGHUP). Wait for
 	 * the close it publishes to /run/banana/sound-state instead of guessing at a delay -- a PCM close still in flight
 	 * when the DSP goes under is the one thing the overnight hang of 03:40 was seen doing (logs/sleep-state says
@@ -1165,11 +1373,17 @@ static void suspend_now(const char *why)
 			 * next press brings it back (see panel_blanked in handle()) -- and let the game run again, because
 			 * a frozen emulator behind a dark screen is worse. Nothing here is a wake, so the wake bookkeeping
 			 * below is skipped. */
-			if (pg > 0 && kill(-pg, SIGCONT) < 0) {
-				int e = errno;
-				sleep_log("game: suspend-failure SIGCONT failed (pid %d, pgid %d, errno %d: %s)",
-				    (int)game, (int)pg, e, strerror(e));
+			int released = retro_finish_suspend(&retro_system_ops, retro_suspend_prepared,
+				BANANA_RETRO_CTL_SLEEP_ABORT, epoch, pg);
+			if (retro_suspend_prepared && released != RETRO_POWER_OK)
+				sleep_log("native suspend abort acknowledgement failed; process-group recovery was attempted");
+			if (retro_suspend_native && !retro_suspend_prepared) {
+				int reconciled = retro_control_request(BANANA_RETRO_CTL_SLEEP_ABORT, epoch, 1500);
+				if (reconciled == RETRO_POWER_FAILED && pg > 0 &&
+				    pid_of("/run/banana/game.pid") == game) (void)kill(-pg, SIGTERM);
 			}
+			retro_suspend_prepared = 0;
+			retro_suspend_native = 0;
 			sleep_quiet_end();
 			backlights_power(0);
 			/* the pre hooks have run (10-wifi took Wi-Fi down): run the post ones too, or a failed suspend would
@@ -1190,7 +1404,7 @@ static void suspend_now(const char *why)
 			int pct = battery_discharging_pct();
 			if (pct >= 0 && pct <= cfg.sleep_poweroff_pct) {
 				sleep_log("battery check: %d%% after %.1f h asleep: shutting down", pct, asleep / 3600);
-				if (pg > 0 && kill(-pg, SIGCONT) < 0) {
+				if (pg > 0 && !retro_suspend_prepared && kill(-pg, SIGCONT) < 0) {
 					int e = errno;
 					sleep_log("game: battery-shutdown SIGCONT failed (pid %d, pgid %d, errno %d: %s)",
 					    (int)game, (int)pg, e, strerror(e));
@@ -1251,7 +1465,7 @@ static void suspend_now(const char *why)
 	double t_wake = mono();
 	backlights_power(1);
 	sleep_quiet_end();
-	if (pg > 0 && kill(-pg, SIGCONT) < 0) {
+	if (pg > 0 && !retro_suspend_prepared && kill(-pg, SIGCONT) < 0) {
 		int e = errno;
 		sleep_log("game: wake (%s) SIGCONT failed (pid %d, pgid %d, errno %d: %s)",
 		    woke, (int)game, (int)pg, e, strerror(e));
@@ -1261,7 +1475,24 @@ static void suspend_now(const char *why)
 	double t_back = mono();
 	undim();
 	hooks("post", 1);
-	if (pg > 0 && !cfg.wake_audio_fast) {
+	if (retro_suspend_prepared) {
+		if (!sound_wait(3.0)) sleep_log("native audio service is not ready after wake; runtime reopen remains pending");
+		int woke_ok = retro_control_request(BANANA_RETRO_CTL_WAKE, epoch, 1500);
+		if (woke_ok != RETRO_POWER_OK) {
+			sleep_log("native game wake acknowledgement failed; terminating the tracked session");
+			if (pg > 0 && pid_of("/run/banana/game.pid") == game) (void)kill(-pg, SIGTERM);
+		}
+		retro_suspend_prepared = 0;
+		retro_suspend_native = 0;
+	} else if (retro_suspend_native) {
+		if (!sound_wait(3.0)) sleep_log("native audio service is not ready after wake; runtime reopen remains pending");
+		int reconciled = retro_control_request(BANANA_RETRO_CTL_SLEEP_ABORT, epoch, 1500);
+		if (reconciled == RETRO_POWER_FAILED) {
+			sleep_log("native sleep reconciliation failed after wake; terminating the tracked session");
+			if (pg > 0 && pid_of("/run/banana/game.pid") == game) (void)kill(-pg, SIGTERM);
+		}
+		retro_suspend_native = 0;
+	} else if (pg > 0 && !retro_suspend_native && !cfg.wake_audio_fast) {
 		/* the game's stream died with the server when it was stopped for the sleep: the driver has to be restarted
 		 * (AUDIO_REINIT, the same command the jack uses), or the game runs on without sound for good */
 		if (sound_wait(3.0)) {
@@ -1326,8 +1557,16 @@ static void shutdown_now(const char *why)
 	} else unlink("/data/banana/resume");
 	if (game) {
 		pid_t pg = getpgid(game);
-		kill(pg > 0 ? -pg : game, SIGTERM);	/* let the emulator write its saves */
-		for (int i = 0; i < 50 && kill(game, 0) == 0; i++) sleep_us(100000);
+		uint64_t epoch = next_retro_power_epoch();
+		int native = retro_prepare_shutdown(&retro_system_ops, game, epoch);
+		if (native == RETRO_POWER_OK)
+			for (int i = 0; i < 30 && pid_of("/run/banana/game.pid") == game; i++) sleep_us(100000);
+		if (pid_of("/run/banana/game.pid") == game) {
+			/* Control loss or an expired checkpoint budget uses the existing process-group TERM path. */
+			if (pg > 0) (void)kill(-pg, SIGTERM);
+			else (void)kill(game, SIGTERM);
+			for (int i = 0; i < 50 && pid_of("/run/banana/game.pid") == game; i++) sleep_us(100000);
+		}
 	}
 	sync();
 	sleep_quiet_begin();	/* dark and muted now: a slow unmount must not look like a handheld that is still on */
@@ -2058,6 +2297,71 @@ static int cheevos_line(const char *line)
 
 /* --selftest hud: runs no daemon and touches nothing; only the formatter and the achievement parser, so the bridge's
  * text can be checked on a workstation */
+struct retro_power_mock {
+	int result[16];
+	unsigned calls[16];
+	unsigned stops, continues;
+};
+
+static int retro_mock_request(void *data, uint16_t type, uint64_t epoch, unsigned timeout_ms)
+{
+	struct retro_power_mock *mock = data;
+	if (!epoch || !timeout_ms || type >= 16) return RETRO_POWER_FAILED;
+	++mock->calls[type];
+	return mock->result[type];
+}
+
+static int retro_mock_signal(void *data, pid_t pg, int signal_number)
+{
+	struct retro_power_mock *mock = data;
+	if (pg <= 0) return -1;
+	if (signal_number == SIGSTOP) ++mock->stops;
+	else if (signal_number == SIGCONT) ++mock->continues;
+	return 0;
+}
+
+static int selftest_retro_lifecycle(void)
+{
+	struct retro_power_mock mock = {0};
+	struct retro_power_ops ops = { &mock, retro_mock_request, retro_mock_signal };
+	int failed = 0;
+#define CHECK(name, expr) do { int ok = (expr); printf("retro lifecycle %s: %s\n", (name), ok ? "ok" : "FAIL"); if (!ok) failed = 1; } while (0)
+	/* An overlay hold is independent: successful prepare does not signal the group. */
+	mock.result[BANANA_RETRO_CTL_PREPARE_SLEEP] = RETRO_POWER_OK;
+	mock.result[BANANA_RETRO_CTL_SLEEP_ABORT] = RETRO_POWER_OK;
+	int prepared = retro_prepare_suspend(&ops, 100, 100, 41, 1);
+	CHECK("overlay prepare", prepared == RETRO_POWER_OK && mock.stops == 0);
+	int aborted = retro_finish_suspend(&ops, 1, BANANA_RETRO_CTL_SLEEP_ABORT, 41, 100);
+	CHECK("suspend abort", aborted == RETRO_POWER_OK && mock.continues == 0);
+
+	/* A lost/late prepare acknowledgement is reconciled with ABORT, then uses the bounded generic STOP path. */
+	mock.result[BANANA_RETRO_CTL_PREPARE_SLEEP] = RETRO_POWER_FAILED;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 42, 1);
+	CHECK("late prepare acknowledgement", prepared == RETRO_POWER_FAILED &&
+	      mock.calls[BANANA_RETRO_CTL_SLEEP_ABORT] == 2 && mock.stops == 1);
+
+	/* Renderer or service loss, and an already stopped/stale child, cannot be treated as prepared. */
+	mock.result[BANANA_RETRO_CTL_SLEEP_ABORT] = RETRO_POWER_FAILED;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 43, 1);
+	CHECK("service loss fallback", prepared == RETRO_POWER_FAILED && mock.stops == 2);
+	prepared = retro_prepare_suspend(&ops, 0, 0, 44, 1);
+	CHECK("stale child", prepared == RETRO_POWER_NONE && mock.stops == 2);
+
+	/* Failed checkpoint uses the same fallback; failed wake leaves recovery to session termination. */
+	prepared = retro_prepare_suspend(&ops, 100, 100, 45, 1);
+	CHECK("failed checkpoint", prepared == RETRO_POWER_FAILED && mock.stops == 3);
+	mock.result[BANANA_RETRO_CTL_WAKE] = RETRO_POWER_FAILED;
+	int woke = retro_finish_suspend(&ops, 1, BANANA_RETRO_CTL_WAKE, 46, 100);
+	CHECK("failed wake recovery", woke == RETRO_POWER_FAILED && mock.continues == 1);
+
+	mock.result[BANANA_RETRO_CTL_SHUTDOWN] = RETRO_POWER_OK;
+	CHECK("direct shutdown checkpoint", retro_prepare_shutdown(&ops, 100, 47) == RETRO_POWER_OK);
+	mock.result[BANANA_RETRO_CTL_SHUTDOWN] = RETRO_POWER_FAILED;
+	CHECK("shutdown fallback", retro_prepare_shutdown(&ops, 100, 48) == RETRO_POWER_FAILED);
+#undef CHECK
+	return failed ? 1 : 0;
+}
+
 static int selftest_hud(void)
 {
 	char b[160];
@@ -2893,6 +3197,8 @@ int main(int argc, char **argv)
 	(void)argc; (void)argv;
 	if (argc > 2 && !strcmp(argv[1], "--selftest") && !strcmp(argv[2], "cheevos"))
 		return selftest_cheevos(argc > 3 ? argv[3] : "/tmp");
+	if (argc > 2 && !strcmp(argv[1], "--selftest") && !strcmp(argv[2], "retro-lifecycle"))
+		return selftest_retro_lifecycle();
 	if (argc > 1 && !strcmp(argv[1], "--selftest")) return selftest_hud();
 	openlog("bananad", LOG_PID, LOG_DAEMON);
 	load_conf("/etc/banana/bananad.conf", 0);
@@ -2906,6 +3212,15 @@ int main(int argc, char **argv)
 	sa.sa_handler = on_hup;		/* no SA_RESTART: poll() returns, and the loop reloads */
 	sigaction(SIGHUP, &sa, NULL);
 	mkdir("/run/banana", 0755);
+	{
+		FILE *pidfile = fopen("/run/banana/bananad.pid", "w");
+		if (pidfile) {
+			(void)fchmod(fileno(pidfile), 0600);
+			if (fprintf(pidfile, "%ld\n", (long)getpid()) < 0 || fflush(pidfile) != 0)
+				say("could not publish the power-control peer PID");
+			fclose(pidfile);
+		}
+	}
 	/* debugfs carries the wakeup_sources table wake_reason() names the waker from (the RPC's pm_wakeup_irq is
 	 * absent); mounting it again is a harmless EBUSY if something else already did */
 	mkdir("/sys/kernel/debug", 0755);
