@@ -3,6 +3,7 @@
 #include "core.h"
 #include "input_evdev.h"
 #include "audio_alsa.h"
+#include "saves.h"
 
 #include <dlfcn.h>
 #include <errno.h>
@@ -34,6 +35,11 @@ struct core_api {
     void (*retro_run)(void);
     void (*retro_unload_game)(void);
     void (*retro_deinit)(void);
+    void *(*retro_get_memory_data)(unsigned);
+    size_t (*retro_get_memory_size)(unsigned);
+    size_t (*retro_serialize_size)(void);
+    bool (*retro_serialize)(void *, size_t);
+    bool (*retro_unserialize)(const void *, size_t);
 };
 
 struct frame_observation {
@@ -82,6 +88,14 @@ static void *required_export(const char *name)
         return NULL;
     }
     return symbol;
+}
+
+static void optional_export(const char *name, void *target, size_t target_size)
+{
+    dlerror();
+    void *symbol = dlsym(session.library, name);
+    if (dlerror() == NULL && symbol != NULL && target_size == sizeof(symbol))
+        memcpy(target, &symbol, target_size);
 }
 
 static bool resolve_exports(void)
@@ -415,6 +429,16 @@ bool core_load(const char *core_path, const char *content_path, const struct cor
     if (!resolve_exports())
         return false;
 
+    optional_export("retro_get_memory_data", &api->retro_get_memory_data,
+                    sizeof(api->retro_get_memory_data));
+    optional_export("retro_get_memory_size", &api->retro_get_memory_size,
+                    sizeof(api->retro_get_memory_size));
+    optional_export("retro_serialize_size", &api->retro_serialize_size,
+                    sizeof(api->retro_serialize_size));
+    optional_export("retro_serialize", &api->retro_serialize, sizeof(api->retro_serialize));
+    optional_export("retro_unserialize", &api->retro_unserialize,
+                    sizeof(api->retro_unserialize));
+
     unsigned version = api->retro_api_version();
     if (version != RETRO_API_VERSION) {
         fprintf(stderr, "Unsupported Libretro API version %u (expected %u)\n",
@@ -495,5 +519,76 @@ bool core_release(void)
     }
     free(session.content);
     memset(&session, 0, sizeof(session));
+    return ok;
+}
+
+static bool persistence_serialize(void *context, void *buffer, size_t size)
+{
+    struct core_api *api = context;
+    return api->retro_serialize(buffer, size);
+}
+
+static bool persistence_unserialize(void *context, const void *buffer, size_t size)
+{
+    struct core_api *api = context;
+    return api->retro_unserialize(buffer, size);
+}
+
+bool core_persistence_load(struct saves *saves, int state_slot)
+{
+    if (!saves || !session.loaded || !session.api.retro_get_memory_data ||
+        !session.api.retro_get_memory_size)
+        return false;
+    size_t sram_size = session.api.retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    size_t rtc_size = session.api.retro_get_memory_size(RETRO_MEMORY_RTC);
+    void *sram = session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    void *rtc = session.api.retro_get_memory_data(RETRO_MEMORY_RTC);
+    bool loaded = saves_load_memory(saves, sram, sram_size, rtc, rtc_size);
+    if (state_slot >= 0) {
+        if (state_slot >= SAVES_STATE_SLOTS || !session.api.retro_serialize_size ||
+            !session.api.retro_unserialize)
+            return false;
+        size_t size = session.api.retro_serialize_size();
+        if (size == 0 || size > 256u * 1024u * 1024u)
+            return false;
+        void *state = malloc(size);
+        if (!state)
+            return false;
+        bool ok = saves_load_state(saves, (unsigned)state_slot, state, size) &&
+                  saves_state_restore(persistence_unserialize, &session.api, state, size);
+        free(state);
+        if (!ok)
+            return false;
+    }
+    return loaded;
+}
+
+bool core_persistence_commit(struct saves *saves, int state_slot)
+{
+    if (!saves || !session.loaded || !session.api.retro_get_memory_data ||
+        !session.api.retro_get_memory_size)
+        return false;
+    size_t sram_size = session.api.retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    size_t rtc_size = session.api.retro_get_memory_size(RETRO_MEMORY_RTC);
+    void *sram = session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    void *rtc = session.api.retro_get_memory_data(RETRO_MEMORY_RTC);
+    void *state = NULL;
+    size_t state_size = 0;
+    if (state_slot >= 0) {
+        if (state_slot >= SAVES_STATE_SLOTS || !session.api.retro_serialize_size ||
+            !session.api.retro_serialize)
+            return false;
+        state_size = session.api.retro_serialize_size();
+        if (state_size == 0 || state_size > 256u * 1024u * 1024u)
+            return false;
+        state = malloc(state_size);
+        if (!state || !saves_state_capture(persistence_serialize, &session.api, state, state_size)) {
+            free(state);
+            return false;
+        }
+    }
+    bool ok = saves_commit(saves, sram, sram_size, rtc, rtc_size, state_slot,
+                           state, state_size);
+    free(state);
     return ok;
 }

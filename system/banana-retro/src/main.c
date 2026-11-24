@@ -2,6 +2,7 @@
 #include "video_wayland.h"
 #include "input_evdev.h"
 #include "audio_alsa.h"
+#include "saves.h"
 
 #include <errno.h>
 #include <poll.h>
@@ -44,6 +45,7 @@ static void input_snapshot(void *data, uint16_t masks[RETRO_INPUT_MAX_DEVICES])
 struct native_runtime {
     struct input_evdev *input;
     struct audio_alsa *audio;
+    struct saves *saves;
     int signal_fd;
     bool stopped;
 };
@@ -125,8 +127,10 @@ int main(int argc, char **argv)
 {
     unsigned long frames = MAX_FRAMES;
     char *end = NULL;
-    bool forever = argc == 4 && strcmp(argv[3], "--wayland") == 0;
-    bool native = forever || (argc == 6 && strcmp(argv[5], "--wayland") == 0);
+    bool forever = argc >= 4 && strcmp(argv[3], "--wayland") == 0;
+    bool native = forever;
+    int load_state_slot = -1, save_state_slot = -1;
+    bool skip_save_commit = false;
     bool stopped = false, ran = false, ok;
     struct wayland_video *video = NULL;
     struct input_evdev *input = NULL;
@@ -135,10 +139,9 @@ int main(int argc, char **argv)
     struct core_video sink = { .submit = wayland_video_submit };
     int signal_fd = -1;
 
-    if ((!forever && ((!native && argc != 5) || strcmp(argv[3], "--frames") != 0)) ||
-        (native && !forever && argc != 6)) {
-        fprintf(stderr, "Usage: %s CORE CONTENT --frames COUNT [--wayland]\n", argv[0]);
-        fprintf(stderr, "       %s CORE CONTENT --wayland\n", argv[0]);
+    if (!forever && (argc < 5 || strcmp(argv[3], "--frames") != 0)) {
+        fprintf(stderr, "Usage: %s CORE CONTENT --frames COUNT [--wayland] [--load-state N] [--save-state N]\n", argv[0]);
+        fprintf(stderr, "       %s CORE CONTENT --wayland [--load-state N] [--save-state N]\n", argv[0]);
         return 2;
     }
     if (!forever) {
@@ -149,6 +152,33 @@ int main(int argc, char **argv)
             fprintf(stderr, "Frame count must be between 1 and %u\n", (unsigned)MAX_FRAMES);
             return 2;
         }
+    }
+    for (int i = forever ? 4 : 5; i < argc; ++i) {
+        if (strcmp(argv[i], "--wayland") == 0) {
+            native = true;
+        } else if ((strcmp(argv[i], "--state-slot") == 0 ||
+                    strcmp(argv[i], "--load-state") == 0 ||
+                    strcmp(argv[i], "--save-state") == 0) && i + 1 < argc) {
+            bool both = strcmp(argv[i], "--state-slot") == 0;
+            bool load = both || strcmp(argv[i], "--load-state") == 0;
+            bool save = both || strcmp(argv[i], "--save-state") == 0;
+            char *slot_end = NULL;
+            errno = 0;
+            unsigned long slot = strtoul(argv[++i], &slot_end, 10);
+            if (errno || slot_end == argv[i] || *slot_end != '\0' || slot >= SAVES_STATE_SLOTS) {
+                fprintf(stderr, "State slot must be between 0 and %u\n", SAVES_STATE_SLOTS - 1);
+                return 2;
+            }
+            if (load) load_state_slot = (int)slot;
+            if (save) save_state_slot = (int)slot;
+        } else {
+            fprintf(stderr, "Unknown runtime option: %s\n", argv[i]);
+            return 2;
+        }
+    }
+    if ((load_state_slot >= 0 || save_state_slot >= 0) && !native) {
+        fputs("State slots require --wayland\n", stderr);
+        return 2;
     }
     if (native) {
         video = wayland_video_open();
@@ -173,6 +203,22 @@ int main(int argc, char **argv)
         runtime.signal_fd = signal_fd;
     }
     ok = core_load(argv[1], argv[2], native ? &sink : NULL);
+    if (ok && native) {
+        const char *root = getenv("BANANA_RETRO_NATIVE_DIR");
+        if (!root || !*root) root = "/data/banana/retro/saves";
+        runtime.saves = saves_open(root, argv[1], argv[2]);
+        if (!runtime.saves) {
+            fputs("Native save storage unavailable\n", stderr);
+            skip_save_commit = load_state_slot >= 0;
+            ok = false;
+        } else if (!core_persistence_load(runtime.saves, load_state_slot)) {
+            fputs("No compatible native save or requested state slot\n", stderr);
+            if (load_state_slot >= 0) {
+                skip_save_commit = true;
+                ok = false;
+            }
+        }
+    }
     if (ok && video) ok = wayland_video_configure(video, core_geometry());
     if (ok && video) {
         double sample_rate = core_sample_rate();
@@ -227,7 +273,13 @@ int main(int argc, char **argv)
         fputs("No native Wayland frame reached the display\n", stderr);
         ok = false;
     }
+    if (runtime.saves && !skip_save_commit &&
+        !core_persistence_commit(runtime.saves, save_state_slot)) {
+        fputs("Native save generation commit failed\n", stderr);
+        ok = false;
+    }
     if (!core_release()) ok = false;
+    saves_close(runtime.saves);
     core_set_audio_output(NULL);
     if (runtime.audio) {
         struct audio_alsa_status status;

@@ -25,12 +25,12 @@ CHECK_VIDEO_OBJS = $(OUT)/video_wayland.o $(WL_CODE:.c=.o)
 
 strict_cflags = -std=c11 -Wall -Wextra -Werror -pedantic
 
-.PHONY: all check check-binaries check-video check-input check-audio
+.PHONY: all check check-binaries check-video check-input check-audio check-saves
 all: $(OUT)/banana-retro
 
-$(OUT)/banana-retro: src/main.c src/core.c src/core.h src/audio_alsa.c src/audio_alsa.h $(INPUT) $(VIDEO)
+$(OUT)/banana-retro: src/main.c src/core.c src/core.h src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
 	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(CFLAGS) $(strict_cflags) $(LDFLAGS) -o $@ \
-		src/main.c src/core.c src/input_evdev.c src/audio_alsa.c src/video_wayland.c $(WL_CODE) \
+		src/main.c src/core.c src/input_evdev.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
 		-Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(ALSA_LIBS) -pthread $(LDLIBS)
 
 $(OUT)/xdg-shell-client-protocol.h: $(XDG_XML)
@@ -85,6 +85,15 @@ $(OUT)/fixture-check-audio: tests/check-audio.c src/audio_alsa.c src/audio_alsa.
 check-audio: $(OUT)/fixture-check-audio
 	$(OUT)/fixture-check-audio
 
+$(OUT)/saves-test.o: src/saves.c src/saves.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(strict_cflags) -DSAVES_TESTING -c src/saves.c -o $@
+
+$(OUT)/fixture-check-saves: tests/check-saves.c src/saves.h $(OUT)/saves-test.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(strict_cflags) -DSAVES_TESTING $(LDFLAGS) -o $@ tests/check-saves.c $(OUT)/saves-test.o $(LDLIBS)
+
+check-saves: $(OUT)/fixture-check-saves
+	$(OUT)/fixture-check-saves
+
 check:
 	@set -eu; \
 	work=$$(mktemp -d "$${TMPDIR:-/tmp}/banana-retro-check.XXXXXX"); \
@@ -94,4 +103,5 @@ check:
 	sh tests/check-core.sh "$$work"; \
 	$(MAKE) -s OUT="$$work" check-video; \
 	$(MAKE) -s OUT="$$work" check-input; \
-	$(MAKE) -s OUT="$$work" check-audio
+	$(MAKE) -s OUT="$$work" check-audio; \
+	$(MAKE) -s OUT="$$work" check-saves
