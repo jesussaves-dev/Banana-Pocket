@@ -11,6 +11,7 @@
 #include <string.h>
 #include <sys/signalfd.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static void put(const char *path,const void *data,size_t size)
@@ -34,7 +35,54 @@ static bool serialize_fail(void *ctx,void *buffer,size_t size){(void)ctx;(void)b
 static bool unserialize_ok(void *ctx,const void *buffer,size_t size){memcpy(ctx,buffer,size);return true;}
 static bool unserialize_fail(void *ctx,const void *buffer,size_t size){(void)ctx;(void)buffer;(void)size;return false;}
 
-int main(void)
+static char mutate_path[4096],replacement_path[4096];
+static bool mutate_as_symlink;
+static uint8_t replacement_byte;
+static void mutate_after_validation(void)
+{
+	saves_test_set_hook(NULL);
+	if(mutate_as_symlink){assert(unlink(mutate_path)==0);assert(symlink(replacement_path,mutate_path)==0);}
+	else put(mutate_path,&replacement_byte,sizeof(replacement_byte));
+}
+
+static int runtime_run(const char *runtime,const char *core,const char *rom,
+		       const char *root,bool signal_exit,int state_operation)
+{
+	int pipes[2];assert(pipe(pipes)==0);pid_t pid=fork();assert(pid>=0);
+	if(pid==0){
+		close(pipes[0]);assert(dup2(pipes[1],STDERR_FILENO)>=0);close(pipes[1]);
+		int nullfd=open("/dev/null",O_WRONLY);assert(nullfd>=0);assert(dup2(nullfd,STDOUT_FILENO)>=0);close(nullfd);
+		assert(setenv("BANANA_RETRO_NATIVE_DIR",root,1)==0);
+		assert(setenv("BANANA_RETRO_TEST_PERSISTENCE","1",1)==0);
+		if(signal_exit)assert(setenv("BANANA_RETRO_TEST_WAIT_FOR_SIGNAL","1",1)==0);
+		else unsetenv("BANANA_RETRO_TEST_WAIT_FOR_SIGNAL");
+		char *args[10];int n=0;args[n++]=(char*)runtime;args[n++]=(char*)core;args[n++]=(char*)rom;args[n++]="--frames";args[n++]=signal_exit?"10000":"2";
+		if(state_operation){args[n++]=state_operation==1?"--load-state":"--save-state";args[n++]="0";}args[n]=NULL;
+		execv(runtime,args);_exit(127);
+	}
+	close(pipes[1]);bool saw_run=false;char line[256];size_t used=0;char c;
+	while(read(pipes[0],&c,1)==1){if(c=='\n'){line[used]=0;if(strstr(line,"fixture run 1")){saw_run=true;break;}used=0;}else if(used+1<sizeof(line))line[used++]=c;}
+	if(signal_exit){assert(saw_run);assert(kill(pid,SIGTERM)==0);}
+	while(read(pipes[0],&c,1)==1){}
+	close(pipes[0]);int status;assert(waitpid(pid,&status,0)==pid);assert(WIFEXITED(status));	return WEXITSTATUS(status);
+}
+
+static bool runtime_has_save(const char *root,const char *core,const char *rom)
+{
+	struct saves *s=saves_open(root,core,rom);if(!s)return false;bool ok=saves_load_memory(s,NULL,0,NULL,0);saves_close(s);return ok;
+}
+
+static void preserve_seed(const char *root,const char *core,const char *rom,uint8_t value)
+{
+	struct saves *s=saves_open(root,core,rom);assert(s);assert(saves_commit(s,&value,1,NULL,0,-1,NULL,0));saves_close(s);
+}
+
+static void assert_saved_byte(const char *root,const char *core,const char *rom,uint8_t value)
+{
+	struct saves *s=saves_open(root,core,rom);assert(s);uint8_t got=0;assert(saves_load_memory(s,&got,1,NULL,0));assert(got==value);saves_close(s);
+}
+
+int main(int argc,char **argv)
 {
 	char tmp[]="/tmp/banana-retro-saves.XXXXXX";char *base=mkdtemp(tmp);assert(base);
 	char root[4096],core[4096],content[4096],content2[4096];assert(snprintf(root,sizeof(root),"%s/native",base)>0);assert(snprintf(core,sizeof(core),"%s/core.so",base)>0);assert(snprintf(content,sizeof(content),"%s/a/rom.bin",base)>0);assert(snprintf(content2,sizeof(content2),"%s/b/rom.bin",base)>0);
@@ -60,7 +108,26 @@ int main(void)
 	struct saves *optioned=saves_open_with_options(root,core,content,"region=ntsc;rtc=on");assert(optioned);assert(!saves_load_memory(optioned,NULL,0,NULL,0));assert(saves_commit(optioned,sram,sizeof(sram),rtc,sizeof(rtc),-1,NULL,0));struct saves *option_mismatch=saves_open_with_options(root,core,content,"region=pal;rtc=on");assert(option_mismatch);assert(!saves_load_memory(option_mismatch,NULL,0,NULL,0));saves_close(option_mismatch);saves_close(optioned);
 	put(core,"core-build-two",14);struct saves *incompatible=saves_open(root,core,content);assert(incompatible);assert(!saves_load_memory(incompatible,NULL,0,NULL,0));saves_close(incompatible);put(core,"core-build-one",14);
 	uint8_t serialized[4]={0},decoded[4]={0},source[]={6,2,6,4};assert(saves_state_capture(serialize_ok,source,serialized,sizeof(serialized)));assert(!memcmp(source,serialized,sizeof(source)));assert(!saves_state_capture(serialize_fail,source,serialized,sizeof(serialized)));assert(saves_state_restore(unserialize_ok,decoded,serialized,sizeof(serialized)));assert(!memcmp(source,decoded,sizeof(source)));assert(!saves_state_restore(unserialize_fail,decoded,serialized,sizeof(serialized)));
-	/* The same save hook is used after normal completion and a signalfd SIGTERM. */
-	assert(saves_commit(s,sram,sizeof(sram),rtc,sizeof(rtc),-1,NULL,0));sigset_t mask;sigemptyset(&mask);sigaddset(&mask,SIGTERM);assert(sigprocmask(SIG_BLOCK,&mask,NULL)==0);int sigfd=signalfd(-1,&mask,SFD_CLOEXEC);assert(sigfd>=0);assert(raise(SIGTERM)==0);struct signalfd_siginfo info;assert(read(sigfd,&info,sizeof(info))==(ssize_t)sizeof(info));assert(info.ssi_signo==SIGTERM);assert(saves_commit(s,sram2,sizeof(sram2),rtc,sizeof(rtc),-1,NULL,0));assert(close(sigfd)==0);
+	/* A rejected payload leaves caller memory untouched when no fallback exists. */
+	char invalid_root[4096],invalid_ident[4096],invalid_gen[4096],invalid_payload[4096];assert(snprintf(invalid_root,sizeof(invalid_root),"%s/invalid",base)>0);struct saves *invalid=saves_open(invalid_root,core,content);assert(invalid);uint8_t valid_byte=0x41,untouched=0xa5,state_data[]={8,6,7},state_out[]={0xaa,0xaa,0xaa};assert(saves_commit(invalid,&valid_byte,1,NULL,0,0,state_data,sizeof(state_data)));only_entry(invalid_root,invalid_ident,sizeof(invalid_ident));uint64_t ig=current(invalid_ident);assert(snprintf(invalid_gen,sizeof(invalid_gen),"%s/g%016llx",invalid_ident,(unsigned long long)ig)>0);assert(snprintf(invalid_payload,sizeof(invalid_payload),"%s/memory",invalid_gen)>0);put(invalid_payload,"x",1);assert(!saves_load_memory(invalid,&untouched,1,NULL,0));assert(untouched==0xa5);put(invalid_payload,&valid_byte,1);assert(snprintf(invalid_payload,sizeof(invalid_payload),"%s/state-00",invalid_gen)>0);put(invalid_payload,"bad",3);assert(!saves_load_state(invalid,0,state_out,sizeof(state_out)));assert(state_out[0]==0xaa&&state_out[1]==0xaa&&state_out[2]==0xaa);saves_close(invalid);
+	/* Revalidate the exact restore buffer after a deterministic replacement race. */
+	char race_root[4096],race_ident[4096],race_gen[4096];assert(snprintf(race_root,sizeof(race_root),"%s/race",base)>0);struct saves *race=saves_open(race_root,core,content);assert(race);uint8_t old_byte=0x31,new_byte=0x72,got_byte=0;assert(saves_commit(race,&old_byte,1,NULL,0,-1,NULL,0));assert(saves_commit(race,&new_byte,1,NULL,0,-1,NULL,0));only_entry(race_root,race_ident,sizeof(race_ident));uint64_t rg=current(race_ident);assert(snprintf(race_gen,sizeof(race_gen),"%s/g%016llx",race_ident,(unsigned long long)rg)>0);assert(snprintf(mutate_path,sizeof(mutate_path),"%s/memory",race_gen)>0);assert(snprintf(replacement_path,sizeof(replacement_path),"%s/replacement",base)>0);replacement_byte=0x55;put(replacement_path,&replacement_byte,1);mutate_as_symlink=false;saves_test_set_hook(mutate_after_validation);assert(saves_load_memory(race,&got_byte,1,NULL,0));assert(got_byte==old_byte);
+	assert(saves_commit(race,&new_byte,1,NULL,0,-1,NULL,0));rg=current(race_ident);assert(snprintf(race_gen,sizeof(race_gen),"%s/g%016llx",race_ident,(unsigned long long)rg)>0);assert(snprintf(mutate_path,sizeof(mutate_path),"%s/memory",race_gen)>0);mutate_as_symlink=true;saves_test_set_hook(mutate_after_validation);got_byte=0;assert(saves_load_memory(race,&got_byte,1,NULL,0));assert(got_byte==old_byte);assert(unlink(mutate_path)==0);saves_close(race);
+	/* Every failed pre-publication operation recovers the old complete generation. */
+	struct {enum saves_test_event event;unsigned occurrence;bool current_may_advance;} failures[]={
+		{SAVES_TEST_FILE_FSYNC,1,false},{SAVES_TEST_FILE_FSYNC,2,false},
+		{SAVES_TEST_FILE_FSYNC,3,false},{SAVES_TEST_TEMP_DIR_FSYNC,1,false},
+		{SAVES_TEST_GENERATION_RENAME,1,false},{SAVES_TEST_PARENT_DIR_FSYNC,1,false},
+		{SAVES_TEST_CURRENT_RENAME,1,false},{SAVES_TEST_PARENT_DIR_FSYNC,2,true}};
+	for(size_t i=0;i<sizeof(failures)/sizeof(failures[0]);i++){char fr[4096];assert(snprintf(fr,sizeof(fr),"%s/fault-%zu",base,i)>0);preserve_seed(fr,core,content,0x11);struct saves *fs=saves_open(fr,core,content);assert(fs);saves_test_fail_event(failures[i].event,failures[i].occurrence);assert(!saves_commit(fs,"\x22",1,NULL,0,-1,NULL,0));saves_close(fs);assert_saved_byte(fr,core,content,failures[i].current_may_advance?0x22:0x11);}
+	/* Partial data and manifest writes also leave the last committed generation intact. */
+	for(size_t budget_i=0;budget_i<2;budget_i++){char fr[4096];assert(snprintf(fr,sizeof(fr),"%s/short-%zu",base,budget_i)>0);preserve_seed(fr,core,content,0x11);struct saves *fs=saves_open(fr,core,content);assert(fs);saves_test_fail_write_after(budget_i?6:0);assert(!saves_commit(fs,"\x22",1,NULL,0,-1,NULL,0));saves_close(fs);assert_saved_byte(fr,core,content,0x11);}
+	/* Kill a child at each publication boundary, then recover by reopening storage. */
+	enum saves_test_event crashes[]={SAVES_TEST_AFTER_MANIFEST_WRITE,SAVES_TEST_AFTER_GENERATION_RENAME,SAVES_TEST_AFTER_CURRENT_RENAME};
+	for(size_t i=0;i<sizeof(crashes)/sizeof(crashes[0]);i++){char cr[4096];assert(snprintf(cr,sizeof(cr),"%s/crash-%zu",base,i)>0);preserve_seed(cr,core,content,0x11);pid_t child=fork();assert(child>=0);if(child==0){struct saves *cs=saves_open(cr,core,content);if(!cs)_exit(1);saves_test_crash_event(crashes[i]);(void)saves_commit(cs,"\x22",1,NULL,0,-1,NULL,0);_exit(2);}int status;assert(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==86);assert_saved_byte(cr,core,content,i==2?0x22:0x11);}
+	/* Exercise the real executable's normal-exit and SIGTERM persistence path. */
+	assert(argc==7);const char *runtime=argv[1],*fixture=argv[2];char rom[4096],rr[4096];assert(snprintf(rom,sizeof(rom),"%s/runtime.rom",base)>0);put(rom,"BRC1\n",5);assert(snprintf(rr,sizeof(rr),"%s/runtime-normal",base)>0);assert(runtime_run(runtime,fixture,rom,rr,false,0)==0);assert(runtime_has_save(rr,fixture,rom));assert(snprintf(rr,sizeof(rr),"%s/runtime-term",base)>0);assert(runtime_run(runtime,fixture,rom,rr,true,0)==0);assert(runtime_has_save(rr,fixture,rom));
+	for(int i=3;i<7;i++){assert(snprintf(rr,sizeof(rr),"%s/runtime-optional-%d",base,i)>0);assert(runtime_run(runtime,argv[i],rom,rr,false,0)==0);assert(runtime_has_save(rr,argv[i],rom));}
+	assert(snprintf(rr,sizeof(rr),"%s/runtime-state-load",base)>0);assert(runtime_run(runtime,argv[3],rom,rr,false,1)!=0);assert(!runtime_has_save(rr,argv[3],rom));assert(snprintf(rr,sizeof(rr),"%s/runtime-state-save",base)>0);assert(runtime_run(runtime,argv[3],rom,rr,false,2)!=0);assert(!runtime_has_save(rr,argv[3],rom));
 	saves_close(collision);saves_close(s);tree_remove(base);puts("banana-retro native save checks passed");return 0;
 }

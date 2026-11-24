@@ -138,6 +138,12 @@ int main(int argc, char **argv)
     struct native_runtime runtime = {0};
     struct core_video sink = { .submit = wayland_video_submit };
     int signal_fd = -1;
+#ifdef SAVES_TESTING
+    const char *test_persist_env = getenv("BANANA_RETRO_TEST_PERSISTENCE");
+    bool test_persistence = test_persist_env && strcmp(test_persist_env, "1") == 0;
+#else
+    bool test_persistence = false;
+#endif
 
     if (!forever && (argc < 5 || strcmp(argv[3], "--frames") != 0)) {
         fprintf(stderr, "Usage: %s CORE CONTENT --frames COUNT [--wayland] [--load-state N] [--save-state N]\n", argv[0]);
@@ -176,7 +182,7 @@ int main(int argc, char **argv)
             return 2;
         }
     }
-    if ((load_state_slot >= 0 || save_state_slot >= 0) && !native) {
+    if ((load_state_slot >= 0 || save_state_slot >= 0) && !native && !test_persistence) {
         fputs("State slots require --wayland\n", stderr);
         return 2;
     }
@@ -189,6 +195,8 @@ int main(int argc, char **argv)
         if (!input) { wayland_video_close(video); return EXIT_FAILURE; }
         runtime.input = input;
         core_set_input_source(input, input_snapshot);
+    }
+    if (native || test_persistence) {
         sigset_t signals;
         sigemptyset(&signals);
         sigaddset(&signals, SIGINT);
@@ -203,7 +211,7 @@ int main(int argc, char **argv)
         runtime.signal_fd = signal_fd;
     }
     ok = core_load(argv[1], argv[2], native ? &sink : NULL);
-    if (ok && native) {
+    if (ok && (native || test_persistence)) {
         const char *root = getenv("BANANA_RETRO_NATIVE_DIR");
         if (!root || !*root) root = "/data/banana/retro/saves";
         runtime.saves = saves_open(root, argv[1], argv[2]);
@@ -266,6 +274,21 @@ int main(int argc, char **argv)
             ok = core_step(frame);
             if (ok) ran = true;
             ++frame;
+#ifdef SAVES_TESTING
+            if (ok && test_persistence) {
+                fflush(stdout);
+                const char *wait_env = getenv("BANANA_RETRO_TEST_WAIT_FOR_SIGNAL");
+                int timeout = wait_env ? 5000 : 0;
+                struct pollfd pfd = { .fd = signal_fd, .events = POLLIN };
+                int rc;
+                do { rc = poll(&pfd, 1, timeout); } while (rc < 0 && errno == EINTR);
+                if (rc > 0 && (pfd.revents & POLLIN)) {
+                    struct signalfd_siginfo info;
+                    if (read(signal_fd, &info, sizeof(info)) != (ssize_t)sizeof(info)) ok = false;
+                    else { stopped = true; runtime.stopped = true; }
+                } else if (rc < 0 || (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) ok = false;
+            }
+#endif
         }
     }
     if (ok && video && !stopped) ok = wayland_video_wait(video);

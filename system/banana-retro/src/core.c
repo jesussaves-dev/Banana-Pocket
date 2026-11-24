@@ -131,8 +131,7 @@ static bool resolve_exports(void)
 #undef RESOLVE
 
     static const char *const unused_exports[] = {
-        "retro_reset", "retro_serialize_size", "retro_serialize",
-        "retro_unserialize", "retro_cheat_reset", "retro_cheat_set",
+        "retro_reset", "retro_cheat_reset", "retro_cheat_set",
         "retro_load_game_special", "retro_get_region",
         "retro_get_memory_data", "retro_get_memory_size"
     };
@@ -543,24 +542,32 @@ bool core_persistence_load(struct saves *saves, int state_slot)
     size_t rtc_size = session.api.retro_get_memory_size(RETRO_MEMORY_RTC);
     void *sram = session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
     void *rtc = session.api.retro_get_memory_data(RETRO_MEMORY_RTC);
-    bool loaded = saves_load_memory(saves, sram, sram_size, rtc, rtc_size);
+    void *state = NULL;
+    size_t size = 0;
     if (state_slot >= 0) {
         if (state_slot >= SAVES_STATE_SLOTS || !session.api.retro_serialize_size ||
             !session.api.retro_unserialize)
             return false;
-        size_t size = session.api.retro_serialize_size();
+        size = session.api.retro_serialize_size();
         if (size == 0 || size > 256u * 1024u * 1024u)
             return false;
-        void *state = malloc(size);
+        state = malloc(size);
         if (!state)
             return false;
-        bool ok = saves_load_state(saves, (unsigned)state_slot, state, size) &&
-                  saves_state_restore(persistence_unserialize, &session.api, state, size);
-        free(state);
-        if (!ok)
+        if (!saves_load_state(saves, (unsigned)state_slot, state, size)) {
+            free(state);
             return false;
+        }
     }
-    return loaded;
+    bool loaded = saves_load_memory(saves, sram, sram_size, rtc, rtc_size);
+    if (!loaded) {
+        free(state);
+        return false;
+    }
+    bool restored = state_slot < 0 ||
+                    saves_state_restore(persistence_unserialize, &session.api, state, size);
+    free(state);
+    return restored;
 }
 
 bool core_persistence_commit(struct saves *saves, int state_slot)

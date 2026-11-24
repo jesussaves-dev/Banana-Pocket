@@ -51,6 +51,27 @@ $(OUT)/fixture-wrong-api.so: tests/fixture_core.c include/libretro.h
 $(OUT)/fixture-missing-export.so: tests/fixture_core.c include/libretro.h
 	$(CC) $(CPPFLAGS) -Iinclude $(CFLAGS) $(strict_cflags) -DFIXTURE_MISSING_EXPORT -shared -fPIC $(LDFLAGS) -o $@ $< $(LDLIBS)
 
+$(OUT)/fixture-runtime: src/main.c src/core.c src/core.h src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
+	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(CFLAGS) $(strict_cflags) -DSAVES_TESTING $(LDFLAGS) -o $@ \
+		src/main.c src/core.c src/input_evdev.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
+		-Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(ALSA_LIBS) -pthread $(LDLIBS)
+
+$(OUT)/fixture-no-serialize.so: tests/fixture_core.c include/libretro.h
+	@printf '%s\n' '{ global: *; local: retro_serialize_size; retro_serialize; retro_unserialize; };' > $(OUT)/hide-serialize.map
+	$(CC) $(CPPFLAGS) -Iinclude $(CFLAGS) $(strict_cflags) -shared -fPIC $(LDFLAGS) -Wl,--version-script=$(OUT)/hide-serialize.map -o $@ $< $(LDLIBS)
+
+$(OUT)/fixture-no-serialize-size.so: tests/fixture_core.c include/libretro.h
+	@printf '%s\n' '{ global: *; local: retro_serialize_size; };' > $(OUT)/hide-serialize-size.map
+	$(CC) $(CPPFLAGS) -Iinclude $(CFLAGS) $(strict_cflags) -shared -fPIC $(LDFLAGS) -Wl,--version-script=$(OUT)/hide-serialize-size.map -o $@ $< $(LDLIBS)
+
+$(OUT)/fixture-no-serialize-call.so: tests/fixture_core.c include/libretro.h
+	@printf '%s\n' '{ global: *; local: retro_serialize; };' > $(OUT)/hide-serialize-call.map
+	$(CC) $(CPPFLAGS) -Iinclude $(CFLAGS) $(strict_cflags) -shared -fPIC $(LDFLAGS) -Wl,--version-script=$(OUT)/hide-serialize-call.map -o $@ $< $(LDLIBS)
+
+$(OUT)/fixture-no-unserialize.so: tests/fixture_core.c include/libretro.h
+	@printf '%s\n' '{ global: *; local: retro_unserialize; };' > $(OUT)/hide-unserialize.map
+	$(CC) $(CPPFLAGS) -Iinclude $(CFLAGS) $(strict_cflags) -shared -fPIC $(LDFLAGS) -Wl,--version-script=$(OUT)/hide-unserialize.map -o $@ $< $(LDLIBS)
+
 check-binaries: $(OUT)/banana-retro $(OUT)/fixture.so $(OUT)/fixture-wrong-api.so $(OUT)/fixture-missing-export.so
 
 $(CHECK_SERVER_HEADERS): $(XDG_XML) $(NATIVE_XML)
@@ -91,8 +112,8 @@ $(OUT)/saves-test.o: src/saves.c src/saves.h
 $(OUT)/fixture-check-saves: tests/check-saves.c src/saves.h $(OUT)/saves-test.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(strict_cflags) -DSAVES_TESTING $(LDFLAGS) -o $@ tests/check-saves.c $(OUT)/saves-test.o $(LDLIBS)
 
-check-saves: $(OUT)/fixture-check-saves
-	$(OUT)/fixture-check-saves
+check-saves: $(OUT)/fixture-check-saves $(OUT)/fixture-runtime $(OUT)/fixture.so $(OUT)/fixture-no-serialize.so $(OUT)/fixture-no-serialize-size.so $(OUT)/fixture-no-serialize-call.so $(OUT)/fixture-no-unserialize.so
+	$(OUT)/fixture-check-saves $(OUT)/fixture-runtime $(OUT)/fixture.so $(OUT)/fixture-no-serialize.so $(OUT)/fixture-no-serialize-size.so $(OUT)/fixture-no-serialize-call.so $(OUT)/fixture-no-unserialize.so
 
 check:
 	@set -eu; \

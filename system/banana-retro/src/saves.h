@@ -26,6 +26,20 @@ bool saves_state_restore(saves_unserialize_fn unserialize, void *context,
 			 const void *buffer, size_t size);
 #ifdef SAVES_TESTING
 void saves_test_fail_write_after(size_t bytes);
+enum saves_test_event {
+	SAVES_TEST_FILE_FSYNC,
+	SAVES_TEST_TEMP_DIR_FSYNC,
+	SAVES_TEST_PARENT_DIR_FSYNC,
+	SAVES_TEST_GENERATION_RENAME,
+	SAVES_TEST_CURRENT_RENAME,
+	SAVES_TEST_AFTER_MANIFEST_WRITE,
+	SAVES_TEST_AFTER_GENERATION_RENAME,
+	SAVES_TEST_AFTER_CURRENT_RENAME,
+	SAVES_TEST_AFTER_VALIDATION
+};
+void saves_test_fail_event(enum saves_test_event event, unsigned occurrence);
+void saves_test_crash_event(enum saves_test_event event);
+void saves_test_set_hook(void (*hook)(void));
 #endif
 
 /* These wrappers run only between core frames, while the core is quiescent. */
