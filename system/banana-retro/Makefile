@@ -13,6 +13,7 @@ NATIVE_XML = protocol/banana-retro-v1.xml
 WL_HEADERS = $(OUT)/xdg-shell-client-protocol.h $(OUT)/banana-retro-client-protocol.h
 WL_CODE = $(OUT)/xdg-shell-protocol.c $(OUT)/banana-retro-protocol.c
 VIDEO = src/video_wayland.c src/video_wayland.h include/libretro.h $(WL_HEADERS) $(WL_CODE)
+INPUT = src/input_evdev.c src/input_evdev.h
 VIDEO_CFLAGS = -Iinclude -I$(OUT) $(shell $(PKG_CONFIG) --cflags wayland-client)
 VIDEO_LIBS = $(shell $(PKG_CONFIG) --libs wayland-client)
 CHECK_SERVER_PKGS = wayland-server libdrm xkbcommon
@@ -22,12 +23,12 @@ CHECK_VIDEO_OBJS = $(OUT)/video_wayland.o $(WL_CODE:.c=.o)
 
 strict_cflags = -std=c99 -Wall -Wextra -Werror -pedantic
 
-.PHONY: all check check-binaries check-video
+.PHONY: all check check-binaries check-video check-input
 all: $(OUT)/banana-retro
 
-$(OUT)/banana-retro: src/main.c src/core.c src/core.h $(VIDEO)
+$(OUT)/banana-retro: src/main.c src/core.c src/core.h $(INPUT) $(VIDEO)
 	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(CFLAGS) $(strict_cflags) $(LDFLAGS) -o $@ \
-		src/main.c src/core.c src/video_wayland.c $(WL_CODE) -ldl $(VIDEO_LIBS) $(LDLIBS)
+		src/main.c src/core.c src/input_evdev.c src/video_wayland.c $(WL_CODE) -Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(LDLIBS)
 
 $(OUT)/xdg-shell-client-protocol.h: $(XDG_XML)
 	$(WAYLAND_SCANNER) client-header $< $@
@@ -67,6 +68,13 @@ $(OUT)/fixture-check-video: tests/check-video.c $(CHECK_VIDEO_OBJS) $(CHECK_SERV
 check-video: $(OUT)/fixture-check-video
 	$(OUT)/fixture-check-video
 
+$(OUT)/fixture-check-input: tests/check-input.c src/input_evdev.c src/input_evdev.h include/libretro.h
+	$(CC) $(CPPFLAGS) -Iinclude $(CFLAGS) $(strict_cflags) $(LDFLAGS) \
+		-Wl,--wrap=open -Wl,--wrap=ioctl -o $@ tests/check-input.c src/input_evdev.c $(LDLIBS)
+
+check-input: $(OUT)/fixture-check-input
+	$(OUT)/fixture-check-input
+
 check:
 	@set -eu; \
 	work=$$(mktemp -d "$${TMPDIR:-/tmp}/banana-retro-check.XXXXXX"); \
@@ -74,4 +82,5 @@ check:
 	trap 'exit 1' HUP INT TERM; \
 	$(MAKE) -s OUT="$$work" check-binaries; \
 	sh tests/check-core.sh "$$work"; \
-	$(MAKE) -s OUT="$$work" check-video
+	$(MAKE) -s OUT="$$work" check-video; \
+	$(MAKE) -s OUT="$$work" check-input

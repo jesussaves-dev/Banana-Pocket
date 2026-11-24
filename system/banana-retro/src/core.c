@@ -1,6 +1,7 @@
 #define _XOPEN_SOURCE 700
 
 #include "core.h"
+#include "input_evdev.h"
 
 #include <dlfcn.h>
 #include <errno.h>
@@ -63,6 +64,9 @@ static struct {
     bool running;
     enum retro_pixel_format pixel_format;
     struct frame_observation frame;
+    void *input_data;
+    void (*input_snapshot)(void *data, uint16_t masks[RETRO_INPUT_MAX_DEVICES]);
+    uint16_t input_masks[RETRO_INPUT_MAX_DEVICES];
 } session;
 
 static void *required_export(const char *name)
@@ -140,6 +144,8 @@ static bool set_geometry(const struct retro_game_geometry *geometry)
 
 static bool environment(unsigned command, void *data)
 {
+    if (command == RETRO_ENVIRONMENT_GET_INPUT_BITMASKS)
+        return true;
     if (data == NULL)
         return false;
 
@@ -165,6 +171,9 @@ static bool environment(unsigned command, void *data)
     }
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
         break;
+    case RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES:
+        *(uint64_t *)data = UINT64_C(1) << RETRO_DEVICE_JOYPAD;
+        return true;
     default:
         return false;
     }
@@ -248,16 +257,33 @@ static void audio_sample(int16_t left, int16_t right)
 static void input_poll(void)
 {
     ++session.frame.input_polls;
+    if (session.input_snapshot)
+        session.input_snapshot(session.input_data, session.input_masks);
+    else
+        memset(session.input_masks, 0, sizeof(session.input_masks));
 }
 
 static int16_t input_state(unsigned port, unsigned device, unsigned index, unsigned id)
 {
-    (void)port;
-    (void)device;
-    (void)index;
-    (void)id;
     ++session.frame.input_queries;
-    return 0;
+    if (port >= RETRO_INPUT_MAX_DEVICES || device != RETRO_DEVICE_JOYPAD || index != 0)
+        return 0;
+    if (id == RETRO_DEVICE_ID_JOYPAD_MASK)
+        return (int16_t)session.input_masks[port];
+    return id < RETRO_PAD_BUTTONS ?
+        (int16_t)((session.input_masks[port] >> id) & 1u) : 0;
+}
+
+void core_set_input_source(void *data, void (*snapshot)(void *data,
+                                                         uint16_t masks[RETRO_INPUT_MAX_DEVICES]))
+{
+    session.input_data = data;
+    session.input_snapshot = snapshot;
+}
+
+double core_refresh_rate(void)
+{
+    return session.av.timing.fps;
 }
 
 static ssize_t read_retry(int fd, void *data, size_t bytes)
