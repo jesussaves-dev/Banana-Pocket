@@ -6,9 +6,13 @@ extern "C" {
 }
 
 #include <cassert>
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 
 namespace banana
@@ -239,7 +243,45 @@ namespace
 			assert(socketpair(AF_UNIX, SOCK_STREAM, 0, probe) == 0);
 			probePeer = probe[1];
 			im.client = wl_client_create(im.wl, probe[0]);
+			errno = 0;
 			im.child = wl_client_create(im.wl, sockets[0]);
+			int createError = errno;
+			if (!im.child)
+			{
+				errno = 0;
+				int fdFlags = fcntl(sockets[0], F_GETFD);
+				int fdError = errno;
+				errno = 0;
+				int fileFlags = fcntl(sockets[0], F_GETFL);
+				int fileError = errno;
+				int socketError = -1, socketType = -1;
+				socklen_t optionLength = sizeof(socketError), typeLength = sizeof(socketType);
+				errno = 0;
+				int socketErrorResult = getsockopt(sockets[0], SOL_SOCKET, SO_ERROR, &socketError, &optionLength);
+				int socketErrorErrno = errno;
+				errno = 0;
+				int socketTypeResult = getsockopt(sockets[0], SOL_SOCKET, SO_TYPE, &socketType, &typeLength);
+				int socketTypeErrno = errno;
+				socklen_t peerLength = sizeof(struct sockaddr_un);
+				struct sockaddr_un peer;
+				errno = 0;
+				int peerResult = getpeername(sockets[0], (struct sockaddr*)&peer, &peerLength);
+				int peerError = errno;
+				int childStatus = 0;
+				errno = 0;
+				pid_t childWait = waitpid(pid, &childStatus, WNOHANG);
+				int waitError = errno;
+				fprintf(stderr,
+				        "Wayland fixture child create failed: errno=%d (%s), fd=%d fdFlags=%d fdErr=%d "
+				        "fileFlags=%d fileErr=%d soError=%d soErrorResult=%d soErrorErr=%d "
+				        "type=%d typeResult=%d typeErr=%d peerResult=%d peerErr=%d childPid=%ld "
+				        "waitPid=%ld waitErr=%d childStatus=%d "
+				        "order=socketpair,fork,parent-close-child-end,probe-client,child-client\n",
+				        createError, strerror(createError), sockets[0], fdFlags, fdError, fileFlags, fileError,
+				        socketError, socketErrorResult, socketErrorErrno, socketType, socketTypeResult,
+				        socketTypeErrno, peerResult, peerError, (long)pid, (long)childWait, waitError,
+				        childStatus);
+			}
 			assert(im.child);
 			im.childGone.notify = onChildGone;
 			wl_client_add_destroy_listener(im.child, &im.childGone);

@@ -199,12 +199,6 @@ static void resumeCancel(const std::string& data)	// cancelled, missing or exhau
 }
 
 
-static std::string replaceAll(std::string s, const std::string& from, const std::string& to)
-{
-	for (size_t at = 0; (at = s.find(from, at)) != std::string::npos; at += to.size()) s.replace(at, from.size(), to);
-	return s;
-}
-
 // ---- the Source with a few host settings on top -------------------------------------------------------------------
 struct Host : Library
 {

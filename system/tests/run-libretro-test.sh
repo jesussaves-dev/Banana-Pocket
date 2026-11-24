@@ -10,6 +10,10 @@ trap 'rm -rf "$W"' EXIT HUP INT TERM
 pass=0 fail=0
 ok() { pass=$((pass + 1)); echo "  ok: $*"; }
 bad() { fail=$((fail + 1)); echo "  FAIL: $*"; }
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -I"$ROOT/ui/src" \
+    "$ROOT/system/tests/check-run-command.cpp" -o "$W/check-run-command" &&
+    "$W/check-run-command" && ok "custom systems command substitutes quoted ROM and system exactly" ||
+    bad "custom systems command substitution regression"
 mkdir -p "$W/libexec" "$W/bin" "$W/libretro" "$W/run"
 for c in gpsp mgba gambatte fceumm pcsx_rearmed; do : > "$W/libretro/${c}_libretro.so"; done
 ROM="$W/game with spaces.gba"

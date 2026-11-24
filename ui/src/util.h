@@ -1,6 +1,7 @@
 #pragma once
 // Small string helpers shared by banana-ui and BananaTube.
 #include <fstream>
+#include <cstdlib>
 #include <string>
 
 namespace banana
@@ -26,5 +27,22 @@ namespace banana
 		std::string r = "'";
 		for (char c : s) { if (c == '\'') r += "'\\''"; else r += c; }
 		return r + "'";
+	}
+
+	inline std::string replaceAll(std::string s, const std::string& from, const std::string& to)
+	{
+		if (from.empty()) return s;
+		for (size_t at = 0; (at = s.find(from, at)) != std::string::npos; at += to.size()) s.replace(at, from.size(), to);
+		return s;
+	}
+
+	inline std::string systemRunCommand(const std::string& run, const std::string& rom, const std::string& system)
+	{
+		return replaceAll(replaceAll(run, "%ROM%", shellQuote(rom)), "%SYSTEM%", shellQuote(system));
+	}
+
+	inline bool setSystemRunEnvironment(const std::string& system)
+	{
+		return setenv("BANANA_SYSTEM", system.c_str(), 1) == 0;
 	}
 }

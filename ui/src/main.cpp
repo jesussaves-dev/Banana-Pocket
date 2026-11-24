@@ -1114,7 +1114,7 @@ int main(int argc, char** argv)
 			gameSessionId[i * 2 + 1] = hex[sessionBytes[i] & 15];
 		}
 		gameLaunchEpoch = (uint64_t)std::time(nullptr);
-		std::string cmd = replaceAll(replaceAll(sd.run, "%ROM%", shellQuote(rom)), "%SYSTEM%", shellQuote(sd.id));
+		std::string cmd = systemRunCommand(sd.run, rom, sd.id);
 		// every launcher runs as a client of this process (the EGL presenter letterboxes and rotates any window size)
 		logf("starting %s (resident): %s", sd.id.c_str(), cmd.c_str());
 		{
@@ -1166,7 +1166,7 @@ int main(int argc, char** argv)
 			sigemptyset(&none);
 			sigprocmask(SIG_SETMASK, &none, nullptr);
 			setenv("BANANA_ROM", rom.c_str(), 1);
-			setenv("BANANA_SYSTEM", sd.id.c_str(), 1);
+			setSystemRunEnvironment(sd.id);
 			setenv("BANANA_RETRO_SESSION_ID", gameSessionId.c_str(), 1);
 			std::string controlSocket = "/run/banana/retro-" + gameSessionId + ".sock";
 			setenv("BANANA_RETRO_CONTROL_SOCKET", controlSocket.c_str(), 1);
