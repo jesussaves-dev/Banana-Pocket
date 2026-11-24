@@ -1,0 +1,45 @@
+#!/bin/sh
+# Stop the tracked native child without signaling a reused PID. Optional paths and
+# wait counts are test seams; production uses the checked-in runtime paths/bounds.
+SESSION=${1:-/run/banana/native-session}
+PROC=${2:-/proc}
+TERM_TICKS=${3:-30}
+KILL_TICKS=${4:-10}
+
+proc_start() {
+	[ -r "$PROC/$1/stat" ] || return 1
+	line=$(cat "$PROC/$1/stat" 2>/dev/null) || return 1
+	rest=${line##*) }
+	set -- $rest
+	[ "$#" -ge 20 ] || return 1
+	shift 19
+	printf '%s' "$1"
+}
+
+[ -r "$SESSION" ] || exit 0
+IFS=' ' read -r V SID PID START CORE STARTED STATE ROM < "$SESSION" || exit 0
+case $PID:$START in *[!0-9:]*|:|*:) exit 0 ;; esac
+[ "$V" = v1 ] && [ "$STATE" = ready ] && [ "$PID" -gt 0 ] && [ "$START" -gt 0 ] || exit 0
+current=$(proc_start "$PID") || exit 0
+[ "$current" = "$START" ] || exit 0
+
+kill -TERM "$PID" 2>/dev/null || exit 0
+i=0
+while [ "$i" -lt "$TERM_TICKS" ]; do
+	i=$((i + 1))
+	current=$(proc_start "$PID") || exit 0
+	[ "$current" = "$START" ] || exit 0
+	kill -0 "$PID" 2>/dev/null || exit 0
+	sleep 0.1
+done
+current=$(proc_start "$PID") || exit 0
+[ "$current" = "$START" ] || exit 0
+kill -KILL "$PID" 2>/dev/null || exit 0
+i=0
+while [ "$i" -lt "$KILL_TICKS" ]; do
+	i=$((i + 1))
+	current=$(proc_start "$PID") || exit 0
+	[ "$current" = "$START" ] || exit 0
+	kill -0 "$PID" 2>/dev/null || exit 0
+	sleep 0.1
+done

@@ -387,6 +387,14 @@ static uint64_t retro_get64(const unsigned char *p)
 	return v;
 }
 
+static int retro_child_identity_valid(pid_t child, unsigned long long recorded_start,
+				     unsigned long long current_start, pid_t child_group,
+				     pid_t game_group, char proc_state)
+{
+	return child > 0 && recorded_start != 0 && current_start == recorded_start &&
+		child_group > 0 && child_group == game_group && !strchr("TtZXx", proc_state);
+}
+
 static int retro_session(char session[33], char socket_path[sizeof(((struct sockaddr_un *)0)->sun_path)])
 {
 	char version[8], state[16], core[64], rom[PATH_MAX];
@@ -398,12 +406,10 @@ static int retro_session(char session[33], char socket_path[sizeof(((struct sock
 	int n = fscanf(f, "%7s %32s %d %llu %63s %ld %15s %4095s",
 		version, session, &child, &start, core, &started, state, rom);
 	fclose(f);
+	pid_t game = pid_of("/run/banana/game.pid");
 	if (n != 8 || strcmp(version, "v1") != 0 || strlen(session) != 32 ||
-	    strcmp(state, "ready") != 0 || child <= 0 || start == 0 || started <= 0 ||
-	    pid_of("/run/banana/game.pid") <= 0 ||
-	    proc_start_ticks(child) != start || proc_start_ticks(child) == 0 ||
-	    getpgid(child) <= 0 ||
-	    getpgid(child) != getpgid(pid_of("/run/banana/game.pid"))) return 0;
+	    strcmp(state, "ready") != 0 || child <= 0 || start == 0 || started <= 0 || game <= 0)
+		return 0;
 	char proc_path[64], proc_line[512];
 	snprintf(proc_path, sizeof proc_path, "/proc/%d/stat", child);
 	f = fopen(proc_path, "r");
@@ -412,7 +418,9 @@ static int retro_session(char session[33], char socket_path[sizeof(((struct sock
 	fclose(f);
 	if (!alive) return 0;
 	char *state_at = strrchr(proc_line, ')');
-	if (!state_at || state_at[1] != ' ' || strchr("TtZXx", state_at[2])) return 0;
+	if (!state_at || state_at[1] != ' ' ||
+	    !retro_child_identity_valid(child, start, proc_start_ticks(child), getpgid(child),
+					getpgid(game), state_at[2])) return 0;
 	for (size_t i = 0; i < 32; ++i)
 		if (!((session[i] >= '0' && session[i] <= '9') ||
 		      (session[i] >= 'a' && session[i] <= 'f'))) return 0;
@@ -517,14 +525,34 @@ struct retro_power_ops {
 	void *data;
 	int (*request)(void *data, uint16_t type, uint64_t epoch, unsigned timeout_ms);
 	int (*signal_group)(void *data, pid_t pg, int signal_number);
+	int (*child_alive)(void *data, pid_t game);
+	void (*wait_ms)(void *data, unsigned milliseconds);
+	void (*resume_marker)(void *data, const char *rom, int remember);
+	void (*shutdown_finalize)(void *data);
 };
 
 static int retro_system_request(void *data, uint16_t type, uint64_t epoch, unsigned timeout_ms)
 { (void)data; return retro_control_request(type, epoch, timeout_ms); }
 static int retro_system_signal(void *data, pid_t pg, int signal_number)
 { (void)data; return pg > 0 ? kill(-pg, signal_number) : -1; }
+static int retro_system_child_alive(void *data, pid_t game)
+{ (void)data; return pid_of("/run/banana/game.pid") == game; }
+static void retro_system_wait_ms(void *data, unsigned milliseconds)
+{ (void)data; sleep_us((long)milliseconds * 1000L); }
+static void retro_system_shutdown_finalize(void *data);
+static void retro_system_resume_marker(void *data, const char *rom, int remember)
+{
+	(void)data;
+	if (remember && rom && *rom) {
+		FILE *f = fopen("/data/banana/resume", "w");
+		if (f) { fprintf(f, "%s\n", rom); fclose(f); }
+	} else unlink("/data/banana/resume");
+}
 static const struct retro_power_ops retro_system_ops = {
-	.request = retro_system_request, .signal_group = retro_system_signal
+	.request = retro_system_request, .signal_group = retro_system_signal,
+	.child_alive = retro_system_child_alive, .wait_ms = retro_system_wait_ms,
+	.resume_marker = retro_system_resume_marker,
+	.shutdown_finalize = retro_system_shutdown_finalize
 };
 
 static int retro_prepare_suspend(const struct retro_power_ops *ops, pid_t game, pid_t pg,
@@ -556,10 +584,83 @@ static int retro_finish_suspend(const struct retro_power_ops *ops, int prepared,
 	return result;
 }
 
+static int retro_reconcile_after_wake(const struct retro_power_ops *ops, int prepared,
+				      int native_attempted, uint64_t epoch, pid_t game, pid_t pg)
+{
+	if (!native_attempted) return RETRO_POWER_NONE;
+	int type = prepared ? BANANA_RETRO_CTL_WAKE : BANANA_RETRO_CTL_SLEEP_ABORT;
+	int result = ops->request(ops->data, (uint16_t)type, epoch, 1500);
+	if ((prepared ? result != RETRO_POWER_OK : result == RETRO_POWER_FAILED) &&
+	    ops->child_alive(ops->data, game) && pg > 0)
+		(void)ops->signal_group(ops->data, pg, SIGTERM);
+	return result;
+}
+
+static void retro_suspend_resume_group(const struct retro_power_ops *ops, int prepared, pid_t pg)
+{
+	if (!prepared && pg > 0 && ops->signal_group(ops->data, pg, SIGCONT) < 0) {
+		int e = errno;
+		sleep_log("game: suspend recovery SIGCONT failed (pid group %d, errno %d: %s)",
+		    (int)pg, e, strerror(e));
+	}
+}
+
+/* Complete the production suspend transaction after the platform reports either
+ * a failed suspend or a real wake. Platform power itself remains an injected boundary. */
+static int retro_suspend_complete(const struct retro_power_ops *ops, int prepared,
+				 int native_attempted, int platform_slept, uint64_t epoch,
+				 pid_t game, pid_t pg)
+{
+	if (platform_slept)
+		return retro_reconcile_after_wake(ops, prepared, native_attempted, epoch, game, pg);
+	int released = retro_finish_suspend(ops, prepared, BANANA_RETRO_CTL_SLEEP_ABORT, epoch, pg);
+	if (native_attempted && !prepared) {
+		int reconciled = ops->request(ops->data, BANANA_RETRO_CTL_SLEEP_ABORT, epoch, 1500);
+		if (reconciled == RETRO_POWER_FAILED && ops->child_alive(ops->data, game) && pg > 0)
+			(void)ops->signal_group(ops->data, pg, SIGTERM);
+	}
+	return released;
+}
+
+static int retro_suspend_failure_action(const struct retro_power_ops *ops, int prepared,
+					int native_attempted, unsigned failures,
+					unsigned fallback, uint64_t epoch,
+					pid_t game, pid_t pg, int *released)
+{
+	if (fallback < 2 && failures <= 2) return 1;
+	*released = retro_suspend_complete(ops, prepared, native_attempted, 0, epoch, game, pg);
+	return 0;
+}
+
 static int retro_prepare_shutdown(const struct retro_power_ops *ops, pid_t game,
 				 uint64_t epoch)
 {
 	return game ? ops->request(ops->data, BANANA_RETRO_CTL_SHUTDOWN, epoch, 3000) : RETRO_POWER_NONE;
+}
+
+static int retro_shutdown_child(const struct retro_power_ops *ops, pid_t game, pid_t pg,
+				uint64_t epoch)
+{
+	int native = retro_prepare_shutdown(ops, game, epoch);
+	if (native == RETRO_POWER_OK)
+		for (unsigned i = 0; i < 30 && ops->child_alive(ops->data, game); ++i)
+			ops->wait_ms(ops->data, 100);
+	if (ops->child_alive(ops->data, game)) {
+		if (pg > 0) (void)ops->signal_group(ops->data, pg, SIGTERM);
+		else (void)kill(game, SIGTERM);
+		for (unsigned i = 0; i < 50 && ops->child_alive(ops->data, game); ++i)
+			ops->wait_ms(ops->data, 100);
+	}
+	return native;
+}
+
+static int retro_shutdown_session(const struct retro_power_ops *ops, pid_t game, pid_t pg,
+				  uint64_t epoch, const char *rom)
+{
+	if (ops->resume_marker) ops->resume_marker(ops->data, rom, game > 0 && rom && *rom);
+	int result = game > 0 ? retro_shutdown_child(ops, game, pg, epoch) : RETRO_POWER_NONE;
+	if (ops->shutdown_finalize) ops->shutdown_finalize(ops->data);
+	return result;
 }
 
 static uint64_t next_retro_power_epoch(void)
@@ -1367,21 +1468,19 @@ static void suspend_now(const char *why)
 			/* it didn't suspend: devices one at a time, then the lighter s2idle, then give up and blank the panel */
 			failures++;
 			sleep_log("suspend failed (%s)%s", strerror(err), sleep_fallback < 2 ? ": trying the safer way" : "");
-			if (sleep_fallback < 2 && failures <= 2) { sleep_fallback++; sleep_mode(); sleep_us(200000); continue; }
+			int released = RETRO_POWER_NONE;
+			if (retro_suspend_failure_action(&retro_system_ops, retro_suspend_prepared,
+						 retro_suspend_native, (unsigned)failures,
+						 (unsigned)sleep_fallback, epoch, game, pg, &released)) {
+				sleep_fallback++; sleep_mode(); sleep_us(200000); continue;
+			}
 			woke = "failed";
 			/* It never slept: leave the panel dark -- that is what a sleep would have looked like, and the
 			 * next press brings it back (see panel_blanked in handle()) -- and let the game run again, because
 			 * a frozen emulator behind a dark screen is worse. Nothing here is a wake, so the wake bookkeeping
 			 * below is skipped. */
-			int released = retro_finish_suspend(&retro_system_ops, retro_suspend_prepared,
-				BANANA_RETRO_CTL_SLEEP_ABORT, epoch, pg);
 			if (retro_suspend_prepared && released != RETRO_POWER_OK)
 				sleep_log("native suspend abort acknowledgement failed; process-group recovery was attempted");
-			if (retro_suspend_native && !retro_suspend_prepared) {
-				int reconciled = retro_control_request(BANANA_RETRO_CTL_SLEEP_ABORT, epoch, 1500);
-				if (reconciled == RETRO_POWER_FAILED && pg > 0 &&
-				    pid_of("/run/banana/game.pid") == game) (void)kill(-pg, SIGTERM);
-			}
 			retro_suspend_prepared = 0;
 			retro_suspend_native = 0;
 			sleep_quiet_end();
@@ -1404,11 +1503,8 @@ static void suspend_now(const char *why)
 			int pct = battery_discharging_pct();
 			if (pct >= 0 && pct <= cfg.sleep_poweroff_pct) {
 				sleep_log("battery check: %d%% after %.1f h asleep: shutting down", pct, asleep / 3600);
-				if (pg > 0 && !retro_suspend_prepared && kill(-pg, SIGCONT) < 0) {
-					int e = errno;
-					sleep_log("game: battery-shutdown SIGCONT failed (pid %d, pgid %d, errno %d: %s)",
-					    (int)game, (int)pg, e, strerror(e));
-				}	/* the game gets SIGTERM next, to write its saves */
+				retro_suspend_resume_group(&retro_system_ops, retro_suspend_prepared, pg);
+				/* the game gets SIGTERM next, to write its saves */
 				shutdown_now("battery empty while asleep");
 				return;
 			}
@@ -1465,11 +1561,7 @@ static void suspend_now(const char *why)
 	double t_wake = mono();
 	backlights_power(1);
 	sleep_quiet_end();
-	if (pg > 0 && !retro_suspend_prepared && kill(-pg, SIGCONT) < 0) {
-		int e = errno;
-		sleep_log("game: wake (%s) SIGCONT failed (pid %d, pgid %d, errno %d: %s)",
-		    woke, (int)game, (int)pg, e, strerror(e));
-	}
+	retro_suspend_resume_group(&retro_system_ops, retro_suspend_prepared, pg);
 	pid_t ui = ui_pid();
 	if (ui && (!game || compositor_on())) kill(ui, SIGUSR1);	/* draws the panel again (the clock and the battery moved on); a resident game needs the re-modeset too */
 	double t_back = mono();
@@ -1477,19 +1569,17 @@ static void suspend_now(const char *why)
 	hooks("post", 1);
 	if (retro_suspend_prepared) {
 		if (!sound_wait(3.0)) sleep_log("native audio service is not ready after wake; runtime reopen remains pending");
-		int woke_ok = retro_control_request(BANANA_RETRO_CTL_WAKE, epoch, 1500);
+		int woke_ok = retro_suspend_complete(&retro_system_ops, 1, 1, 1, epoch, game, pg);
 		if (woke_ok != RETRO_POWER_OK) {
 			sleep_log("native game wake acknowledgement failed; terminating the tracked session");
-			if (pg > 0 && pid_of("/run/banana/game.pid") == game) (void)kill(-pg, SIGTERM);
 		}
 		retro_suspend_prepared = 0;
 		retro_suspend_native = 0;
 	} else if (retro_suspend_native) {
 		if (!sound_wait(3.0)) sleep_log("native audio service is not ready after wake; runtime reopen remains pending");
-		int reconciled = retro_control_request(BANANA_RETRO_CTL_SLEEP_ABORT, epoch, 1500);
+		int reconciled = retro_suspend_complete(&retro_system_ops, 0, 1, 1, epoch, game, pg);
 		if (reconciled == RETRO_POWER_FAILED) {
 			sleep_log("native sleep reconciliation failed after wake; terminating the tracked session");
-			if (pg > 0 && pid_of("/run/banana/game.pid") == game) (void)kill(-pg, SIGTERM);
 		}
 		retro_suspend_native = 0;
 	} else if (pg > 0 && !retro_suspend_native && !cfg.wake_audio_fast) {
@@ -1538,6 +1628,20 @@ static void on_poweroff_deadline(int sig)
 	reboot(RB_POWER_OFF);
 }
 
+static void retro_system_shutdown_finalize(void *data)
+{
+	(void)data;
+	sync();
+	sleep_quiet_begin();	/* dark and muted now: a slow unmount must not look like a handheld that is still on */
+	/* if rcK hangs (an exFAT unmount), force the power off: SIGALRM runs on_poweroff_deadline */
+	struct sigaction sa = { 0 };
+	sa.sa_handler = on_poweroff_deadline;
+	sigaction(SIGALRM, &sa, NULL);
+	alarm(8);
+	/* busybox init runs /etc/init.d/rcK (unmount, sync) on SIGUSR2 = poweroff */
+	if (kill(1, SIGUSR2)) reboot(RB_POWER_OFF);
+}
+
 static void shutdown_now(const char *why)
 {
 	say("shutting down (%s)", why);
@@ -1551,32 +1655,10 @@ static void shutdown_now(const char *why)
 	char rom[PATH_MAX] = "";
 	read_str("/run/banana/game.path", rom, sizeof rom);
 	pid_t game = pid_of("/run/banana/game.pid");
-	if (game && rom[0]) {
-		FILE *f = fopen("/data/banana/resume", "w");
-		if (f) { fprintf(f, "%s\n", rom); fclose(f); }
-	} else unlink("/data/banana/resume");
-	if (game) {
-		pid_t pg = getpgid(game);
-		uint64_t epoch = next_retro_power_epoch();
-		int native = retro_prepare_shutdown(&retro_system_ops, game, epoch);
-		if (native == RETRO_POWER_OK)
-			for (int i = 0; i < 30 && pid_of("/run/banana/game.pid") == game; i++) sleep_us(100000);
-		if (pid_of("/run/banana/game.pid") == game) {
-			/* Control loss or an expired checkpoint budget uses the existing process-group TERM path. */
-			if (pg > 0) (void)kill(-pg, SIGTERM);
-			else (void)kill(game, SIGTERM);
-			for (int i = 0; i < 50 && pid_of("/run/banana/game.pid") == game; i++) sleep_us(100000);
-		}
-	}
-	sync();
-	sleep_quiet_begin();	/* dark and muted now: a slow unmount must not look like a handheld that is still on */
-	/* if rcK hangs (an exFAT unmount), force the power off: SIGALRM runs on_poweroff_deadline */
-	struct sigaction sa = { 0 };
-	sa.sa_handler = on_poweroff_deadline;
-	sigaction(SIGALRM, &sa, NULL);
-	alarm(8);
-	/* busybox init runs /etc/init.d/rcK (unmount, sync) on SIGUSR2 = poweroff */
-	if (kill(1, SIGUSR2)) reboot(RB_POWER_OFF);
+	pid_t pg = game ? getpgid(game) : 0;
+	uint64_t epoch = game ? next_retro_power_epoch() : 0;
+	/* Marker, checkpoint/exit handshake, and final platform shutdown are one tested order. */
+	(void)retro_shutdown_session(&retro_system_ops, game, pg, epoch, rom);
 }
 
 static double save_volume_at, save_backlight_at;	/* debounced: written a moment after the last key */
@@ -2298,66 +2380,207 @@ static int cheevos_line(const char *line)
 /* --selftest hud: runs no daemon and touches nothing; only the formatter and the achievement parser, so the bridge's
  * text can be checked on a workstation */
 struct retro_power_mock {
-	int result[16];
 	unsigned calls[16];
 	unsigned stops, continues;
+	uint64_t epoch;
+	unsigned owners;
+	int service_alive, checkpoint_ok, child_alive;
+	uint16_t lose_ack_type;
+	char order[64];
+	size_t order_size;
+	unsigned waits, terminate_after_waits;
+	int term_requested;
+	int child_stopped, identity_mismatch, renderer_alive;
+	int resume_marked;
 };
+
+static void retro_mock_record(struct retro_power_mock *mock, char operation)
+{
+	if (mock->order_size + 1 < sizeof(mock->order)) {
+		mock->order[mock->order_size++] = operation;
+		mock->order[mock->order_size] = 0;
+	}
+}
 
 static int retro_mock_request(void *data, uint16_t type, uint64_t epoch, unsigned timeout_ms)
 {
 	struct retro_power_mock *mock = data;
 	if (!epoch || !timeout_ms || type >= 16) return RETRO_POWER_FAILED;
 	++mock->calls[type];
-	return mock->result[type];
+	if (mock->child_stopped || mock->identity_mismatch || !mock->renderer_alive)
+		return RETRO_POWER_NONE;
+	if (!mock->service_alive) return RETRO_POWER_FAILED;
+	int result = RETRO_POWER_OK;
+	if (type == BANANA_RETRO_CTL_PREPARE_SLEEP) {
+		if (epoch <= mock->epoch || !mock->checkpoint_ok) result = RETRO_POWER_FAILED;
+		else { mock->epoch = epoch; mock->owners |= 2u; retro_mock_record(mock, 'P'); }
+	} else if (type == BANANA_RETRO_CTL_SLEEP_ABORT || type == BANANA_RETRO_CTL_WAKE) {
+		if (epoch != mock->epoch || !(mock->owners & 2u)) result = RETRO_POWER_BAD_STATE;
+		else { mock->owners &= ~2u; retro_mock_record(mock, type == BANANA_RETRO_CTL_WAKE ? 'W' : 'A'); }
+	} else if (type == BANANA_RETRO_CTL_SHUTDOWN) {
+		if (epoch <= mock->epoch || !mock->checkpoint_ok) result = RETRO_POWER_FAILED;
+		else { mock->epoch = epoch; retro_mock_record(mock, 'X'); }
+	}
+	/* Model a completed mutation whose response was delayed past the caller's deadline. */
+	if (result == RETRO_POWER_OK && type == mock->lose_ack_type) {
+		mock->lose_ack_type = 0;
+		return RETRO_POWER_FAILED;
+	}
+	return result;
 }
 
 static int retro_mock_signal(void *data, pid_t pg, int signal_number)
 {
 	struct retro_power_mock *mock = data;
 	if (pg <= 0) return -1;
-	if (signal_number == SIGSTOP) ++mock->stops;
-	else if (signal_number == SIGCONT) ++mock->continues;
+	if (signal_number == SIGSTOP) { ++mock->stops; retro_mock_record(mock, 'S'); }
+	else if (signal_number == SIGCONT) { ++mock->continues; retro_mock_record(mock, 'C'); }
+	else if (signal_number == SIGTERM) { mock->term_requested = 1; retro_mock_record(mock, 'T'); }
 	return 0;
 }
 
+static int retro_mock_child_alive(void *data, pid_t game)
+{ return game > 0 && ((struct retro_power_mock *)data)->child_alive; }
+
+static void retro_mock_wait_ms(void *data, unsigned milliseconds)
+{
+	struct retro_power_mock *mock = data;
+	if (milliseconds != 100) return;
+	++mock->waits;
+	if (mock->terminate_after_waits && mock->waits >= mock->terminate_after_waits &&
+	    (mock->term_requested || mock->calls[BANANA_RETRO_CTL_SHUTDOWN]))
+		mock->child_alive = 0;
+}
+
+static void retro_mock_resume_marker(void *data, const char *rom, int remember)
+{
+	struct retro_power_mock *mock = data;
+	mock->resume_marked = remember && rom && *rom;
+	retro_mock_record(mock, mock->resume_marked ? 'M' : 'D');
+}
+
+static void retro_mock_shutdown_finalize(void *data)
+{ retro_mock_record(data, 'F'); }
+
 static int selftest_retro_lifecycle(void)
 {
-	struct retro_power_mock mock = {0};
-	struct retro_power_ops ops = { &mock, retro_mock_request, retro_mock_signal };
+	struct retro_power_mock mock = {
+		.service_alive=1, .checkpoint_ok=1, .child_alive=1, .renderer_alive=1
+	};
+	struct retro_power_ops ops = {
+		.data = &mock, .request = retro_mock_request, .signal_group = retro_mock_signal,
+		.child_alive = retro_mock_child_alive, .wait_ms = retro_mock_wait_ms,
+		.resume_marker = retro_mock_resume_marker, .shutdown_finalize = retro_mock_shutdown_finalize
+	};
 	int failed = 0;
 #define CHECK(name, expr) do { int ok = (expr); printf("retro lifecycle %s: %s\n", (name), ok ? "ok" : "FAIL"); if (!ok) failed = 1; } while (0)
-	/* An overlay hold is independent: successful prepare does not signal the group. */
-	mock.result[BANANA_RETRO_CTL_PREPARE_SLEEP] = RETRO_POWER_OK;
-	mock.result[BANANA_RETRO_CTL_SLEEP_ABORT] = RETRO_POWER_OK;
+	CHECK("start-time identity", retro_child_identity_valid(100, 500, 500, 100, 100, 'S') &&
+	      !retro_child_identity_valid(100, 500, 501, 100, 100, 'S') &&
+	      !retro_child_identity_valid(100, 500, 500, 100, 100, 'T'));
+	/* Production prepare/wake transitions preserve an independently held UI overlay. */
+	mock.owners = 1u;
 	int prepared = retro_prepare_suspend(&ops, 100, 100, 41, 1);
-	CHECK("overlay prepare", prepared == RETRO_POWER_OK && mock.stops == 0);
-	int aborted = retro_finish_suspend(&ops, 1, BANANA_RETRO_CTL_SLEEP_ABORT, 41, 100);
-	CHECK("suspend abort", aborted == RETRO_POWER_OK && mock.continues == 0);
-
-	/* A lost/late prepare acknowledgement is reconciled with ABORT, then uses the bounded generic STOP path. */
-	mock.result[BANANA_RETRO_CTL_PREPARE_SLEEP] = RETRO_POWER_FAILED;
+	CHECK("overlay prepare", prepared == RETRO_POWER_OK && mock.stops == 0 &&
+	      mock.owners == 3u && strcmp(mock.order, "P") == 0);
+	int aborted = retro_suspend_complete(&ops, 1, 1, 0, 41, 100, 100);
+	CHECK("suspend abort", aborted == RETRO_POWER_OK && mock.continues == 0 &&
+	      mock.owners == 1u && strcmp(mock.order, "PA") == 0);
+	mock.owners = 0;
 	prepared = retro_prepare_suspend(&ops, 100, 100, 42, 1);
-	CHECK("late prepare acknowledgement", prepared == RETRO_POWER_FAILED &&
-	      mock.calls[BANANA_RETRO_CTL_SLEEP_ABORT] == 2 && mock.stops == 1);
+	CHECK("native suspend wake", prepared == RETRO_POWER_OK && mock.owners == 2u);
+	int woke = retro_suspend_complete(&ops, 1, 1, 1, 42, 100, 100);
+	CHECK("native wake", woke == RETRO_POWER_OK && mock.owners == 0 &&
+	      strcmp(mock.order, "PAPW") == 0);
 
-	/* Renderer or service loss, and an already stopped/stale child, cannot be treated as prepared. */
-	mock.result[BANANA_RETRO_CTL_SLEEP_ABORT] = RETRO_POWER_FAILED;
+	/* A delayed/lost ack can follow a real pause; ABORT reconciles it before group fallback. */
+	mock.lose_ack_type = BANANA_RETRO_CTL_PREPARE_SLEEP;
 	prepared = retro_prepare_suspend(&ops, 100, 100, 43, 1);
+	CHECK("late prepare acknowledgement", prepared == RETRO_POWER_FAILED &&
+	      mock.owners == 0 && mock.stops == 1 && strstr(mock.order, "PAS") != NULL);
+	(void)retro_suspend_complete(&ops, 0, 1, 0, 43, 100, 100);
+	CHECK("process-group recovery", mock.continues == 1);
+	CHECK("duplicate and stale epoch", retro_mock_request(&mock, BANANA_RETRO_CTL_PREPARE_SLEEP, 43, 100) ==
+	      RETRO_POWER_FAILED && retro_mock_request(&mock, BANANA_RETRO_CTL_WAKE, 42, 100) == RETRO_POWER_BAD_STATE);
+
+	/* Renderer/service loss falls back to the group; stopped and stale children cannot use native control. */
+	mock.service_alive = 0;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 44, 1);
 	CHECK("service loss fallback", prepared == RETRO_POWER_FAILED && mock.stops == 2);
-	prepared = retro_prepare_suspend(&ops, 0, 0, 44, 1);
-	CHECK("stale child", prepared == RETRO_POWER_NONE && mock.stops == 2);
+	mock.service_alive = 1;
+	mock.renderer_alive = 0;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 44, 1);
+	CHECK("renderer loss fallback", prepared == RETRO_POWER_NONE && mock.stops == 3);
+	mock.renderer_alive = 1;
+	mock.child_stopped = 1;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 44, 1);
+	CHECK("stopped child fallback", prepared == RETRO_POWER_NONE && mock.stops == 4);
+	mock.child_stopped = 0;
+	mock.identity_mismatch = 1;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 44, 1);
+	CHECK("stale PID fallback", prepared == RETRO_POWER_NONE && mock.stops == 5);
+	mock.identity_mismatch = 0;
 
-	/* Failed checkpoint uses the same fallback; failed wake leaves recovery to session termination. */
+	/* Checkpoint failure leaves no native hold and takes the process-group path. */
+	mock.checkpoint_ok = 0;
 	prepared = retro_prepare_suspend(&ops, 100, 100, 45, 1);
-	CHECK("failed checkpoint", prepared == RETRO_POWER_FAILED && mock.stops == 3);
-	mock.result[BANANA_RETRO_CTL_WAKE] = RETRO_POWER_FAILED;
-	int woke = retro_finish_suspend(&ops, 1, BANANA_RETRO_CTL_WAKE, 46, 100);
-	CHECK("failed wake recovery", woke == RETRO_POWER_FAILED && mock.continues == 1);
+	CHECK("failed checkpoint", prepared == RETRO_POWER_FAILED && mock.stops == 6);
+	mock.checkpoint_ok = 1;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 46, 1);
+	mock.service_alive = 0;
+	woke = retro_suspend_complete(&ops, 1, 1, 1, 46, 100, 100);
+	CHECK("failed wake recovery", prepared == RETRO_POWER_OK && woke == RETRO_POWER_FAILED &&
+	      mock.term_requested && mock.child_alive);
+	mock.service_alive = 1;
+	mock.term_requested = 0;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 47, 1);
+	mock.lose_ack_type = BANANA_RETRO_CTL_SLEEP_ABORT;
+	woke = retro_suspend_complete(&ops, 0, 1, 1, 47, 100, 100);
+	CHECK("ambiguous abort recovery", prepared == RETRO_POWER_OK && woke == RETRO_POWER_FAILED &&
+	      mock.owners == 0 && mock.term_requested);
+	mock.term_requested = 0;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 52, 1);
+	int released = RETRO_POWER_NONE;
+	int retry1 = retro_suspend_failure_action(&ops, 1, 1, 1, 0, 52, 100, 100, &released);
+	int retry2 = retro_suspend_failure_action(&ops, 1, 1, 2, 1, 52, 100, 100, &released);
+	int retry3 = retro_suspend_failure_action(&ops, 1, 1, 3, 2, 52, 100, 100, &released);
+	CHECK("kernel failure retry and abort ordering", prepared == RETRO_POWER_OK && retry1 && retry2 &&
+	      !retry3 && released == RETRO_POWER_OK && mock.owners == 0);
 
-	mock.result[BANANA_RETRO_CTL_SHUTDOWN] = RETRO_POWER_OK;
-	CHECK("direct shutdown checkpoint", retro_prepare_shutdown(&ops, 100, 47) == RETRO_POWER_OK);
-	mock.result[BANANA_RETRO_CTL_SHUTDOWN] = RETRO_POWER_FAILED;
-	CHECK("shutdown fallback", retro_prepare_shutdown(&ops, 100, 48) == RETRO_POWER_FAILED);
+	mock.service_alive = 1;
+	mock.checkpoint_ok = 1;
+	mock.child_alive = 1;
+	mock.term_requested = 0;
+	mock.waits = 0;
+	mock.terminate_after_waits = 2;
+	CHECK("direct shutdown marker order and reap", retro_shutdown_session(&ops, 100, 100, 53,
+	      "game.rom") == RETRO_POWER_OK && mock.resume_marked && !mock.child_alive &&
+	      !mock.term_requested && mock.waits == 2 && strstr(mock.order, "MXF") != NULL);
+	mock.child_alive = 1;
+	mock.waits = 0;
+	mock.terminate_after_waits = 1;
+	mock.checkpoint_ok = 0;
+	CHECK("shutdown checkpoint failure fallback", retro_shutdown_session(&ops, 100, 100, 54,
+	      "game.rom") ==
+	      RETRO_POWER_FAILED && !mock.child_alive && mock.term_requested && mock.waits == 1);
+	mock.checkpoint_ok = 1;
+	mock.term_requested = 0;
+	mock.child_alive = 1;
+	mock.waits = 0;
+	mock.terminate_after_waits = 3;
+	mock.service_alive = 0;
+	CHECK("shutdown process-group fallback", retro_shutdown_session(&ops, 100, 100, 55,
+	      "game.rom") ==
+	      RETRO_POWER_FAILED && !mock.child_alive && mock.term_requested && mock.waits == 3);
+	mock.child_alive = 1;
+	mock.waits = 0;
+	mock.term_requested = 0;
+	mock.terminate_after_waits = 0;
+	CHECK("shutdown bounded wait", retro_shutdown_session(&ops, 100, 100, 56,
+	      "game.rom") ==
+	      RETRO_POWER_FAILED && mock.child_alive && mock.waits == 50 && mock.term_requested);
+	mock.child_alive = 0;
+	(void)retro_shutdown_session(&ops, 0, 0, 0, "");
+	CHECK("shutdown clears stale resume marker", !mock.resume_marked);
 #undef CHECK
 	return failed ? 1 : 0;
 }

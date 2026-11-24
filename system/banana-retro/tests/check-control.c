@@ -264,9 +264,15 @@ static void sleep_peer_process(const char *path, const unsigned char session[16]
 		if (op.type == 0) break;
 		unsigned char payload[9] = { op.owner };
 		put64(payload + 1, op.epoch);
-		const void *data = op.type == BANANA_RETRO_CTL_PAUSE || op.type == BANANA_RETRO_CTL_RESUME ?
-			payload : NULL;
-		size_t size = data ? sizeof(payload) : 0;
+		const void *data = NULL;
+		size_t size = 0;
+		if (op.type == BANANA_RETRO_CTL_PAUSE || op.type == BANANA_RETRO_CTL_RESUME) {
+			data = payload; size = sizeof(payload);
+		} else if (op.type == BANANA_RETRO_CTL_PREPARE_SLEEP ||
+			   op.type == BANANA_RETRO_CTL_SLEEP_ABORT ||
+			   op.type == BANANA_RETRO_CTL_WAKE || op.type == BANANA_RETRO_CTL_SHUTDOWN) {
+			data = payload + 1; size = 8;
+		}
 		n = make_packet(request, op.type, op.id ? op.id : id++, session, data, size);
 		assert(send(fd, request, n, 0) == (ssize_t)n);
 		assert(write(event_fd, "R", 1) == 1);
@@ -793,8 +799,18 @@ static void test_runtime_operations(const char *core_path)
 	assert(snprintf(ui_pid, sizeof(ui_pid), "%ld", (long)getpid()) > 0);
 	assert(setenv("BANANA_RETRO_CONTROL_SOCKET", socket_path, 1) == 0);
 	assert(setenv("BANANA_RETRO_CONTROL_UI_PID", ui_pid, 1) == 0);
-	assert(unsetenv("BANANA_RETRO_CONTROL_SLEEP_PID") == 0);
 	unsigned char session[16]; memset(session, 0xa7, sizeof(session));
+	int commands[2], events[2];
+	assert(pipe(commands) == 0 && pipe(events) == 0);
+	pid_t sleep_pid = fork(); assert(sleep_pid >= 0);
+	if (sleep_pid == 0) {
+		close(commands[1]); close(events[0]);
+		sleep_peer_process(socket_path, session, commands[0], events[1]);
+	}
+	close(commands[0]); close(events[1]);
+	char sleep_pid_text[32];
+	assert(snprintf(sleep_pid_text, sizeof(sleep_pid_text), "%ld", (long)sleep_pid) > 0);
+	assert(setenv("BANANA_RETRO_CONTROL_SLEEP_PID", sleep_pid_text, 1) == 0);
 	struct control_ops ops = {
 		.data=&runtime, .status=control_status, .pause=control_pause,
 		.flush=control_flush, .save_state=control_save_state,
@@ -802,26 +818,64 @@ static void test_runtime_operations(const char *core_path)
 		.option=control_option, .set_option=control_set_option,
 		.reset=control_reset, .quit=control_quit
 	};
-	struct control_server *server = control_open_from_env(&ops, session); assert(server);
+	struct control_server *server = control_open_from_env(&ops, session);
+	if (!server) fprintf(stderr, "runtime control open: %s\n", strerror(errno));
+	assert(server);
 	int control_fd = connect_client(socket_path); control_handle_ready(server, true, 0);
 	unsigned char request[BANANA_RETRO_CONTROL_MAX_PACKET], reply[BANANA_RETRO_CONTROL_MAX_PACKET];
 	size_t packet_size = make_packet(request, BANANA_RETRO_CTL_HELLO, 1, session, NULL, 0);
 	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
+	assert(write(commands[1], "C", 1) == 1);
+	char peer_ready; assert(read(events[0], &peer_ready, 1) == 1 && peer_ready == 'R');
+	control_handle_ready(server, true, 0);
+	control_handle_ready(server, false, 1u << 1);
+	unsigned char peer_hello[2]; assert(read(events[0], peer_hello, 2) == 2);
+	assert(get16(peer_hello) == BANANA_RETRO_CTL_OK);
 	assert(core_step(1) && counter() == 1);
+	/* The sleep protocol reaches the real runtime checkpoint callback through dispatch(). */
 	unsigned char hold[9] = { BANANA_RETRO_CTL_OWNER_UI }; put64(hold + 1, 0);
 	packet_size = make_packet(request, BANANA_RETRO_CTL_PAUSE, 2, session, hold, sizeof(hold));
 	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
-	assert(control_pause(&runtime, BANANA_RETRO_CTL_OWNER_SLEEP, 71, true));
-	assert(pause_owners(&runtime) == 3);
-	packet_size = make_packet(request, BANANA_RETRO_CTL_RESUME, 3, session, hold, sizeof(hold));
-	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
-	assert(pause_owners(&runtime) == 2);
-	assert(core_step(2));
+	assert(pause_owners(&runtime) == 1);
+	struct peer_request power = { .type=BANANA_RETRO_CTL_PREPARE_SLEEP, .epoch=71, .id=2 };
+	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_OK);
+	assert(runtime.sleep_paused && runtime.sleep_epoch == 71 && pause_owners(&runtime) == 3);
+	int16_t probe[2] = { 123, -123 };
+	assert(audio_alsa_write(audio, probe, 1) == 0);
 	struct audio_alsa_status audio_status;
 	audio_alsa_get_status(audio, &audio_status);
-	assert(audio_status.paused_frames > 0);
-	assert(control_pause(&runtime, BANANA_RETRO_CTL_OWNER_SLEEP, 71, false));
-	assert(pause_owners(&runtime) == 0);
+	assert(audio_status.paused_frames == 1);
+	unsigned checkpoint_byte = memory[0];
+	memory[0] = 0x42;
+	assert(core_persistence_load(saves, -1) && memory[0] == checkpoint_byte);
+	packet_size = make_packet(request, BANANA_RETRO_CTL_RESUME, 3, session, hold, sizeof(hold));
+	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
+	assert(pause_owners(&runtime) == 2); /* UI release cannot release the sleep owner. */
+	assert(audio_alsa_write(audio, probe, 1) == 0);
+	/* An exact duplicate replays its acknowledgement without committing a second time. */
+	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_OK);
+	assert(runtime.sleep_epoch == 71 && runtime.sleep_paused);
+	/* A new ID cannot reuse the epoch, and stale epochs cannot release the sleep owner. */
+	power.id = 3;
+	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_BAD_STATE);
+	power = (struct peer_request){ .type=BANANA_RETRO_CTL_WAKE, .epoch=70, .id=4 };
+	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_BAD_STATE);
+	assert(runtime.sleep_paused && pause_owners(&runtime) == 2);
+	power = (struct peer_request){ .type=BANANA_RETRO_CTL_WAKE, .epoch=71, .id=5 };
+	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_OK);
+	assert(!runtime.sleep_paused && pause_owners(&runtime) == 0);
+	assert(core_step(2));
+	audio_alsa_get_status(audio, &audio_status);
+	assert(audio_status.accepted_frames > 0);
+	/* A failed checkpoint is reported and does not acquire sleep ownership. */
+	runtime.saves = NULL;
+	power = (struct peer_request){ .type=BANANA_RETRO_CTL_PREPARE_SLEEP, .epoch=72, .id=6 };
+	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_IO_ERROR);
+	assert(!runtime.sleep_paused && pause_owners(&runtime) == 0);
+	runtime.saves = saves;
+	/* Rejected role operations never invoke UI or quit mutations. */
+	packet_size = make_packet(request, BANANA_RETRO_CTL_PAUSE, 7, session, NULL, 0);
+	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_UNSUPPORTED);
 	assert(core_step(3));
 	audio_alsa_get_status(audio, &audio_status);
 	assert(audio_status.accepted_frames > 0);
@@ -829,28 +883,28 @@ static void test_runtime_operations(const char *core_path)
 	memory[0] = 0xa5;
 	unsigned saved_counter = counter();
 	unsigned char slot[4]; put32(slot, 2);
-	packet_size = make_packet(request, BANANA_RETRO_CTL_SAVE_STATE, 4, session, slot, sizeof(slot));
+	packet_size = make_packet(request, BANANA_RETRO_CTL_SAVE_STATE, 8, session, slot, sizeof(slot));
 	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
 	memory[0] = 0x42;
 	assert(core_step(4));
 	assert(memory[0] != 0xa5);
-	packet_size = make_packet(request, BANANA_RETRO_CTL_LOAD_STATE, 5, session, slot, sizeof(slot));
+	packet_size = make_packet(request, BANANA_RETRO_CTL_LOAD_STATE, 9, session, slot, sizeof(slot));
 	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
 	assert(memory[0] == 0xa5 && counter() == saved_counter);
 
-	packet_size = make_packet(request, BANANA_RETRO_CTL_RESET, 6, session, NULL, 0);
+	packet_size = make_packet(request, BANANA_RETRO_CTL_RESET, 10, session, NULL, 0);
 	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
 	assert(counter() == 0 && memory[0] == 0);
 	memory[0] = 0x39;
-	packet_size = make_packet(request, BANANA_RETRO_CTL_FLUSH_SRAM, 7, session, NULL, 0);
+	packet_size = make_packet(request, BANANA_RETRO_CTL_FLUSH_SRAM, 11, session, NULL, 0);
 	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
 	memory[0] = 0x11;
 	assert(core_persistence_load(saves, -1));
 	assert(memory[0] == 0x39);
 
 	memory[0] = 0x5a;
-	packet_size = make_packet(request, BANANA_RETRO_CTL_QUIT, 8, session, NULL, 0);
-	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
+	power = (struct peer_request){ .type=BANANA_RETRO_CTL_SHUTDOWN, .epoch=73, .id=7 };
+	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_OK);
 	assert(runtime.stopped && runtime.committed);
 	memory[0] = 0x22;
 	assert(core_persistence_load(saves, 2));
@@ -860,6 +914,12 @@ static void test_runtime_operations(const char *core_path)
 	control_close(server);
 	assert(unsetenv("BANANA_RETRO_CONTROL_SOCKET") == 0);
 	assert(unsetenv("BANANA_RETRO_CONTROL_UI_PID") == 0);
+	assert(unsetenv("BANANA_RETRO_CONTROL_SLEEP_PID") == 0);
+	struct peer_request stop_peer = {0};
+	assert(write(commands[1], &stop_peer, sizeof(stop_peer)) == (ssize_t)sizeof(stop_peer));
+	close(commands[1]); close(events[0]);
+	int peer_status; assert(waitpid(sleep_pid, &peer_status, 0) == sleep_pid);
+	assert(WIFEXITED(peer_status) && WEXITSTATUS(peer_status) == 0);
 	core_set_audio_output(NULL);
 	audio_alsa_close(audio);
 	saves_close(saves);
