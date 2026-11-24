@@ -44,6 +44,32 @@ ${CXX:-c++} -O2 -std=c++17 -o "$OUT/resume-test" "$HERE/tests/resume-test.cpp" 2
 ${CXX:-c++} -O2 -std=c++17 -o "$OUT/rotation-test" "$HERE/tests/rotation-test.cpp" 2> "$OUT/rotation-build.log" ||
     { echo "FAIL: can't build rotation-test (see $OUT/rotation-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/rotation-test" > "$OUT/rotation.log" 2>&1 || { echo "FAIL: rotation-test"; cat "$OUT/rotation.log"; fail=1; }
+
+# Native launch metadata must bind to the launch token, exact ROM, wall-clock attempt and PID start identity.
+${CXX:-c++} -O2 -std=c++17 -I"$HERE/src" -o "$OUT/native-control-session-test" \
+    "$HERE/tests/native-control-session-test.cpp" "$HERE/src/native_control.cpp" 2> "$OUT/native-control-session-build.log" ||
+    { echo "FAIL: can't build native-control-session-test (see $OUT/native-control-session-build.log)"; fail=1; }
+if [ "$fail" != 1 ]; then
+    mkdir -p "$OUT/native-run"
+    BANANA_RUN_DIR="$OUT/native-run" "$OUT/native-control-session-test" > "$OUT/native-control-session.log" 2>&1 ||
+        { echo "FAIL: native-control-session-test"; cat "$OUT/native-control-session.log"; fail=1; }
+fi
+${CC:-cc} -O2 -std=c11 -Wall -Wextra -Werror -I"$HERE/../system/banana-retro/src" \
+    -I"$HERE/../system/banana-retro/include" -c "$HERE/../system/banana-retro/src/control.c" \
+    -o "$OUT/native-control-server.o" 2> "$OUT/native-control-server-build.log" ||
+    { echo "FAIL: can't build native control server fixture (see $OUT/native-control-server-build.log)"; fail=1; }
+${CXX:-c++} -O2 -std=c++17 -pthread -I"$HERE/src" -I"$HERE/../system/banana-retro/include" -o "$OUT/native-control-protocol-test" \
+    "$HERE/tests/native-control-protocol-test.cpp" "$HERE/src/native_control.cpp" "$OUT/native-control-server.o" \
+    2> "$OUT/native-control-protocol-build.log" ||
+    { echo "FAIL: can't build native-control-protocol-test (see $OUT/native-control-protocol-build.log)"; fail=1; }
+if [ "$fail" != 1 ]; then
+    if BANANA_RUN_DIR="$OUT/native-run" "$OUT/native-control-protocol-test" > "$OUT/native-control-protocol.log" 2>&1; then rc=0; else rc=$?; fi
+    if [ "$rc" = 77 ]; then
+        echo "skip: native-control-protocol-test (sandbox denied local socket bind)"
+    elif [ "$rc" != 0 ]; then
+        echo "FAIL: native-control-protocol-test (status $rc)"; cat "$OUT/native-control-protocol.log"; fail=1
+    fi
+fi
 # the screen frames: which one a game gets, where its hole is, and the art the image ships
 ${CXX:-c++} -O2 -std=c++17 -Wno-unused-function -o "$OUT/frame-test" "$HERE/tests/frame-test.cpp" "$HERE/src/frame.cpp" 2> "$OUT/frame-build.log" ||
     { echo "FAIL: can't build frame-test (see $OUT/frame-build.log)"; fail=1; }

@@ -36,8 +36,9 @@ xform() {
         -e "s#/sys/class/drm#$W/sys/class/drm#g" "$1"
 }
 xform "$LAUNCH/run-retroarch" > "$W/libexec/run-retroarch"
+xform "$LAUNCH/libretro-core.sh" > "$W/libexec/libretro-core.sh"
 xform "$LAUNCH/ra-secrets" > "$W/libexec/ra-secrets"
-chmod +x "$W/libexec/run-retroarch" "$W/libexec/ra-secrets"
+chmod +x "$W/libexec/run-retroarch" "$W/libexec/libretro-core.sh" "$W/libexec/ra-secrets"
 
 # the stub: record argv, and keep the account config the run appends (the game's own copy of the password/token)
 cat > "$W/retroarch" <<EOF

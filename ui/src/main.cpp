@@ -40,6 +40,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <csignal>
+#include <ctime>
 #include <cstdio>
 #include <cctype>
 #include <cstring>
@@ -620,6 +621,8 @@ int main(int argc, char** argv)
 	int raSlot = 0, discs = 1, discNow = 1;
 	bool ffOn = false;
 	std::string gameRom;
+	std::string gameSessionId;
+	uint64_t gameLaunchEpoch = 0;
 	// Lines for RetroArch's stdin, sent one at a time ~100 ms apart while it runs: it keeps one flag per command name
 	// per poll, so two STATE_SLOT_PLUS (or the eject/next/eject of a disc change) in one frame would count once
 	std::deque<std::string> raQueue;
@@ -630,7 +633,7 @@ int main(int argc, char** argv)
 	bool gameRA = false;
 	FrameKind frameKind = FrameKind::None;
 	bool gameFramable = false;
-	PauseMenu pause(settingsView, lib, input, comp, gamePid, gameStart, gameIndex, gameRA, gameFramable, gameRom, frameKind, raSlot, discs, discNow, ffOn, raQueue);
+	PauseMenu pause(settingsView, lib, input, comp, gamePid, gameStart, gameIndex, gameRA, gameFramable, gameRom, frameKind, raSlot, discs, discNow, ffOn, raQueue, gameSessionId, gameLaunchEpoch);
 	be.overlay = [&]()
 	{
 		drawOverlay(settingsView, low, plug, osdLabel, osdPercent, osdUntil, nowMs(),
@@ -1005,7 +1008,7 @@ int main(int argc, char** argv)
 	// a game is a client of this process: the menu loop reaps it and runs this
 	auto finishGame = [&](int status)
 	{
-		pause.close();	// a game that ends (or crashes) under the pause menu must not leave the pad grabbed
+		pause.close(false);	// waitpid already reaped this child; only release UI ownership, never signal a possibly reused PID
 		if (shaderChordOff)	// the chord lasts one game: the saved mask is back in the menu
 		{
 			shaderChordOff = false;
@@ -1081,6 +1084,8 @@ int main(int argc, char** argv)
 		gamePid = -1;
 		gameIndex = -1;
 		gameRA = false;
+		gameSessionId.clear();
+		gameLaunchEpoch = 0;
 		gameFramable = false;
 		gameIsApp = false;
 		frameKind = applyFrame("", FrameKind::None);
@@ -1092,6 +1097,23 @@ int main(int argc, char** argv)
 	{
 		const SystemDef& sd = lib.systemOf(game);
 		std::string rom = lib.gameAt(game).path;
+		unsigned char sessionBytes[16];
+		std::ifstream random("/dev/urandom", std::ios::binary);
+		random.read(reinterpret_cast<char*>(sessionBytes), sizeof(sessionBytes));
+		if (random.gcount() != (std::streamsize)sizeof(sessionBytes))
+		{
+			logf("launch identity unavailable; refusing to start without a session token");
+			dirty = true;
+			return;
+		}
+		static const char hex[] = "0123456789abcdef";
+		gameSessionId.resize(32);
+		for (size_t i = 0; i < sizeof(sessionBytes); ++i)
+		{
+			gameSessionId[i * 2] = hex[sessionBytes[i] >> 4];
+			gameSessionId[i * 2 + 1] = hex[sessionBytes[i] & 15];
+		}
+		gameLaunchEpoch = (uint64_t)std::time(nullptr);
 		std::string cmd = replaceAll(replaceAll(sd.run, "%ROM%", shellQuote(rom)), "%SYSTEM%", shellQuote(sd.id));
 		// every launcher runs as a client of this process (the EGL presenter letterboxes and rotates any window size)
 		logf("starting %s (resident): %s", sd.id.c_str(), cmd.c_str());
@@ -1121,6 +1143,7 @@ int main(int argc, char** argv)
 		unlink(CHEEVOS);	// last game's: this game's are written as they are won
 		unlink(CHEEVOS_SET);
 		double start = nowMs();
+		std::string uiPid = std::to_string((long)getpid());
 		pid_t pid = fork();
 		if (pid < 0)
 		{
@@ -1144,6 +1167,10 @@ int main(int argc, char** argv)
 			sigprocmask(SIG_SETMASK, &none, nullptr);
 			setenv("BANANA_ROM", rom.c_str(), 1);
 			setenv("BANANA_SYSTEM", sd.id.c_str(), 1);
+			setenv("BANANA_RETRO_SESSION_ID", gameSessionId.c_str(), 1);
+			std::string controlSocket = "/run/banana/retro-" + gameSessionId + ".sock";
+			setenv("BANANA_RETRO_CONTROL_SOCKET", controlSocket.c_str(), 1);
+			setenv("BANANA_RETRO_CONTROL_UI_PID", uiPid.c_str(), 1);
 			if (sd.app)
 			{
 				// the app's own data (saves, caches), kept apart from its code so an update never touches it

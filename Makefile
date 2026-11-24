@@ -119,6 +119,7 @@ test: ui bananad probe check-kver
 	tools/check-lang.py
 	tools/check-docs.py
 	system/tests/run-retroarch-test.sh
+	system/tests/run-libretro-test.sh
 	system/tests/rpc-thermals-test.sh
 	system/tests/run-banana-tube-test.sh
 	system/tests/run-backup-test.sh

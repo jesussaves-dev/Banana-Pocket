@@ -5,6 +5,7 @@
 #include "frame.h"
 #include "input.h"
 #include "library.h"
+#include "native_control.h"
 #include "settings.h"
 #include <deque>
 #include <functional>
@@ -20,10 +21,10 @@ namespace banana
 	public:
 		PauseMenu(Settings& settings, Library& lib, Input& input, Compositor& comp, pid_t& gamePid, double& gameStart, int& gameIndex, bool& gameRA,
 		          bool& gameFramable, std::string& gameRom, FrameKind& frameKind, int& raSlot, int& discs, int& discNow, bool& ffOn,
-		          std::deque<std::string>& raQueue)
+		          std::deque<std::string>& raQueue, std::string& gameSessionId, uint64_t& gameLaunchEpoch)
 			: settings(settings), lib(lib), input(input), comp(comp), gamePid(gamePid), gameStart(gameStart), gameIndex(gameIndex), gameRA(gameRA),
 			  gameFramable(gameFramable), gameRom(gameRom), frameKind(frameKind), raSlot(raSlot), discs(discs), discNow(discNow),
-			  ffOn(ffOn), raQueue(raQueue) {}
+			  ffOn(ffOn), raQueue(raQueue), gameSessionId(gameSessionId), gameLaunchEpoch(gameLaunchEpoch) {}
 
 		bool open = false, pending = false;	// pending: MENU is held and may yet open it on release
 		std::deque<int> keyQueue;			// evdev keys a chosen app row wants tapped in the client (sent by the main loop once it is thawed)
@@ -36,7 +37,7 @@ namespace banana
 		std::function<bool()> frameMaster;
 
 		void show();
-		void close();
+		void close(bool resumeGame = true);
 		void draw();
 		void key(Key k);
 
@@ -62,6 +63,13 @@ namespace banana
 		int& discNow;
 		bool& ffOn;
 		std::deque<std::string>& raQueue;
+		std::string& gameSessionId;
+		uint64_t& gameLaunchEpoch;
+		NativeControl native;
+		NativeStatus nativeStatus;
+		std::vector<NativeOption> nativeOptions;
+		bool nativeAttempt = false, nativeActive = false, nativePauseHeld = false, nativeSignalStopped = false;
+		std::string actionError;
 
 		int sel = 0, armed = -1, pickSlot = 0, discPick = 1;
 		int qBright = -1, qVol = -1;	// the quick settings' levels, read when the menu opens

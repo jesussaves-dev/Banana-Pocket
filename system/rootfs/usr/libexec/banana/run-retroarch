@@ -10,32 +10,27 @@
 # Adreno a6xx driver implements but does not advertise as conformant; SwanStation's Vulkan renderer asks for it.
 TU_DEBUG=noconform
 export TU_DEBUG
-CORE=/usr/lib/libretro/$1_libretro.so
-# setting <key>: the card's value, else the image's template (a card from an older Banana, or a line taken out)
-setting() {
-    v=$(sed -n "s/^ *$1 *= *//p" /data/banana/settings.conf 2>/dev/null | tail -n 1)
-    [ -n "$v" ] || v=$(sed -n "s/^ *$1 *= *//p" /etc/banana/settings.conf 2>/dev/null | tail -n 1)
-    printf '%s' "$v"
-}
-# Settings > RetroArch > the system's core (settings.conf's core.<system>, BANANA_SYSTEM from banana-ui): another
-# installed core instead of systems.conf's, e.g. mGBA for the Game Boy Advance (RetroAchievements); one not installed is ignored
-if [ -n "$BANANA_SYSTEM" ]; then
-    c=$(setting "core.$BANANA_SYSTEM")
-    [ -n "$c" ] && [ -f /usr/lib/libretro/${c}_libretro.so ] && CORE=/usr/lib/libretro/${c}_libretro.so
+. /usr/libexec/banana/libretro-core.sh
+if [ "$1" = --resolved-core ]; then
+    CORE=$2
+    c=${CORE##*/}; c=${c%_libretro.so}
+    rom=$3
+    requested=$c
+else
+    requested=$1 rom=$2
+    banana_resolve_core "$requested" "$BANANA_SYSTEM" "$BANANA_CORE" || {
+        echo "no core $requested" >&2; exit 1;
+    }
+    CORE=$banana_core_path
+    c=$banana_core_name
+    if banana_native_eligible "$BANANA_SYSTEM" "$c" "$rom" &&
+       banana_native_opted_in "$BANANA_SYSTEM" "$c"; then
+        exec /usr/libexec/banana/run-libretro --resolved "$c" "$CORE" "$rom"
+    fi
 fi
-# a game's own Game options (Settings' X on a game, banana-ui's BANANA_CORE): the core this one game runs with,
-# over both systems.conf's and core.<system>, when it names an installed core.
-if [ -n "$BANANA_CORE" ] && [ -f /usr/lib/libretro/${BANANA_CORE}_libretro.so ]; then
-    CORE=/usr/lib/libretro/${BANANA_CORE}_libretro.so
-fi
-# PlayStation's fall back: systems.conf names SwanStation (the accurate one), Settings may pick PCSX-ReARMed, and a
-# card missing SwanStation still plays on PCSX-ReARMed rather than failing to start.
-if [ "$BANANA_SYSTEM" = psx ] && [ ! -f "$CORE" ] && [ -f /usr/lib/libretro/pcsx_rearmed_libretro.so ]; then
-    CORE=/usr/lib/libretro/pcsx_rearmed_libretro.so
-fi
-[ -f "$CORE" ] || { echo "no core $1" >&2; exit 1; }
+[ -f "$CORE" ] || { echo "no core $c" >&2; exit 1; }
+set -- "$requested" "$rom"
 # the core that really runs, in banana-ui's log (its "starting" line names systems.conf's)
-c=${CORE##*/}; c=${c%_libretro.so}
 [ "$c" != "$1" ] && echo "run-retroarch: core $c (Settings > RetroArch), not $1" >&2 || echo "run-retroarch: core $c" >&2
 # The sound server owns the DSP route now: RetroArch is a PipeWire client (asound.conf's "default" is PipeWire), ACP
 # brings the card up from the UCM profile, and the server re-applies the verb as it opens it -- so the launcher does

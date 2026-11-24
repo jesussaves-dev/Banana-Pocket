@@ -100,6 +100,14 @@ def check_core(core, where):
 def main():
     global CORE_PKG
     CORE_PKG = core_packages()
+    for system, core in (("gba", "mgba"), ("gb", "gambatte"),
+                         ("gbc", "gambatte"), ("nes", "fceumm")):
+        check_core(core, "experimental native profile %s" % system)
+    launch_dir = os.path.join(ROOTFS, "usr", "libexec", "banana")
+    for required in ("run-libretro", "run-retroarch", "libretro-core.sh"):
+        if not os.path.isfile(os.path.join(launch_dir, required)):
+            errors.append("native launch integration: missing %s" % required)
+
     systems = parse_systems(SYSTEMS)
     looks = looks_map(LOOKS)
     icons = os.path.join(os.path.dirname(LOOKS), "icons")
@@ -120,6 +128,8 @@ def main():
         if not (os.path.isfile(fs) and os.access(fs, os.X_OK)):
             errors.append("%s: launcher missing or not executable: %s" % (sid, prog))
             continue
+        if os.path.basename(prog) == "run-libretro":
+            errors.append("%s: shipped systems must retain RetroArch routing" % sid)
         # run-retroarch <core> %ROM%: the core the image must build
         if os.path.basename(prog) == "run-retroarch":
             core = next((p for p in parts[1:] if p != "%ROM%"), None)
@@ -165,8 +175,11 @@ def main():
     # every key the image's settings.conf documents must be in settings_defaults.cpp's KEYS: one missing there is
     # appended from the template on every boot, so the card's own value never wins
     with open(os.path.join(ROOTFS, "etc", "banana", "settings.conf"), encoding="utf-8") as f:
-        image_keys = [ln.split("=", 1)[0].strip() for ln in f
-                      if ln.strip() and not ln.lstrip().startswith("#") and "=" in ln]
+        image_lines = [ln for ln in f if ln.strip() and not ln.lstrip().startswith("#") and "=" in ln]
+        image_keys = [ln.split("=", 1)[0].strip() for ln in image_lines]
+    for ln in image_lines:
+        if re.match(r"\s*runtime\.[a-z0-9_-]+\.[a-z0-9_-]+\s*=", ln):
+            errors.append("settings.conf: experimental runtime rules must remain opt-in outside baked defaults")
     with open(DEFAULTS, encoding="utf-8") as f:
         schema = set(re.findall(r'\{\s*"([a-zA-Z0-9_.]+)"\s*,', f.read()))
     for k in image_keys:

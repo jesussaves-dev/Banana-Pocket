@@ -7,6 +7,7 @@
 #include "options.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -44,6 +45,60 @@ static uint64_t monotonic_ns(void)
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
         return 0;
     return (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
+}
+
+static bool write_all(int fd, const char *data, size_t size)
+{
+    size_t used = 0;
+    while (used < size) {
+        ssize_t n = write(fd, data + used, size - used);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return false;
+        used += (size_t)n;
+    }
+    return true;
+}
+
+static bool mark_ready(void)
+{
+    const char *path = getenv("BANANA_RETRO_READY_FILE");
+    if (!path || !*path) return true;
+    size_t length = strlen(path);
+    if (length > 4000) { errno = ENAMETOOLONG; return false; }
+    char temporary[4096];
+    if (snprintf(temporary, sizeof(temporary), "%s.%ld", path, (long)getpid()) >=
+        (int)sizeof(temporary)) { errno = ENAMETOOLONG; return false; }
+    int fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd < 0) return false;
+    bool ok = write_all(fd, "ready\n", 6);
+    int close_result = close(fd);
+    if (!ok || close_result < 0) { int saved = errno; unlink(temporary); errno = saved; return false; }
+    if (rename(temporary, path) < 0) { int saved = errno; unlink(temporary); errno = saved; return false; }
+    return true;
+}
+
+static bool mark_commit_intent(void)
+{
+    const char *path = getenv("BANANA_RETRO_COMMITTED_FILE");
+    if (!path || !*path) return true;
+    int fd = open(path, O_WRONLY | O_CREAT | O_CLOEXEC, 0600);
+    if (fd < 0) return false;
+    bool ok = write_all(fd, "commit-attempted\n", 17);
+    int close_result = close(fd);
+    if (!ok || close_result < 0) { int saved = errno; errno = saved; return false; }
+    return ok;
+}
+
+static void mark_startup_error(const char *kind)
+{
+    const char *path = getenv("BANANA_RETRO_STARTUP_ERROR_FILE");
+    if (!path || !*path || !kind) return;
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (fd < 0) return;
+    size_t length = strlen(kind);
+    (void)write_all(fd, kind, length);
+    (void)write_all(fd, "\n", 1);
+    (void)close(fd);
 }
 
 static void input_snapshot(void *data, uint16_t masks[RETRO_INPUT_MAX_DEVICES])
@@ -126,7 +181,9 @@ static bool control_flush(void *data)
 static bool control_save_state(void *data, unsigned slot)
 {
     struct native_runtime *runtime = data;
-    return runtime->saves && core_persistence_commit(runtime->saves, (int)slot);
+    if (!runtime->saves || !mark_commit_intent()) return false;
+    if (!core_persistence_commit(runtime->saves, (int)slot)) return false;
+    return true;
 }
 
 static bool control_load_state(void *data, unsigned slot)
@@ -193,7 +250,8 @@ static bool control_reset(void *data)
 static bool control_quit(void *data)
 {
     struct native_runtime *runtime = data;
-    if (!runtime->saves || !core_persistence_commit(runtime->saves, runtime->save_state_slot)) return false;
+    if (!runtime->saves || !mark_commit_intent() ||
+        !core_persistence_commit(runtime->saves, runtime->save_state_slot)) return false;
     runtime->committed = true;
     runtime->stopped = true;
     return true;
@@ -313,6 +371,8 @@ int main(int argc, char **argv)
     int load_state_slot = -1, save_state_slot = -1;
     bool skip_save_commit = false;
     bool stopped = false, ran = false, ok;
+    bool readiness_reached = false;
+    const char *startup_error_code = "runtime-start";
     struct wayland_video *video = NULL;
     struct input_evdev *input = NULL;
     struct retro_paced_runner runner;
@@ -370,11 +430,18 @@ int main(int argc, char **argv)
     }
     if (native) {
         video = wayland_video_open();
-        if (!video || !native_display) return EXIT_FAILURE;
+        if (!video || !native_display) {
+            mark_startup_error("wayland-init");
+            return EXIT_FAILURE;
+        }
         sink.data = video;
         const char *directory = getenv("BANANA_RETRO_INPUT_DIR");
         input = input_evdev_open(directory ? directory : "/dev/input");
-        if (!input) { wayland_video_close(video); return EXIT_FAILURE; }
+        if (!input) {
+            mark_startup_error("input-init");
+            wayland_video_close(video);
+            return EXIT_FAILURE;
+        }
         runtime.input = input;
         core_set_input_source(input, input_snapshot);
     }
@@ -384,10 +451,12 @@ int main(int argc, char **argv)
         sigaddset(&signals, SIGINT);
         sigaddset(&signals, SIGTERM);
         if (sigprocmask(SIG_BLOCK, &signals, NULL) < 0) {
+            if (native) mark_startup_error("signal-mask");
             input_evdev_close(input); wayland_video_close(video); return EXIT_FAILURE;
         }
         signal_fd = signalfd(-1, &signals, SFD_NONBLOCK | SFD_CLOEXEC);
         if (signal_fd < 0) {
+            if (native) mark_startup_error("signal-init");
             input_evdev_close(input); wayland_video_close(video); return EXIT_FAILURE;
         }
         runtime.signal_fd = signal_fd;
@@ -396,15 +465,18 @@ int main(int argc, char **argv)
     runtime.content_path = argv[2];
     runtime.save_state_slot = save_state_slot;
     ok = core_load(argv[1], argv[2], native ? &sink : NULL);
+    if (!ok) startup_error_code = "core-load";
     if (ok && (native || test_persistence)) {
         const char *root = getenv("BANANA_RETRO_NATIVE_DIR");
         if (!root || !*root) root = "/data/banana/retro/saves";
         runtime.saves = saves_open(root, argv[1], argv[2]);
         if (!runtime.saves) {
+            startup_error_code = "persistence-init";
             fputs("Native save storage unavailable\n", stderr);
             skip_save_commit = load_state_slot >= 0;
             ok = false;
         } else if (!core_persistence_load(runtime.saves, load_state_slot)) {
+            startup_error_code = "persistence-load";
             fputs("No compatible native save or requested state slot\n", stderr);
             if (load_state_slot >= 0) {
                 skip_save_commit = true;
@@ -416,12 +488,14 @@ int main(int argc, char **argv)
     if (ok && video) {
         double sample_rate = core_sample_rate();
         if (sample_rate < 8000.0 || sample_rate > 192000.0) {
+            startup_error_code = "audio-format";
             fprintf(stderr, "Unsupported core audio sample rate %.3f Hz\n", sample_rate);
             ok = false;
         } else {
             runtime.audio = audio_alsa_open((unsigned)(sample_rate + 0.5));
         }
         if (!runtime.audio) ok = false;
+        if (!runtime.audio) startup_error_code = "audio-init";
         if (ok && runtime.audio) {
             core_set_audio_output(runtime.audio);
             if (!audio_alsa_wait_ready(runtime.audio, 3000)) {
@@ -429,6 +503,8 @@ int main(int argc, char **argv)
                 audio_alsa_get_status(runtime.audio, &status);
                 fprintf(stderr, "Audio unavailable: state=%d retries=%llu\n",
                         (int)status.state, (unsigned long long)status.reopen_attempts);
+                startup_error_code = "audio-init";
+                ok = false;
             } else {
                 struct audio_alsa_status status;
                 audio_alsa_get_status(runtime.audio, &status);
@@ -456,8 +532,11 @@ int main(int argc, char **argv)
         if (parse_session_id(session_text, session_id))
             runtime.control = control_open_from_env(&control_ops, session_id);
         else errno = EINVAL;
-        if (!runtime.control)
+        if (!runtime.control) {
+            startup_error_code = "control-init";
             fprintf(stderr, "Native control unavailable: %s\n", strerror(errno));
+            ok = false;
+        }
     }
     if (ok && video) ok = retro_paced_start(&runner, core_refresh_rate(), monotonic_ns());
     struct retro_paced_ops paced_ops = {
@@ -475,7 +554,16 @@ int main(int argc, char **argv)
                 break;
             }
             if (result == RETRO_PACED_FAILED) ok = false;
-            else { ran = true; ++frame; }
+            else {
+                ran = true; ++frame;
+                if (runtime.control && !readiness_reached && wayland_video_presented(video)) {
+                    if (!mark_ready()) {
+                        startup_error_code = "readiness-publish";
+                        fprintf(stderr, "Native readiness publication failed: %s\n", strerror(errno));
+                        ok = false;
+                    } else readiness_reached = true;
+                }
+            }
         } else {
             ok = core_step(frame);
             if (ok) ran = true;
@@ -500,15 +588,19 @@ int main(int argc, char **argv)
     if (runtime.failed_load) ok = false;
     if (ok && video && !stopped) ok = wayland_video_wait(video);
     if (ok && video && ran && !wayland_video_presented(video)) {
+        startup_error_code = "presentation";
         fputs("No native Wayland frame reached the display\n", stderr);
         ok = false;
     }
+    if (!ok && !readiness_reached) mark_startup_error(startup_error_code);
     skip_save_commit = skip_save_commit || runtime.failed_load || runtime.committed;
     if (runtime.control) control_close(runtime.control);
-    if (runtime.saves && !skip_save_commit &&
-        !core_persistence_commit(runtime.saves, save_state_slot)) {
-        fputs("Native save generation commit failed\n", stderr);
-        ok = false;
+    bool readiness_gated_launch = getenv("BANANA_RETRO_READY_FILE") != NULL;
+    if (runtime.saves && !skip_save_commit && (!readiness_gated_launch || readiness_reached)) {
+        if (!mark_commit_intent() || !core_persistence_commit(runtime.saves, save_state_slot)) {
+            fputs("Native save generation commit failed\n", stderr);
+            ok = false;
+        }
     }
     if (!core_release()) ok = false;
     saves_close(runtime.saves);

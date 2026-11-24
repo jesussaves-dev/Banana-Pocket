@@ -1,9 +1,21 @@
 // banana-ui: the pause menu over a frozen game.
 #include "app.h"
 #include "pause_menu.h"
+#include "../../system/banana-retro/include/banana-retro-control.h"
 #include <cctype>
 #include <cstdlib>
 #include <linux/input.h>
+
+static std::string nativeResultText(int result)
+{
+	if (result == BANANA_RETRO_CTL_UNSUPPORTED) return "Unsupported by this core";
+	if (result == BANANA_RETRO_CTL_BUSY) return "Native runtime is busy";
+	if (result == BANANA_RETRO_CTL_BAD_STATE) return "Operation is not valid now";
+	if (result == BANANA_RETRO_CTL_IO_ERROR) return "Native storage operation failed";
+	if (result == BANANA_RETRO_CTL_CORE_ERROR) return "Core rejected the operation";
+	if (result == BANANA_RETRO_CTL_STALE_SESSION) return "Native session changed; reopen the menu";
+	return "Native operation failed (" + std::to_string(result) + ")";
+}
 
 void PauseMenu::build()
 {
@@ -26,7 +38,12 @@ void PauseMenu::build()
 	{
 		Settings::PauseRow r;
 		r.label = id;
-		if (gameRA && (id == "Save state" || id == "Load state")) { r.value = tr("Slot") + " " + std::to_string(pickSlot); r.arrows = true; }
+		if (((gameRA && !nativeAttempt) || nativeActive) && (id == "Save state" || id == "Load state")) { r.value = tr("Slot") + " " + std::to_string(pickSlot); r.arrows = true; }
+		else if (id.rfind("Option: ", 0) == 0)
+		{
+			auto it = std::find_if(nativeOptions.begin(), nativeOptions.end(), [&](const NativeOption& o) { return id == "Option: " + o.description; });
+			if (it != nativeOptions.end()) { r.value = it->value; r.arrows = it->choices.size() > 1; }
+		}
 		else if (id == "Change disc") { r.value = tr("Disc") + " " + std::to_string(discPick) + "/" + std::to_string(discs); r.arrows = true; }
 		else if (id == "Brightness") { r.value = qBright < 0 ? "" : std::to_string(qBright) + "%"; r.arrows = qBright >= 0; }
 		else if (id == "Volume") { r.value = qVol < 0 ? "" : std::to_string(qVol) + "%"; r.arrows = qVol >= 0; }
@@ -40,7 +57,7 @@ void PauseMenu::build()
 	v.picture.clear();
 	v.caption.clear();
 	v.lines.clear();
-	if (gameRA && (row == "Save state" || row == "Load state"))
+	if (gameRA && !nativeAttempt && (row == "Save state" || row == "Load state"))
 	{
 		std::string st = statePath(gameRom, pickSlot);
 		std::string slot = tr("Slot") + " " + std::to_string(pickSlot);
@@ -56,6 +73,8 @@ void PauseMenu::build()
 		}
 		else v.caption = slot + "   " + tr("Empty");
 	}
+	else if (nativeActive && (row == "Save state" || row == "Load state"))
+		v.caption = "Native state slot " + std::to_string(pickSlot);
 	else if (row == "Frame") v.caption = tr("Saved for this game");
 	else if (row == "Change disc")
 		v.caption = tr("Disc") + " " + std::to_string(discNow) + "/" + std::to_string(discs) +
@@ -82,6 +101,8 @@ void PauseMenu::build()
 		}
 		v.lines = got;
 	}
+	if (nativeAttempt && !nativeActive && row == "Resume") v.caption = "Native runtime is starting; controls are not ready yet";
+	if (!actionError.empty()) v.caption = actionError;
 	if (v.picture.empty() && gameIndex >= 0) v.picture = lib.gameAt(gameIndex).box;
 }
 void PauseMenu::draw() { build(); drawCard(); }
@@ -150,13 +171,49 @@ void PauseMenu::show()
 {
 	if (gamePid <= 0) { pending = false; return; }
 	bool ok = input.grab(true);
+	actionError.clear();
+	nativeOptions.clear();
+	nativeAttempt = native.sessionAttempt(gameSessionId, gameRom, gameLaunchEpoch);
+	nativeActive = native.connectSession(gameSessionId, gameRom, gameLaunchEpoch);
+	nativePauseHeld = nativeActive && native.pause(true);
+	if (nativeActive && !nativePauseHeld)
+	{
+		nativeActive = false;
+		native.clear();
+		actionError = "Native pause handshake failed; process group paused";
+	}
+	nativeSignalStopped = !nativePauseHeld;
+	if (nativeSignalStopped) signalTree(gamePid, SIGSTOP);
+	if (nativeActive) native.status(nativeStatus);
 	open = true;
 	pending = false;
 	sel = 0;
 	armed = -1;
 	pickSlot = raSlot;
 	discPick = discNow;
-	if (gameRA)
+	if (nativeAttempt)
+	{
+		rows = { "Resume" };
+		if (nativeActive)
+		{
+			if (nativeStatus.capabilities & BANANA_RETRO_CTL_CAP_STATE) { rows.push_back("Save state"); rows.push_back("Load state"); }
+			if (nativeStatus.capabilities & BANANA_RETRO_CTL_CAP_OPTIONS)
+			{
+				int result = native.options(nativeOptions);
+				if (result == BANANA_RETRO_CTL_OK)
+				{
+					for (const auto& option : nativeOptions)
+						if (!option.choices.empty()) rows.push_back("Option: " + option.description);
+				}
+				else if (result != BANANA_RETRO_CTL_UNSUPPORTED) actionError = nativeResultText(result);
+			}
+			rows.push_back("Restart game");
+		}
+		rows.push_back("Quit game");
+		if (gameFramable && frameMaster()) rows.push_back("Frame");
+		addQuick();
+	}
+	else if (gameRA)
 	{
 		rows = { "Resume", "Save state", "Load state" };
 		if (discs > 1) rows.push_back("Change disc");
@@ -177,18 +234,29 @@ void PauseMenu::show()
 		addQuick();
 		rows.push_back("Quit");
 	}
-	signalTree(gamePid, SIGSTOP);
 	if (FILE* f = fopen("/run/banana/overlay-open", "w")) { fputs("1\n", f); fclose(f); }
 	draw();
 	logf("quick menu: open, game frozen%s", ok ? "" : " (EVIOCGRAB failed)");
 }
-void PauseMenu::close()
+void PauseMenu::close(bool resumeGame)
 {
 	if (!open && !pending) return;
 	bool was = open;
 	open = pending = false;
 	if (!was) return;
-	signalTree(gamePid, SIGCONT);
+	if (resumeGame && nativePauseHeld)
+	{
+		if (!native.pause(false))
+		{
+			signalTree(gamePid, SIGCONT);
+			signalTree(gamePid, SIGTERM);
+			logf("native resume handshake failed; continued and terminated the session for recovery");
+		}
+	}
+	else if (resumeGame && nativeSignalStopped) signalTree(gamePid, SIGCONT);
+	nativePauseHeld = nativeSignalStopped = nativeActive = nativeAttempt = false;
+	native.clear();
+	nativeOptions.clear();
 	input.grab(false);
 	unlink("/run/banana/overlay-open");
 	hideCard();
@@ -215,6 +283,39 @@ void PauseMenu::act()
 		qWifi = settings.quickWifi(true);
 		draw();
 		return;
+	}
+	if (nativeAttempt)
+	{
+		if (row == "Save state" || row == "Load state")
+		{
+			int result = row == "Save state" ? native.saveState((unsigned)pickSlot) : native.loadState((unsigned)pickSlot);
+			if (result != BANANA_RETRO_CTL_OK) actionError = nativeResultText(result);
+			else actionError = row == "Save state" ? "Native state saved" : "Native state loaded";
+			draw(); return;
+		}
+		if (row == "Restart game")
+		{
+			int result = native.reset();
+			actionError = result == BANANA_RETRO_CTL_OK ? "Game restarted" : nativeResultText(result);
+			draw(); return;
+		}
+		if (row == "Quit game")
+		{
+			if (nativeActive)
+			{
+				int result = native.quit();
+				if (result != BANANA_RETRO_CTL_OK) { actionError = nativeResultText(result); draw(); return; }
+				nativePauseHeld = false; // quit is already committed; do not race it with a resume request
+			}
+			else if (gamePid > 0) kill(gamePid, SIGTERM);
+			close(); return;
+		}
+		if (row == "Resume") { close(); return; }
+		if (row.rfind("Option: ", 0) == 0 || row == "Frame" || row == "Brightness" || row == "Volume" || row == "Wi-Fi")
+		{
+			if (row.rfind("Option: ", 0) == 0) return;
+		}
+		else return;
 	}
 	if (row == "Fast-forward")
 	{
@@ -259,7 +360,23 @@ void PauseMenu::key(Key k)
 	else if (k == Key::LEFT || k == Key::RIGHT)
 	{
 		int d = k == Key::LEFT ? -1 : 1;
-		if (gameRA && (row == "Save state" || row == "Load state")) pickSlot = (pickSlot + d + 10) % 10;
+		if (((gameRA && !nativeAttempt) || nativeActive) && (row == "Save state" || row == "Load state")) pickSlot = (pickSlot + d + 10) % 10;
+		else if (nativeActive && row.rfind("Option: ", 0) == 0)
+		{
+			auto it = std::find_if(nativeOptions.begin(), nativeOptions.end(), [&](const NativeOption& o) { return row == "Option: " + o.description; });
+			if (it == nativeOptions.end() || it->choices.empty()) return;
+			auto current = std::find(it->choices.begin(), it->choices.end(), it->value);
+			int at = current == it->choices.end() ? 0 : (int)(current - it->choices.begin());
+			std::string value = it->choices[(at + d + (int)it->choices.size()) % (int)it->choices.size()];
+			bool restartRequired = it->restartRequired;
+			int result = native.setOption(it->key, value, restartRequired);
+			if (result == BANANA_RETRO_CTL_OK)
+			{
+				it->value = value;
+				actionError = restartRequired ? "Option saved; restart required" : "Option applied";
+			}
+			else actionError = nativeResultText(result);
+		}
 		else if (row == "Brightness") { int v = settings.quickBrightness(d); if (v >= 0) qBright = v; }
 		else if (row == "Volume") { int v = settings.quickVolume(d * 10); if (v >= 0) qVol = v; }
 		else if (row == "Change disc") discPick = (discPick - 1 + d + discs) % discs + 1;

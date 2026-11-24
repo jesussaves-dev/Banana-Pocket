@@ -1,0 +1,148 @@
+#!/bin/sh
+# Experimental native Libretro dispatcher. Called by run-retroarch only after
+# that launcher has resolved the effective installed core exactly once.
+set -u
+. /usr/libexec/banana/libretro-core.sh
+
+if [ "${1-}" = --resolved ] && [ "$#" -eq 4 ]; then
+    core_name=$2 core_path=$3 rom=$4
+else
+    requested=${1-} rom=${2-}
+    [ -n "$requested" ] && [ -n "$rom" ] || {
+        echo "usage: run-libretro CORE ROM" >&2; exit 2;
+    }
+    banana_resolve_core "$requested" "${BANANA_SYSTEM-}" "${BANANA_CORE-}" || {
+        echo "run-libretro: no installed core for $requested" >&2; exit 1;
+    }
+    core_name=$banana_core_name core_path=$banana_core_path
+fi
+
+fallback() {
+    exec /usr/libexec/banana/run-retroarch --resolved-core "$core_path" "$rom"
+}
+
+if ! banana_native_eligible "${BANANA_SYSTEM-}" "$core_name" "$rom" ||
+   ! banana_native_opted_in "${BANANA_SYSTEM-}" "$core_name"; then
+    echo "run-libretro: native runtime not eligible or not enabled; using RetroArch" >&2
+    fallback
+fi
+[ -x /usr/bin/banana-retro ] || { echo "run-libretro: banana-retro is not installed" >&2; fallback; }
+
+run_dir=${BANANA_RUN_DIR:-/run/banana}
+mkdir -p "$run_dir" || { echo "run-libretro: cannot create runtime directory" >&2; fallback; }
+session_id=${BANANA_RETRO_SESSION_ID-}
+case $session_id in
+    *[!0-9a-f]*|'') session_id= ;;
+esac
+if [ "${#session_id}" -ne 32 ]; then
+    session_id=$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+fi
+case $session_id in *[!0-9a-f]*|'') echo "run-libretro: cannot create session identity" >&2; fallback ;; esac
+[ "${#session_id}" -eq 32 ] || fallback
+socket=$run_dir/retro-$session_id.sock
+metadata=$run_dir/native-session
+ready_file=$run_dir/native-ready-$session_id
+committed_file=$run_dir/native-committed-$session_id
+error_file=$run_dir/native-error-$session_id
+rm -f "$socket" "$metadata" "$ready_file" "$committed_file" "$error_file"
+export BANANA_RETRO_SESSION_ID=$session_id
+export BANANA_RETRO_CONTROL_SOCKET=$socket
+export BANANA_RETRO_CONTROL_UI_PID=${BANANA_RETRO_CONTROL_UI_PID:-$PPID}
+export BANANA_RETRO_READY_FILE=$ready_file
+export BANANA_RETRO_COMMITTED_FILE=$committed_file
+export BANANA_RETRO_STARTUP_ERROR_FILE=$error_file
+
+/usr/bin/banana-retro "$core_path" "$rom" --wayland &
+native_pid=$!
+native_waited=0
+native_status=0
+proc_start() {
+    [ -r "/proc/$1/stat" ] || return 1
+    line=$(cat "/proc/$1/stat") || return 1
+    rest=${line##*) }
+    set -- $rest
+    [ "$#" -ge 20 ] || return 1
+    eval 'printf "%s" "${20}"'
+}
+publish_session() {
+    state=$1
+    process_pid=$2
+    child_start=$(proc_start "$process_pid") || return 1
+    started=$(date +%s) || return 1
+    tmp=$metadata.$$
+    saved_umask=$(umask)
+    umask 077
+    if ! printf 'v1 %s %s %s %s %s %s %s\n' "$session_id" "$process_pid" "$child_start" "$core_name" "$started" "$state" "$rom" > "$tmp"; then
+        umask "$saved_umask"
+        rm -f "$tmp"
+        return 1
+    fi
+    umask "$saved_umask"
+    mv -f "$tmp" "$metadata" || { rm -f "$tmp"; return 1; }
+    return 0
+}
+publish_session starting "$$" || :
+reap_native() {
+    if [ "$native_waited" -eq 0 ]; then
+        wait "$native_pid"
+        native_status=$?
+        native_waited=1
+    fi
+    return "$native_status"
+}
+forward_term() { kill -TERM "$native_pid" 2>/dev/null || :; reap_native || :; }
+forward_int() { kill -INT "$native_pid" 2>/dev/null || :; reap_native || :; }
+trap forward_term TERM HUP
+trap forward_int INT
+
+# Bound startup fallback to the pre-readiness window. The unique socket and
+# runtime readiness file cannot be inherited from an earlier PID/session.
+attempt=0
+ready=0
+while [ "$attempt" -lt 100 ]; do
+    [ -f "$metadata" ] || publish_session starting "$native_pid" || :
+    if [ -f "$ready_file" ]; then
+        ready=1
+        break
+    fi
+    kill -0 "$native_pid" 2>/dev/null || break
+    sleep 0.05
+    attempt=$((attempt + 1))
+done
+if [ -f "$ready_file" ]; then ready=1; fi
+if [ "$ready" -eq 1 ]; then
+    if ! publish_session ready "$native_pid"; then
+        echo "run-libretro: native readiness metadata could not be published" >&2
+        if kill -0 "$native_pid" 2>/dev/null; then
+            kill -TERM "$native_pid" 2>/dev/null || :
+            reap_native || :
+            result=1
+        else
+            reap_native
+            result=$?
+        fi
+        rm -f "$socket" "$ready_file"
+        exit "$result"
+    fi
+    reap_native
+    result=$?
+    rm -f "$metadata" "$ready_file" "$committed_file" "$error_file"
+    exit "$result"
+fi
+
+reap_native
+startup_result=$?
+if [ -e "$committed_file" ]; then
+    echo "run-libretro: native data commit was attempted before readiness; refusing runtime switch" >&2
+    rm -f "$socket" "$metadata" "$ready_file" "$committed_file" "$error_file"
+    exit "$startup_result"
+fi
+case $(cat "$error_file" 2>/dev/null) in
+    wayland-init|input-init|signal-mask|signal-init|core-load|persistence-init|persistence-load|audio-format|audio-init|control-init|readiness-publish|presentation|runtime-start)
+        startup_kind=$(cat "$error_file") ;;
+    *) startup_kind=process-exit ;;
+esac
+rm -f "$socket" "$metadata" "$ready_file" "$error_file"
+echo "run-libretro: native startup error=$startup_kind status=$startup_result before readiness; falling back to RetroArch" >&2
+rm -f "$committed_file"
+fallback
