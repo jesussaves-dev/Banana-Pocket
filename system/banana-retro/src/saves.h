@@ -6,6 +6,14 @@
 
 enum { SAVES_STATE_SLOTS = 10 };
 
+enum saves_legacy_result {
+	SAVES_LEGACY_NONE,
+	SAVES_LEGACY_READY,
+	SAVES_LEGACY_ALREADY_IMPORTED,
+	SAVES_LEGACY_AMBIGUOUS,
+	SAVES_LEGACY_INVALID
+};
+
 struct saves;
 typedef bool (*saves_state_fn)(void *context, void *buffer, size_t size);
 typedef bool (*saves_unserialize_fn)(void *context, const void *buffer, size_t size);
@@ -17,6 +25,12 @@ struct saves *saves_open_with_options(const char *root, const char *core_path,
 void saves_close(struct saves *saves);
 bool saves_load_memory(struct saves *saves, void *sram, size_t sram_size,
 		       void *rtc, size_t rtc_size);
+/* Preview and import uncompressed RetroArch SRAM/RTC files from /data/saves.
+ * Import copies data into the native generation and never changes the source. */
+enum saves_legacy_result saves_legacy_preview(struct saves *saves,
+		const char *legacy_root, size_t sram_size, size_t rtc_size);
+enum saves_legacy_result saves_legacy_import(struct saves *saves,
+		const char *legacy_root, size_t sram_size, size_t rtc_size);
 bool saves_load_state(struct saves *saves, unsigned slot, void *data, size_t size);
 bool saves_commit(struct saves *saves, const void *sram, size_t sram_size,
 		  const void *rtc, size_t rtc_size, int state_slot,

@@ -42,6 +42,7 @@ static bool test_event(enum saves_test_event event)
 struct saves {
 	int directory_fd;
 	unsigned char core[HASH_SIZE], content[HASH_SIZE], path[HASH_SIZE], options[HASH_SIZE];
+	char core_file[NAME_MAX + 1], content_file[NAME_MAX + 1];
 };
 
 struct manifest {
@@ -287,7 +288,10 @@ struct saves *saves_open_with_options(const char *root,const char *core_path,con
 	int root_fd=ok?make_dirs(root):-1;
 	if(root_fd<0)ok=false;
 	if(ok){struct sha256 h;unsigned char key[HASH_SIZE];sha_init(&h);sha_update(&h,s->core,HASH_SIZE);sha_update(&h,s->content,HASH_SIZE);sha_update(&h,s->path,HASH_SIZE);sha_update(&h,s->options,HASH_SIZE);sha_final(&h,key);static const char hex[]="0123456789abcdef";char leaf[HASH_SIZE*2+1];for(unsigned i=0;i<HASH_SIZE;i++){leaf[2*i]=hex[key[i]>>4];leaf[2*i+1]=hex[key[i]&15];}leaf[64]=0;
-		if(mkdirat(root_fd,leaf,0700)<0&&errno!=EEXIST)ok=false;
+		const char *cb=strrchr(core,'/'),*rb=strrchr(content,'/');cb=cb?cb+1:core;rb=rb?rb+1:content;
+		if(strlen(cb)>NAME_MAX||strlen(rb)>NAME_MAX)ok=false;
+		else{memcpy(s->core_file,cb,strlen(cb)+1);memcpy(s->content_file,rb,strlen(rb)+1);}
+		if(ok&&mkdirat(root_fd,leaf,0700)<0&&errno!=EEXIST)ok=false;
 		int identity_fd=-1;
 		if(ok){identity_fd=openat(root_fd,leaf,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);if(identity_fd<0)ok=false;}
 		struct stat st;
@@ -302,6 +306,72 @@ struct saves *saves_open_with_options(const char *root,const char *core_path,con
 struct saves *saves_open(const char *root,const char *core_path,const char *content_path)
 {return saves_open_with_options(root,core_path,content_path,"banana-retro-options-v1:none");}
 void saves_close(struct saves *s){if(s){if(s->directory_fd>=0)close(s->directory_fd);free(s);}}
+static bool legacy_path(char out[PATH_MAX],const char *root,const char *directory,
+		const char *stem,const char *suffix)
+{
+	int n=directory&&*directory?snprintf(out,PATH_MAX,"%s/%s/%s.%s",root,directory,stem,suffix):
+		snprintf(out,PATH_MAX,"%s/%s.%s",root,stem,suffix);
+	return n>0&&n<PATH_MAX;
+}
+static unsigned legacy_candidates(struct saves *s,const char *root,const char *suffix,
+				  char paths[3][PATH_MAX])
+{
+	char stem[NAME_MAX+1],core[NAME_MAX+1];
+	size_t n=strlen(s->content_file);if(n>NAME_MAX)return 0;
+	memcpy(stem,s->content_file,n+1);char *dot=strrchr(stem,'.');if(dot)*dot=0;
+	if(!*stem)return 0;
+	memcpy(core,s->core_file,strlen(s->core_file)+1);
+	char *ext=strstr(core,"_libretro.so");if(ext&&ext[12]=='\0')*ext=0;
+	unsigned count=0;
+	if(legacy_path(paths[count],root,NULL,stem,suffix))count++;
+	if(count<3&&legacy_path(paths[count],root,core,stem,suffix))count++;
+	if(count<3&&strcmp(core,s->core_file)!=0&&legacy_path(paths[count],root,s->core_file,stem,suffix))count++;
+	return count;
+}
+static int legacy_find(struct saves *s,const char *root,const char *suffix,size_t expected,
+		       char selected[PATH_MAX])
+{
+	char paths[3][PATH_MAX];unsigned count=legacy_candidates(s,root,suffix,paths),found=0;
+	for(unsigned i=0;i<count;i++){
+		int fd=open(paths[i],O_RDONLY|O_CLOEXEC|O_NOFOLLOW);if(fd<0){if(errno==ENOENT)continue;return -1;}
+		struct stat st;bool valid=fstat(fd,&st)==0&&S_ISREG(st.st_mode)&&st.st_size>=0&&
+			(uintmax_t)st.st_size==(uintmax_t)expected;
+		if(close(fd)<0)valid=false;
+		if(!valid)return -1;
+		if(++found==1)memcpy(selected,paths[i],strlen(paths[i])+1);
+	}
+	return (int)found;
+}
+enum saves_legacy_result saves_legacy_preview(struct saves *s,const char *root,size_t ss,size_t rs)
+{
+	if(!s||!root||!*root||ss>MAX_MEMORY||rs>MAX_MEMORY||ss+rs>MAX_MEMORY||ss==0)return SAVES_LEGACY_INVALID;
+	struct manifest existing={0};if(find_generation(s,&existing))return SAVES_LEGACY_ALREADY_IMPORTED;
+	char sp[PATH_MAX],rp[PATH_MAX];int sn=legacy_find(s,root,"srm",ss,sp);
+	int rn=rs?legacy_find(s,root,"rtc",rs,rp):0;
+	if(sn<0||rn<0)return SAVES_LEGACY_INVALID;
+	if(sn>1||rn>1)return SAVES_LEGACY_AMBIGUOUS;
+	if(sn==0)return rn?SAVES_LEGACY_INVALID:SAVES_LEGACY_NONE;
+	if(rs&&rn==0)return SAVES_LEGACY_INVALID;
+	return SAVES_LEGACY_READY;
+}
+enum saves_legacy_result saves_legacy_import(struct saves *s,const char *root,size_t ss,size_t rs)
+{
+	enum saves_legacy_result result=saves_legacy_preview(s,root,ss,rs);
+	if(result!=SAVES_LEGACY_READY)return result;
+	char sp[PATH_MAX],rp[PATH_MAX];if(legacy_find(s,root,"srm",ss,sp)!=1||
+		(rs&&legacy_find(s,root,"rtc",rs,rp)!=1))return SAVES_LEGACY_INVALID;
+	unsigned char *memory=malloc(ss+rs);if(!memory)return SAVES_LEGACY_INVALID;
+	const char *source[2]={sp,rp};size_t sizes[2]={ss,rs};bool ok=true;
+	for(unsigned i=0;i<2&&ok;i++){
+		if(!sizes[i])continue;
+		int fd=open(source[i],O_RDONLY|O_CLOEXEC|O_NOFOLLOW);if(fd<0){ok=false;break;}
+		ok=fd_regular_size(fd,sizes[i]);size_t off=0;
+		while(ok&&off<sizes[i]){ssize_t n=read(fd,memory+(i?ss:0)+off,sizes[i]-off);if(n>0)off+=(size_t)n;else if(n<0&&errno==EINTR)continue;else ok=false;}
+		if(close(fd)<0)ok=false;
+	}
+	if(ok)ok=saves_commit(s,memory,ss,memory+ss,rs,-1,NULL,0);
+	free(memory);return ok?SAVES_LEGACY_READY:SAVES_LEGACY_INVALID;
+}
 bool saves_state_capture(saves_state_fn serialize,void *context,void *buffer,size_t size)
 {return serialize&&buffer&&size>0&&serialize(context,buffer,size);}
 bool saves_state_restore(saves_unserialize_fn unserialize,void *context,const void *buffer,size_t size)

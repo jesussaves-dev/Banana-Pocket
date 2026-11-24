@@ -97,6 +97,34 @@ int main(int argc,char **argv)
 	assert(!saves_load_memory(s,sram,sizeof(sram),rtc,sizeof(rtc)));
 	assert(saves_commit(s,sram,sizeof(sram),rtc,sizeof(rtc),0,state0,sizeof(state0)));
 	uint8_t got_sram[4]={0},got_rtc[2]={0},got_state[5]={0};assert(saves_load_memory(s,got_sram,sizeof(got_sram),got_rtc,sizeof(got_rtc)));assert(!memcmp(sram,got_sram,sizeof(sram))&&!memcmp(rtc,got_rtc,sizeof(rtc)));assert(saves_load_state(s,0,got_state,sizeof(got_state))&&!memcmp(state0,got_state,sizeof(state0)));
+	/* Preview/import follows production discovery and preserves read-only legacy files. */
+	char legacy[4096],legacy_sram[4096],legacy_rtc[4096],legacy_native[4096];
+	assert(snprintf(legacy,sizeof(legacy),"%s/legacy",base)>0&&mkdir(legacy,0700)==0);
+	assert(snprintf(legacy_sram,sizeof(legacy_sram),"%s/rom.srm",legacy)>0);
+	assert(snprintf(legacy_rtc,sizeof(legacy_rtc),"%s/rom.rtc",legacy)>0);
+	assert(snprintf(legacy_native,sizeof(legacy_native),"%s/legacy-native",base)>0);
+	put(legacy_sram,sram,sizeof(sram));put(legacy_rtc,rtc,sizeof(rtc));
+	struct saves *legacy_store=saves_open(legacy_native,core,content);assert(legacy_store);
+	assert(saves_legacy_preview(legacy_store,legacy,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_READY);
+	assert(chmod(legacy_sram,0400)==0&&chmod(legacy_rtc,0400)==0);
+	assert(saves_legacy_import(legacy_store,legacy,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_READY);
+	assert(saves_legacy_preview(legacy_store,legacy,sizeof(sram),sizeof(rtc))==SAVES_LEGACY_ALREADY_IMPORTED);
+	memset(got_sram,0,sizeof(got_sram));memset(got_rtc,0,sizeof(got_rtc));
+	assert(saves_load_memory(legacy_store,got_sram,sizeof(got_sram),got_rtc,sizeof(got_rtc)));
+	assert(!memcmp(got_sram,sram,sizeof(sram))&&!memcmp(got_rtc,rtc,sizeof(rtc)));
+	int legacy_fd=open(legacy_sram,O_RDONLY);assert(legacy_fd>=0);uint8_t legacy_byte=0;assert(read(legacy_fd,&legacy_byte,1)==1&&legacy_byte==sram[0]);assert(close(legacy_fd)==0);
+	saves_close(legacy_store);
+	/* Wrong lengths and duplicate root/per-core candidates fail closed. */
+	char bad_legacy[4096],bad_sram[4096],bad_core_dir[4096],bad_core_file[4096];
+	assert(snprintf(bad_legacy,sizeof(bad_legacy),"%s/legacy-bad",base)>0&&mkdir(bad_legacy,0700)==0);
+	assert(snprintf(bad_sram,sizeof(bad_sram),"%s/rom.srm",bad_legacy)>0);put(bad_sram,"x",1);
+	struct saves *bad_store=saves_open(legacy_native,core,content2);assert(bad_store);
+	assert(saves_legacy_preview(bad_store,bad_legacy,4,0)==SAVES_LEGACY_INVALID);
+	put(bad_sram,sram,sizeof(sram));
+	assert(snprintf(bad_core_dir,sizeof(bad_core_dir),"%s/core.so",bad_legacy)>0&&mkdir(bad_core_dir,0700)==0);
+	assert(snprintf(bad_core_file,sizeof(bad_core_file),"%s/rom.srm",bad_core_dir)>0);put(bad_core_file,sram,sizeof(sram));
+	assert(saves_legacy_preview(bad_store,bad_legacy,4,0)==SAVES_LEGACY_AMBIGUOUS);
+	saves_close(bad_store);
 	/* A second committed generation retains untouched explicit slots. */
 	uint8_t sram2[]={7,7,7,7};assert(saves_commit(s,sram2,sizeof(sram2),rtc,sizeof(rtc),-1,NULL,0));memset(got_state,0,sizeof(got_state));assert(saves_load_state(s,0,got_state,sizeof(got_state))&&!memcmp(state0,got_state,sizeof(state0)));
 	/* A truncated newest payload is rejected and the previous generation remains loadable. */
