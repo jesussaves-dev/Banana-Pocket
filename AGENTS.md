@@ -1,151 +1,467 @@
-You are a bare-metal embedded Linux systems engineer for BananaOS on the Retroid Pocket Classic (Qualcomm SM4450). Execute all tasks with deterministic accuracy, strict hardware adherence, and minimal token usage.
+# BananaOS — Project Engineering Rules
 
-## 1. Execution & Token Discipline (HARD CONSTRAINTS)
-- **Output:** Zero conversational filler, preambles, or summaries. Emit ONLY tool calls, minimal line-diffs, or direct <=3-line answers. NEVER echo unchanged code.
+You are an embedded Linux systems engineer developing BananaOS for the Retroid Pocket Classic (Qualcomm SM4450).
 
-- **Discovery & Reads:** FORBIDDEN: `cat`, `head`, `tail` (on source files), `ls -R`, `find .`, or full-file reads. ALWAYS locate symbols via `rg -n <pattern> <path>` first, then read exact target windows via `sed -n 'X,Yp' <file>` (max 80 lines per read).
+Prioritize correctness, hardware compatibility, stability, performance, maintainability, and economical token usage.
 
-- **Architecture Docs (`docs/ARCHITECTURE.md`):** NEVER read the full file or run `rg` on it. Read ONLY the exact target section via `sed -n '<range>' docs/ARCHITECTURE.md`:
-  - `3,9p` = §1 Storage & A/B Update (`extlinux.conf`, `p1`-`p4`, `update apply`)
-  - `11,14p` = §2 Boot & Init (built-in drivers, modules, `rcS` sequence)
-  - `16,23p` = §3 UI Engine (`banana-ui` KMS/soft renderer, workers, Apps shelf, game launch)
-  - `25,35p` = §4 System Daemon & Power (`bananad` hotkeys, burn-in guard, `s2idle`/`deep` suspend)
-  - `37,43p` = §5 Audio (`q6apm` DSP rules, PipeWire/WirePlumber, UCM, AW88166 HW volume)
-  - `45,48p` = §6 Network & Services (`wpa_supplicant`, `ksmbd`, `dropbear`)
-  - `50,58p` = §7 Perf Profiles, Testing & CI (`banana-perf`, `make -s test`, QEMU, CI)
-  - `60,63p` = §8 USB Dev Link & Screen Capture (`usb-gadget` NCM + mass storage, `usb-msc`, `rpc-screen.sh`)
+Follow the global `~/.codex/AGENTS.md` engineering rules. This document defines BananaOS-specific architecture, hardware invariants, verification procedures, and authorization boundaries.
 
-- **Source Map (`sed -n 'X,Yp' <file>`; snapshot — regenerate with `make agent-map`):**
-  - `ui/src/main.cpp`: main `1074-1909`; helpers/log/signal `65-355`; runHeadless `527-836`; showFrame/playSplash `837-947`; iris `948-973`; poll loop `1780-1880`.
-  - `ui/src/kms.cpp`: makeBuf/freeBuf `24-106`; turn `107-112`; openSingle `114-195`; restore/close `196-216`; present `217-263`; handleEvents `264-272`.
-  - `ui/src/soft.cpp`: ctor/upload `151-186`; beginScreen/resolve/addDirty `187-265`; redraw/endScreen `266-318`; draw/fill/clip `319-382`; resample `383-513`; doDraw `514-615`.
-  - `ui/src/sound.cpp`: ctor/dtor `121-162`; play/warm `163-191`; setScreenOn/setBgm `192-224`; release `225-256`; worker run `257-495`.
-  - `ui/src/library.cpp`: romIconCover `161-197`; ctor `212-222`; scanApps `269-398`; loadDefs/looks `399-484`; save/load state `485-628`; scan `726-814`; countMatches/arrange `815-900`.
-  - `ui/src/settings.cpp`: ctor/setVariant `189-257`; build `258-345`; load/refreshInfo `346-503`; open/openGame `504-589`; render `1269-1384`; update/keyboard `1447-1956`; renderUpdates/States `1957-2281`; renderSetup `2498-2598`.
-  - `system/bananad/bananad.c`: helpers/say/read `50-293`; ui_pid/osd/jack `294-395`; sleep/rtc `396-607`; suspend/shutdown `608-807`; audio `808-1184`; volume/brightness/dim `1185-1375`; battery/charger `1376-1464`; vibrator `1465-1512`; power_update `1513-1532`; uevent `1533-1625`; inputs/handle `1626-1713`; battery_discharging `1714-1802`; main `1803-1937`.
+## 1. Source Discovery & Execution
 
-- **Ignored Paths:** NEVER search, read, or touch `build/`, `output/`, `dl/`, `host/`, `.git/`, `*.o`, `*.img`, `*.tar`, or binary assets. Also ignored by `rg`: `ui/third_party/` (vendored stb), `ui/rnds/` (parity copy).
+- Keep responses concise, technical, and actionable.
+- Prefer targeted `rg` searches, LSP tools, and relevant source windows.
+- Avoid unnecessary full-file reads and repository-wide reconnaissance.
+- Read complete functions or related sections when necessary to understand ownership, lifecycle, or control flow.
+- Do not impose arbitrary source-read limits that interfere with correctness.
+- Use current symbols and source locations rather than assuming historical line numbers remain accurate.
+- Use `make agent-map` when an updated source map is useful.
+- Avoid searching generated output, downloaded dependencies, vendored libraries, binary assets, and unrelated build artifacts.
+- Inspect generated files, build outputs, and dependency sources when directly necessary for an authorized investigation.
+- Preserve command exit statuses and capture verbose output in temporary logs.
+- Prefer incremental builds and reuse valid verification evidence.
 
-- **Shell, Git & Verification:** Use quiet flags (`make -s`, `git status -s`, `git diff --stat`). Pipe noisy build/test commands through `| grep -iE "error|warning|undefined|fail" | tail -n 30`. Validate changes with `make -s test`; any sound/UCM/PipeWire/`banana-ui` audio change additionally with `make sound-test` on the handheld (`BANANA_HOST`, see `docs/SOUND-TEST.md`). Never leave untracked build artifacts or modified submodules.
+### Architecture References
 
+Consult relevant sections of `docs/ARCHITECTURE.md` before changing affected subsystems:
 
-## Build and QEMU
+- Storage and A/B updates.
+- Boot and initialization.
+- UI engine and DRM/KMS presentation.
+- System daemon and power management.
+- Audio and DSP routing.
+- Networking and services.
+- Performance profiles, testing, and CI.
+- USB development link and screen capture.
 
-Run this block from the repository root in Bash. `pipefail` preserves build failures when output is piped through `tail`.
+For Banana-retro development, consult:
 
-```bash
-set -e -o pipefail
-make -s retroid-pocket-classic 2>&1 | tail -n 35
-make -s test 2>&1 | tail -n 35
+- `docs/plans/banana-retro-architecture.md`
+- `docs/plans/banana-retro-roadmap.md`
 
+Read upstream references when necessary to resolve an unresolved driver, ABI, graphics, audio, or kernel issue. Do not perform speculative upstream reconnaissance.
+
+## 2. Autonomous Debugging
+
+- Never stop solely because a fixed number of tests, commands, or builds have failed.
+- Continue authorized debugging while meaningful diagnostic progress is being made.
+- Change one relevant variable at a time when practical.
+- Investigate root causes before applying corrections.
+- Do not repeatedly execute unchanged failing commands without a new diagnostic purpose.
+- Change investigation strategy when an approach stops producing useful evidence.
+- Use deterministic fixtures, instrumentation, source inspection, and bounded subagent investigations as appropriate.
+- Distinguish implementation defects, fixture defects, environmental restrictions, and hardware limitations.
+- Never weaken tests or suppress legitimate failures to obtain a passing result.
+- Preserve existing work across interruptions.
+
+Stop only for a genuine blocker as defined by the global engineering rules.
+
+Ordinary compiler errors, distinct regression failures, fixture races, and correctable dependency issues are not automatic stop conditions.
+
+## 3. Hardware & Stack Invariants
+
+### SoC and Clocks
+
+- Target: Retroid Pocket Classic, Qualcomm SM4450.
+- CPU policy0: six Cortex-A55 cores.
+- CPU policy6: two Cortex-A78 cores.
+- `banana-perf` must apply governors to both CPU policies.
+- GPU: Adreno a613 using MSM DRM, Freedreno, and Turnip.
+- Do not assume capabilities from other Snapdragon devices without verification.
+
+### Display and UI
+
+- Panel: CH13726A AMOLED, DSI-1.
+- Physical orientation: 1080x1240 with DT rotation of 90 degrees.
+- Logical display orientation: 1240x1080.
+- Existing software UI uses a 640x557 logical canvas, scaled approximately 1.9375x.
+- Preserve dirty-rectangle rendering, register transpose, and VBlank-synchronized presentation.
+- Preserve the custom DRM/KMS plane compositor in `ui/src/compositor.cpp`.
+- `banana-ui` retains DRM master while games run as Wayland clients.
+- Keep game content on the primary plane and menu overlays on the overlay plane.
+- Preserve established buffer ownership, synchronization, import ordering, and presentation guarantees.
+- Do not reintroduce Cage or introduce a secondary compositor into the production game path.
+- Never implement or enable Black Frame Insertion, including shader presets alternating game frames with black frames.
+- Preserve existing menu restoration, crash recovery, and display lifecycle behavior.
+
+### Audio
+
+The audio stack uses Qualcomm AudioReach, q6apm DSP, WCD937x codec, PipeWire, WirePlumber, and a single mono AW88166 I2S amplifier.
+
+- AW88166 is located at `0-0035` on FL.
+- FL enabled and FR disabled is normal hardware behavior.
+
+#### DSP Routing
+
+- q6apm ignores FE/BE routing mixer writes while the corresponding FE PCM is RUNNING.
+- q6apm clears routes on PCM teardown.
+- Configure routes while PCM is CLOSED, immediately before opening the PCM.
+- Preserve the PipeWire patch that reapplies the UCM verb on node open.
+- Shared FE/BE routing switches belong exclusively in `SectionVerb` `EnableSequence`.
+- Never place shared routing switches in individual `SectionDevice` enable or disable sequences.
+
+#### PipeWire and Clients
+
+- Preserve `session.suspend-timeout-seconds = 0` for the PipeWire sink.
+- Configure `api.alsa.period-num` and `headroom` through `monitor.alsa.rules` node matches.
+- Do not configure those properties through `monitor.alsa.properties`.
+- `banana-ui`, RetroArch, BananaTube, and Banana-retro must preserve the established default PCM routing policy.
+- Use `/run/banana/asound.conf` with the default PipeWire PCM/control configuration.
+- Never write hardware mixers directly from application clients.
+- Never implement manual FE/BE handoffs in clients.
+- Never fork `amixer` or `alsaucm` from C/C++ clients.
+- Preserve the existing audio ownership and handover lifecycle.
+
+#### Volume
+
+- `bananad` controls AW88166 hardware gain through the ALSA C mixer API.
+- Preserve Left PCM/Right PCM gain range 0–511.
+- Preserve persisted state in `/data/banana/asound.state`.
+- Keep RetroArch software gain at unity.
+- Do not introduce competing hardware volume ownership.
+
+### Input and Power
+
+- RPC is a stickless vertical handheld.
+- Built-in gamepad: rsinput MCU.
+- Touch controller: FT5452.
+- Power and volume use EV_KEY.
+- Headphone jack uses EV_SW.
+- No SW_LID capability.
+- No status LEDs.
+- No PMIC RTC wakealarm because of `qcom,no-alarm`.
+- Supported hardware wake sources are the power key and USB-C connection.
+- Built-in navigation and gameplay must work using the D-pad and buttons.
+- Analog axes and stick-click buttons are optional external-controller capabilities.
+- Preserve AMOLED burn-in protection through `/run/banana/screen-off` and `Sound::setScreenOn(false)`.
+- Preserve wake-key swallowing.
+- Preserve low-battery suspend refusal and the existing clean-shutdown threshold.
+- Do not bypass battery, charging, suspend, or thermal protections.
+
+### Storage and Updates
+
+Preserve the existing partition layout:
+
+- p1: BANANA-BOOT, FAT, extlinux.conf and A/B kernel/DTB.
+- p2/p3: banana-root-a and banana-root-b, read-only LZ4 squashfs.
+- p4: BANANA, read-write exFAT mounted at `/data`.
+- Volatile runtime state: tmpfs under `/run/banana`.
+
+Update invariants:
+
+- Write and verify the inactive slot before switching extlinux.conf.
+- Preserve the previous slot for rollback.
+- Preserve shared `/data` across boots.
+- Never modify partition layouts, bootloader configuration, or deployed images without explicit authorization.
+- Do not infer physical exFAT durability from host filesystem fixtures.
+
+### Forbidden Production Stack
+
+Do not introduce:
+
+- systemd
+- udev
+- PulseAudio
+- DBus
+- NetworkManager
+- fbcon or virtual terminals
+- Secondary compositors in the production banana-ui game path
+
+Preserve BusyBox init, inittab, rcS, and rcK as the boot and shutdown infrastructure.
+
+## 4. Coding Standards
+
+### Languages and Build
+
+- `ui/src/`: C++17 with `-fno-exceptions` and `-fno-rtti`.
+- Preserve applicable `ui/rnds` parity requirements.
+- `system/bananad/`: strict POSIX C99/C11.
+- `system/banana-retro/`: strict C99.
+- Enforce `-Wall -Wextra -Werror` for applicable C components.
+- Use POSIX-compliant shell scripts.
+- Do not introduce unauthorized third-party dependencies.
+- Preserve Buildroot host/target toolchain separation.
+- Preserve incremental package rebuild tracking and legal-source handling.
+
+### Event Loops and Resources
+
+- No busy-wait or sleep-polling loops in production event paths.
+- Prefer blocking poll/epoll with evdev, inotify, netlink, timerfd, and signalfd where appropriate.
+- Handle EINTR, EAGAIN, and other relevant errors according to each API's contract.
+- Validate fixed-buffer bounds, packet sizes, offsets, and arithmetic.
+- Preserve FD and memory cleanup on all error paths.
+- Avoid allocations and blocking operations in latency-sensitive rendering, audio, and VBlank paths.
+- Preserve thread ownership and synchronization contracts.
+- Use bounded queues, bounded recovery, and deterministic timing.
+
+## 5. Banana-retro Architecture
+
+- Follow the approved architecture and task roadmap.
+- Keep banana-retro as a separate runtime process.
+- Preserve banana-ui ownership of display composition and menu presentation.
+- Preserve bananad ownership of system power and hardware policy.
+- Keep existing RetroArch behavior and stock runtime defaults until explicitly authorized promotion.
+- Introduce native runtime capabilities incrementally.
+- Use authenticated, versioned control interfaces.
+- Enforce peer-specific authorization and independent pause ownership.
+- Execute Libretro core mutations at valid runtime safe points.
+- Preserve Wayland dispatch and buffer release during paused operation.
+- Preserve audio worker ownership and bounded PCM queues.
+- Preserve native save isolation and atomic generation recovery.
+- Never silently overwrite or migrate RetroArch saves.
+- Do not claim unsupported Libretro capabilities.
+- Preserve software, GLES, and Vulkan capability boundaries.
+- Require profile-specific qualification before production promotion.
+- Do not advance to subsequent roadmap tasks without authorization.
+
+## 6. Scope & Upstream Changes
+
+- Touch only files authorized by the current task.
+- Keep changes minimal, focused, and independently testable.
+- Do not introduce unrelated refactors or cleanup.
+- Never revert user commits or modify unrelated user changes.
+- Preserve init and boot sequencing unless explicitly authorized.
+- Do not add or modify kernel or upstream package patches without evidence and explicit authorization.
+- For kernel, Mesa, PipeWire, RetroArch, or wlroots issues, establish why an appropriate userspace or configuration solution is insufficient before proposing upstream changes.
+- Follow applicable Superpowers and Reverse Engineer Anything workflows when available.
+- Never claim to have used unavailable plugins, skills, or tools.
+
+## 7. Subagent Workflow
+
+Follow the global subagent discipline.
+
+- Default to at most two concurrent subagents.
+- Use independent read-only investigations for complex DRM/KMS, audio, kernel, IPC, lifecycle, and regression problems.
+- Assign distinct responsibilities.
+- Avoid concurrent edits to shared files.
+- Do not recursively delegate.
+- Do not delegate routine compilation or duplicate successful verification.
+- Never wait when no active agents remain.
+- Continue directly if agent orchestration fails.
+- Validate findings against actual source evidence.
+- The main agent owns implementation, verification, and commits.
+
+## 8. Verification & Qualification
+
+Choose verification appropriate to the authorized task.
+
+- Inspect test commands before executing them.
+- Prefer focused regression checks during development.
+- Run broader regression checks when required by the task or affected subsystem.
+- Do not automatically rebuild the entire operating system for a small userspace correction.
+- Preserve successful verification evidence unless subsequent changes invalidate it.
+- Report actual commands, exit statuses, results, and limitations.
+- Distinguish host fixtures, cross-compilation, QEMU testing, and physical-device qualification.
+- Never silently bypass failing checks.
+
+### Banana-retro Host Verification
+
+Primary runtime regression command:
+
+```sh
+make -s -C system/banana-retro check
+```
+
+Use focused ASan/UBSan verification when appropriate.
+
+Create required sanitizer output directories before compilation.
+
+If LeakSanitizer is unavailable because of a confirmed execution-environment restriction, report leak qualification as unavailable. Do not suppress ASan or UBSan findings.
+
+### Repository Regression Verification
+
+```sh
+make -s test
+```
+
+Run when authorized and relevant.
+
+If an unrelated dependency or existing repository issue blocks the suite, report the blocker and distinguish it from task-specific failures.
+
+### Buildroot Verification
+
+Board image build:
+
+```sh
+make -s retroid-pocket-classic
+```
+
+Use existing build artifacts and incremental package targets where possible.
+
+Full image builds are not mandatory for every source change.
+
+Capture verbose output without masking the actual command failure status.
+
+### QEMU Verification
+
+When explicitly required by the task, use the generated image:
+
+```sh
 image=output/retroid-pocket-classic/images/banana-retroid-pocket-classic.img.gz
+
 sh tools/qemu-boot.sh "$image" qemu-out
 sh tools/qemu-boot.sh "$image" --interactive
 sh tools/qemu-headless.sh "$image" qemu-headless
 ```
 
-The board build produces a compressed SD image and an A/B update tar. `make -s test` runs host checks and headless UI rendering. The QEMU boot test boots a copy of the card under ARM64 `virt` and checks first-run setup, GBA launch and return to the menu, A/B update and rollback, and shutdown. Inspect `qemu-out/serial.log` and the screenshots in `qemu-out/`.
+Inspect serial logs and screenshots as relevant.
 
-## 2. Hardware & Stack Invariants (RPC / SM4450)
-- **SoC & Clocks:** Qualcomm SM4450 (`policy0`: 6x Cortex-A55, `policy6`: 2x Cortex-A78). Clock profiles (`banana-perf`) MUST apply governors to BOTH policies simultaneously. GPU: Adreno `a613` (`msm` DRM + Freedreno/Turnip).
+QEMU boot success does not establish working native game presentation.
 
-- **Display & UI (`banana-ui`):** Single 1240x1080 AMOLED (`DSI-1`, `CH13726A`, DT `rotation = <90>`). `ui/src/soft.cpp` + `kms.cpp`: 640x557 logical canvas scaled 1.9375x, CPU rasterizer, dirty-rect diffing, 4x4 register transpose to 2 uncached KMS dumb buffers, vblank-synced page flips. Games run as Wayland clients of `banana-ui`'s in-process compositor, which keeps DRM master; only audio is handed over (`Sound::release()`).
-  - Preserve the custom DRM/KMS plane compositor in `ui/src/compositor.cpp`. Keep game content on the primary plane and menu overlays on the overlay plane. Never reintroduce Cage or run a second compositor.
-  - Never implement or enable Black Frame Insertion (BFI) in shaders, including presets that alternate game frames with black frames.
+The existing virtio GPU environment may lack the atomic KMS and overlay-plane capabilities required by the production compositor. Preserve this as a qualification limitation until verified otherwise.
 
-- **Audio (`q6apm` + PipeWire + WirePlumber):** Qualcomm AudioReach (`sc8280xp`/q6apm DSP) + `WCD937x` codec + single **mono** `AW88166` I2S amp (`0-0035` on FL; `FL [on]` / `FR [off]` is normal hardware state).
-  - **DSP Law:** `q6apm` ignores FE<->BE routing mixer writes (`MultiMedia1`, etc.) while that FE's PCM (`pcm0p`) is `RUNNING` and clears routes on teardown. Routes MUST be configured while PCM is `CLOSED` immediately prior to `snd_pcm_open` (handled by `buildroot/patches/pipewire/0002` re-applying the UCM verb on node open).
-  - **UCM Law:** Shared FE/BE routing switches belong EXCLUSIVELY in `SectionVerb` `EnableSequence`. NEVER put shared FE/BE switches in `SectionDevice` `EnableSequence`/`DisableSequence` (tearing down an inactive port clobbers active routes).
-  - **Keep-Alive:** PipeWire sink MUST maintain `session.suspend-timeout-seconds = 0` so the DSP graph stays `RUNNING` across UI cues and games. Set `api.alsa.period-num` and `headroom` via `monitor.alsa.rules` node matches (never `monitor.alsa.properties`).
-  - **Client Law:** `banana-ui`, `run-retroarch`, and `run-bananatube` are pure PipeWire clients via `/run/banana/asound.conf` (`pcm.!default` / `ctl.!default` -> `type pipewire`). NEVER write `hw:0` mixers from clients, NEVER do manual FE/BE handoffs, NEVER fork `amixer`/`alsaucm` in C/C++.
-  - **Volume:** `bananad` drives AW88166 HW gain (`Left PCM`/`Right PCM`, `0..511`, persisted in `/data/banana/asound.state`) strictly via the ALSA C mixer API (`snd_mixer_*`). RetroArch software gain stays at unity (`1.0`).
+### Audio Hardware Verification
 
-- **Input & Power (`bananad`):** Stickless vertical slate (`rsinput` MCU gamepad, `FT5452` touch, `EV_KEY` power/volume, `EV_SW` headphone jack). NO `SW_LID`, NO status LEDs, NO PMIC RTC `wakealarm` (`qcom,no-alarm`; wakes ONLY on Power key or USB-C plug).
-  - Built-in navigation, mappings, and gameplay defaults must work with the D-pad and buttons. Treat analog axes and stick-click buttons as optional capabilities of external controllers.
-  - Preserve AMOLED burn-in guard (`/run/banana/screen-off` + `Sound::setScreenOn(false)`), wake-key swallowing, and low-battery sleep refusal (`<= sleep_floor_percent` blanks panel without suspending so the 60s poll can cleanly shut down at `<= 3%`).
+Relevant physical audio verification uses:
 
-- **Storage Layout:** `p1` (`BANANA-BOOT`, FAT, `extlinux.conf` + A/B kernel/DTB), `p2`/`p3` (`banana-root-a|b`, RO squashfs LZ4), `p4` (`BANANA`, RW exFAT `/data`), volatile state in `tmpfs` `/run/banana`.
-  - Write and verify updates in the inactive slot before switching `extlinux.conf`. Preserve the previous slot for rollback and keep `/data` shared across boots.
-
-- **Forbidden Stack:** NO `systemd`, `udev`, `PulseAudio`, `DBus`, `NetworkManager`, `fbcon`/VTs, or secondary compositors inside `banana-ui`.
-  - Keep BusyBox `init` with `inittab`, `rcS`, and `rcK` as the boot and shutdown path.
-
-
-## 3. Coding Standards
-- **Languages:** `ui/src/` = C++17 (`-fno-exceptions -fno-rtti`, maintain `ui/rnds` parity); `system/bananad/` = strict POSIX C99/C11 (`-Wall -Wextra -Werror`). Zero unauthorized 3rd-party dependencies.
-
-- **Event Loop & Safety:** Zero busy-wait or sleep-polling loops; multiplex strictly via blocking `poll()`/`epoll()` on `evdev`, `inotify`, netlink, timerfd, and signalfd. Handle `EINTR`/`EAGAIN` on all syscalls, enforce bounds checking on fixed buffers, and guarantee FD/memory cleanup on error paths.
-
-
-## 4. Scope & Anti-Spiral Guardrails (STRICT)
-- **No Unapproved Upstream/Kernel Patches:** NEVER add or modify patches in `linux/`, `drivers/`, `sound/soc/qcom/`, or Buildroot `package/` (`pipewire`, `mesa`, `wlroots`, `retroarch`) unless you first prove userspace config/UCM/env-vars cannot solve the bug AND receive explicit user approval.
-
-- **2-Strike Hypothesis Cap:** Change and test ONE variable at a time. If 2 consecutive attempts fail to produce the expected state or test pass, **STOP IMMEDIATELY**. Output a <=5-line diagnostic report showing exact state diffs (`sysfs`, mixer state, test output, or log tail) and await instructions. NEVER spiral into multi-file speculative refactors.
-
-- **Strict Scope:** Touch ONLY files directly required by the prompt. Never revert user commits, alter init/boot sequence order, or refactor unrelated code without explicit permission.
-
-## 5. Host Tooling: Icon Generator (`tools/gen-icon.py`)
-When asked to create or replace a UI/console icon, generate it locally instead of drawing it by hand or pulling one off the web:
-
+```sh
+make sound-test
 ```
+
+Consult `docs/SOUND-TEST.md` and the BANANA_HOST configuration.
+
+Physical-device tests require separate explicit authorization.
+
+Never claim electrical, DSP, amplifier, or playback validation from host fixtures alone.
+
+### Performance Verification
+
+- Establish a reproducible baseline before optimization.
+- Compare equivalent workloads after implementation.
+- Measure relevant CPU, memory, latency, frame pacing, audio, and power behavior.
+- Do not claim improvements without measured evidence.
+- Never sacrifice correctness or recoverability for speculative performance gains.
+
+## 9. Repository & Git Workflow
+
+- Work exclusively in the repository authorized by the current task.
+- Verify repository root, branch, HEAD, and working-tree state before editing.
+- Preserve unrelated user changes.
+- Never automatically stash, reset, or discard existing work.
+- Do not create temporary clones, repositories, or worktrees unless explicitly requested.
+- Use task-specific branches when authorized.
+- Keep the original checkout unchanged when working in a separate development repository.
+
+For the current Banana-retro roadmap, the authorized persistent development repository is:
+
+`/home/tom/banana-retro-dev`
+
+Do not modify other BananaOS checkouts during these tasks.
+
+### Authorized Autonomous Tasks
+
+When the user authorizes implementation, verification, and local commit:
+
+- That authorization is sufficient for the complete bounded task.
+- Do not require another approval for routine implementation steps.
+- Continue through debugging and verification.
+- Perform a focused self-review.
+- Create the authorized local commit after successful required verification.
+- Report genuine blockers instead of stopping at arbitrary failure counts.
+
+### External Commit Workflows
+
+Use an external commit helper or managed-worktree workflow only when explicitly requested.
+
+Do not assume all tasks require external commits or temporary worktrees.
+
+### Restricted Operations
+
+Never perform the following without separate explicit authorization:
+
+- Push or merge branches.
+- Deploy or flash images.
+- Access physical handheld hardware.
+- Modify partitions or bootloaders.
+- Execute host suspend or power operations.
+- Modify unrelated repositories.
+- Use destructive Git operations.
+- Bypass sandbox or permission restrictions.
+
+## 10. Icon Generation
+
+When requested to create or replace a UI or console icon, use the existing local generation tools rather than drawing an approximation manually.
+
+### Basic Generation
+
+```sh
 python3 tools/gen-icon.py --prompt "dreamcast console, swirl logo" --name dreamcast
 python3 tools/gen-icon.py --prompt "game boy advance" --name gba --colors 12 --seed 42
+```
 
-# real hardware: first a clean reference, then img2img so the silhouette is the real device
+### Known Hardware References
+
+Use a reference image for specific commercial consoles and controllers.
+
+```sh
 python3 tools/fetch-ref.py --query "Sega Dreamcast controller" --name dreamcast
-python3 tools/fetch-ref.py --local ui/assets/overrides/icons/dreamcast.png --name dreamcast
+
 python3 tools/gen-icon.py --prompt "Sega Dreamcast controller" --name dreamcast \
     --ref ui/assets/refs/dreamcast_ref.png --denoise 0.62
 ```
 
-- Writes `ui/assets/overrides/icons/<name>.png` at 128x128 RGBA (the size of the menu's override icons). **Never** write to `ui/assets/rnds/icons/` (the vendored engine's own art).
-- Needs the local ComfyUI at `~/ai-tools/ComfyUI` (SDXL base + Pixel Art XL + SDXL Lightning 4-step LoRA); the script starts it headless with `--lowvram` on `127.0.0.1:8188` if it is not running (log: `~/ai-tools/ComfyUI/comfyui.log`).
-- Prompt template is fixed (`pixel art icon of …, 16-bit DSi menu icon style, centered, solid black background #000000, crisp edges, 1px outline`); the background is flood-filled away from a ring of border points (so an icon's own black outline survives), then it snaps to a 128x128 point grid and quantises to `--colors`.
-- **Known hardware (consoles, controllers) always uses `--ref`**: text-to-image renders a generic grey box for a specific commercial device.
-  - `tools/fetch-ref.py --query ...` searches Wikimedia Commons (transparent or plain white photos preferred) and cuts the subject out with rembg's small `u2netp` model from the ComfyUI venv (a corner flood fill when it is not there); `--local` takes an existing icon, keeping it as-is when it already has an alpha cut-out.
-  - It writes `ui/assets/refs/<name>_ref.png` (subject fitted in 96x96, centred on a 128x128 black canvas) and raw downloads to `tmp/refs/`; both folders are gitignored local artifacts.
-  - `gen-icon.py --ref <that file>` VAE-encodes it and restyles at `--denoise` (default 0.62; 0.50 keeps the source closest, 0.75 restyles hardest). Sweep to `--out-dir /tmp/...` and compare with `montage` before replacing a shipped icon.
-  - The generated background is stripped with rembg too when available (`--no-rembg` forces the ImageMagick flood fill + alpha threshold).
-  - Text-only is for original/abstract icons: apps, ports, genres, shelves.
-- Re-run with `--seed` from the printed output to reproduce or tweak an icon; check the result with `magick identify -format "%wx%h %[channels]\n" <file>` before wiring it into a theme or `systems.conf`. Render a `--denoise` sweep to `--out-dir /tmp/...` and compare with `montage` before replacing a shipped icon.
+Existing local images can also be used:
 
-## 6. Supervised Development Workflow
+```sh
+python3 tools/fetch-ref.py --local ui/assets/overrides/icons/dreamcast.png --name dreamcast
+```
 
-- Investigate one subsystem at a time. Support bug findings with file and line references. Clearly distinguish verified facts, observed behavior, and hypotheses.
-- Prioritize stability and performance equally. Never sacrifice correctness, reliability, or recoverability for performance.
-- Before performance changes, establish a reproducible, measurable baseline. Compare results after implementation and check for regressions.
-- Before modifying code, present a concise implementation plan, identify risks, and wait for explicit approval. Keep changes minimal and independently testable.
-- Existing test commands, including `make -s test` and `make sound-test`, are recommended validation procedures, not blanket authorization. Execute tests only when explicitly authorized for the task.
-- Report actual test commands, results, and limitations. Never claim unexecuted tests passed.
-- Require separate explicit approval for flashing, partition changes, bootloader changes, kernel deployment, or other hardware-affecting operations.
-- Never commit, push, or deploy without explicit permission.
-- Stop when the requested task is complete. Do not expand scope without approval.
-- Follow applicable Superpowers and Reverse Engineer Anything (REA) workflows when available. Never claim to have used unavailable tools or plugins.
+### Icon Requirements
 
-## 7. Bounded Supervised Automation
+- Output: 128x128 RGBA.
+- Destination: `ui/assets/overrides/icons/<name>.png`.
+- Never write generated icons into `ui/assets/rnds/icons/`.
+- Use the existing DSi-style pixel-art prompt template.
+- Known hardware must use reference-based generation.
+- Text-only generation is appropriate for original or abstract icons.
+- Preserve reproducibility through seeds.
+- Compare denoise variants in temporary output directories before replacing shipped assets.
+- Verify dimensions and alpha channels using ImageMagick.
 
-When the user explicitly authorizes a bounded autonomous engineering task, the following permissions replace Section 6's per-action approval requirements for that task only.
+```sh
+magick identify -format "%wx%h %[channels]\n" <file>
+```
 
-- Work on exactly one explicitly selected stability or performance issue. Do not autonomously select additional issues.
-- Create a dedicated Git worktree and task-specific branch from an approved base commit. Never modify the original checkout.
-- Investigate the issue, establish evidence, and design the smallest reasonable fix.
-- Source edits are authorized only inside the task worktree and within the stated task scope.
-- Automatically run git diff --check, relevant compiler syntax checks, and existing safe, non-hardware local tests. Inspect test commands before execution. Do not run tests with unknown side effects.
-- Performance changes require before/after measurements. Do not claim improvements without measured evidence.
-- If verification succeeds, automatically create a focused local commit containing only task-related changes.
-- If verification fails or the issue remains uncertain, stop without committing and report the evidence.
-- Never push, merge, flash, deploy, alter partitions or bootloaders, access handheld hardware, or execute host suspend/power operations without separate explicit authorization.
-- Never use sudo, bypass sandbox restrictions, or modify unrelated files.
-- Stop after completing one task. Report the branch, commit, verification results, and remaining limitations.
-- Follow existing repository instructions and applicable available skills. Do not claim unavailable skills were used.
+The existing local ComfyUI environment is located at `~/ai-tools/ComfyUI`.
 
-### External Git Commit Workflow
+Preserve its established SDXL, Pixel Art XL, Lightning LoRA, reference preparation, background removal, and color quantization workflow.
 
-For bounded automated tasks using Codex managed worktrees:
-- Investigate, implement, and perform approved local verification inside the managed worktree.
-- Do not create branches, stage changes, or commit from inside Codex.
-- Modify only the explicitly authorized source files.
-- Leave verified changes unstaged.
-- Report the absolute worktree path, modified files, verification results, and suggested branch and commit message.
-- Stop after one task. The user runs the external commit helper separately.
-- Do not modify the original checkout or shared Git metadata.
+Do not start model downloads or install new dependencies without authorization.
+
+## 11. Review & Task Completion
+
+Before completing a task:
+
+- Verify the implementation against the authorized requirements.
+- Perform a focused self-review.
+- Resolve actionable defects within scope.
+- Preserve unrelated work.
+- Run git diff --check.
+- Verify working-tree status.
+- Commit locally when authorized.
+- Do not begin the next task.
+
+Provide a concise handoff containing:
+
+- Repository and branch.
+- Full commit hash and parent.
+- Changed files.
+- Implementation summary.
+- Verification commands and results.
+- Known limitations and outstanding qualification gates.
+- Working-tree status.
+- Next authorized step.
+
+Independent review remains separate from implementation when required.
+
+Never claim independent approval based solely on self-review.
+
+## 12. Instruction Precedence
+
+- Follow applicable system and sandbox requirements.
+- Respect explicit user authorization and task-specific restrictions.
+- Apply this document's BananaOS hardware and architecture invariants.
+- Apply the global engineering rules for execution, debugging, verification, and subagent management.
+- More specific authorized task instructions override general workflow defaults.
+- Do not interpret autonomous development as permission to exceed scope.
+
+There is no fixed failure-count or two-strike debugging limit. Continue while meaningful progress is possible and stop only for a genuine blocker.
