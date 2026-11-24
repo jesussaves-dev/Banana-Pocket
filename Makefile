@@ -21,7 +21,7 @@ BUILDROOT_VERSION = 2026.02.3
 BUILDROOT_DIR ?= $(CURDIR)/.buildroot
 OUT ?= $(CURDIR)/output
 BOARDS = retroid-pocket-classic
-LOCAL_NAMES = banana-ui bananad banana-tube
+LOCAL_NAMES = banana-ui bananad banana-tube banana-retro
 LOCAL_PKGS = banana-ui-rebuild bananad-rebuild banana-tube-rebuild
 # the in-tree packages' sources: the board target compares these against the built binaries to decide whether to
 # rebuild. `find` is run once, at parse time, so the list is current. app/bananatube is banana-tube's site.
@@ -31,6 +31,11 @@ LOCAL_SRC = $(shell find ui/src ui/third_party system/bananad app/bananatube -ty
 SRC_banana-ui = $(shell find ui/src ui/third_party -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' -o -name '*.xml' \) 2>/dev/null) $(shell find ui/assets -type f 2>/dev/null) ui/Makefile system/banana-retro/protocol/banana-retro-v1.xml
 SRC_bananad = $(shell find system/bananad -type f \( -name '*.c' -o -name '*.h' -o -name 'Makefile' \) 2>/dev/null)
 SRC_banana-tube = $(shell find app/bananatube -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' -o -name 'Makefile' \) 2>/dev/null)
+SRC_banana-retro = $(shell find system/banana-retro -type f \( -name '*.c' -o -name '*.h' -o -name '*.xml' -o -name '*.conf' -o -name 'Makefile' \) 2>/dev/null) LICENSE
+LOCAL_BIN_banana-ui = target/usr/bin/banana-ui
+LOCAL_BIN_bananad = target/usr/bin/bananad
+LOCAL_BIN_banana-tube = target/usr/bin/banana-tube
+LOCAL_BIN_banana-retro = target/usr/bin/banana-retro
 
 $(BUILDROOT_DIR)/Makefile:
 	git clone --depth 1 --branch $(BUILDROOT_VERSION) https://github.com/buildroot/buildroot $(BUILDROOT_DIR)
@@ -59,13 +64,13 @@ define board
 $(OUT)/$(1)/.config: $(BUILDROOT_DIR)/.banana-patched buildroot/configs/banana_$(subst -,_,$(1))_defconfig
 	$(MAKE) -C $(BUILDROOT_DIR) O=$(OUT)/$(1) BR2_EXTERNAL=$(CURDIR)/buildroot banana_$(subst -,_,$(1))_defconfig
 
-# a stamp that is only rebuilt when an in-tree source changes. Its recipe rebuilds the packages (banana-ui,
-# bananad) and touches itself, so the board target below only rebuilds them when something actually changed. On a
-# tree where the image was never built the binaries do not exist yet and the board target builds them for the first
+# a stamp that is only rebuilt when an in-tree source changes. Its recipe rebuilds the package and touches itself,
+# so the board target below only rebuilds it when something actually changed. On a
+# tree where a package has not been built yet its binary does not exist and the board target builds it for the first
 # time (the recipe runs regardless, since the stamp has no prerequisites there).
-# one stamp per package, so a bananad edit does not rebuild banana-ui and banana-tube too
-$(foreach p,$(LOCAL_NAMES),$(eval $(OUT)/$(1)/.local-stamp-$(p): $(if $(wildcard $(OUT)/$(1)/target/usr/bin/banana-ui),$(SRC_$(p)))
-	$(if $(wildcard $(OUT)/$(1)/target/usr/bin/banana-ui),$$(MAKE) -C $(OUT)/$(1) $(p)-rebuild,@mkdir -p $(OUT)/$(1)/)
+# one stamp per package, so an edit rebuilds only the package whose sources changed
+$(foreach p,$(LOCAL_NAMES),$(eval $(OUT)/$(1)/.local-stamp-$(p): $(if $(wildcard $(OUT)/$(1)/$(LOCAL_BIN_$(p))),$(SRC_$(p)))
+	$(if $(wildcard $(OUT)/$(1)/$(LOCAL_BIN_$(p))),$$(MAKE) -C $(OUT)/$(1) $(p)-rebuild,@mkdir -p $(OUT)/$(1)/)
 	@touch $$@))
 
 # the image: the stamp rebuilds the in-tree packages when their sources are newer than the built binaries, so a
@@ -141,6 +146,9 @@ bench: ui
 # (they must have been built once already; `make retroid-pocket-classic` does that on a fresh tree).
 local-rebuild:
 	$(MAKE) -C $(OUT)/retroid-pocket-classic $(LOCAL_PKGS)
+	@if grep -q '^BR2_PACKAGE_BANANA_RETRO=y$$' $(OUT)/retroid-pocket-classic/.config; then \
+	    $(MAKE) -C $(OUT)/retroid-pocket-classic banana-retro-rebuild; \
+	fi
 
 # the image's banana-ui must match a fresh host build. `make check-local-build` asserts this hash (CI does not run it); on a tree where the
 # image was never built it asks you to run `make retroid-pocket-classic` first.

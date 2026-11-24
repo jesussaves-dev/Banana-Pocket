@@ -1,0 +1,10 @@
+config BR2_PACKAGE_BANANA_RETRO
+	bool "banana-retro"
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on BR2_USE_MMU
+	depends on !BR2_STATIC_LIBS
+	select BR2_PACKAGE_ALSA_LIB
+	select BR2_PACKAGE_WAYLAND
+	help
+	  Standalone Libretro runtime using the Wayland software presentation path.
+	  This package is opt-in and does not change the board's RetroArch setup.

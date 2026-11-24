@@ -8,8 +8,12 @@ OUT ?= .
 PKG_CONFIG ?= pkg-config
 WAYLAND_SCANNER ?= wayland-scanner
 WAYLAND_PROTOCOLS ?= $(shell $(PKG_CONFIG) --variable=pkgdatadir wayland-protocols)
-XDG_XML = $(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml
+XDG_XML ?= $(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml
 NATIVE_XML = protocol/banana-retro-v1.xml
+PREFIX ?= /usr
+SYSCONFDIR ?= /etc
+DESTDIR ?=
+INSTALL ?= install
 WL_HEADERS = $(OUT)/xdg-shell-client-protocol.h $(OUT)/banana-retro-client-protocol.h
 WL_CODE = $(OUT)/xdg-shell-protocol.c $(OUT)/banana-retro-protocol.c
 VIDEO = src/video_wayland.c src/video_wayland.h include/libretro.h $(WL_HEADERS) $(WL_CODE)
@@ -23,10 +27,14 @@ CHECK_SERVER_HEADERS = $(addprefix $(OUT)/,xdg-shell-server-protocol.h banana-re
 	linux-dmabuf-unstable-v1-server-protocol.h wayland-drm-server-protocol.h viewporter-server-protocol.h)
 CHECK_VIDEO_OBJS = $(OUT)/video_wayland.o $(WL_CODE:.c=.o)
 
-strict_cflags = -std=c11 -Wall -Wextra -Werror -pedantic
+strict_cflags = -std=c99 -Wall -Wextra -Werror -pedantic
 
-.PHONY: all check check-binaries check-video check-input check-audio check-saves
+.PHONY: all install check check-binaries check-video check-input check-audio check-saves
 all: $(OUT)/banana-retro
+
+install: $(OUT)/banana-retro
+	$(INSTALL) -D -m 0755 $(OUT)/banana-retro $(DESTDIR)$(PREFIX)/bin/banana-retro
+	$(INSTALL) -D -m 0644 config/defaults.conf $(DESTDIR)$(SYSCONFDIR)/banana/retro/defaults.conf
 
 $(OUT)/banana-retro: src/main.c src/core.c src/core.h src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
 	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(CFLAGS) $(strict_cflags) $(LDFLAGS) -o $@ \
