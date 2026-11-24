@@ -125,18 +125,23 @@ $(OUT)/fixture-check-saves: tests/check-saves.c src/saves.h $(OUT)/saves-test.o
 check-saves: $(OUT)/fixture-check-saves $(OUT)/fixture-runtime $(OUT)/fixture.so $(OUT)/fixture-no-serialize.so $(OUT)/fixture-no-serialize-size.so $(OUT)/fixture-no-serialize-call.so $(OUT)/fixture-no-unserialize.so
 	$(OUT)/fixture-check-saves $(OUT)/fixture-runtime $(OUT)/fixture.so $(OUT)/fixture-no-serialize.so $(OUT)/fixture-no-serialize-size.so $(OUT)/fixture-no-serialize-call.so $(OUT)/fixture-no-unserialize.so
 
+$(OUT)/fixture-runtime-core.so: tests/check-control.c include/libretro.h
+	$(CC) $(CPPFLAGS) -Iinclude $(CFLAGS) $(strict_cflags) -DBANANA_RETRO_RUNTIME_CORE \
+		-shared -fPIC $(LDFLAGS) -o $@ $< $(LDLIBS)
+
 $(OUT)/fixture-check-control: tests/check-control.c src/main.c src/control.c src/control.h src/options.c src/options.h \
 		src/input_evdev.c src/input_evdev.h src/core.c src/core.h src/audio_alsa.c src/audio_alsa.h \
-		src/saves.c src/saves.h src/video_wayland.c src/video_wayland.h include/banana-retro-control.h $(VIDEO)
+		src/saves.c src/saves.h src/video_wayland.c src/video_wayland.h include/banana-retro-control.h $(VIDEO) \
+		$(OUT)/fixture-runtime-core.so
 	$(CC) $(CPPFLAGS) -Isrc $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(shell $(PKG_CONFIG) --cflags wayland-server) \
-		$(CFLAGS) $(strict_cflags) -ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections \
+		$(CFLAGS) $(strict_cflags) -DBANANA_RETRO_TESTING -ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections \
 		-Wl,--wrap=wl_display_connect -o $@ tests/check-control.c src/control.c src/options.c \
 		src/input_evdev.c src/core.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
 		-Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(ALSA_LIBS) \
 		$(shell $(PKG_CONFIG) --libs wayland-server) -pthread $(LDLIBS)
 
-check-control: $(OUT)/fixture-check-control
-	$(OUT)/fixture-check-control
+check-control: $(OUT)/fixture-check-control $(OUT)/fixture-runtime-core.so
+	$(OUT)/fixture-check-control $(OUT)/fixture-runtime-core.so
 
 check:
 	@set -eu; \

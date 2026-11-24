@@ -168,6 +168,17 @@ static bool environment(unsigned command, void *data)
 {
     if (command == RETRO_ENVIRONMENT_GET_INPUT_BITMASKS)
         return true;
+    if (command == RETRO_ENVIRONMENT_GET_VARIABLE && data == NULL)
+        return true;
+    if (command == RETRO_ENVIRONMENT_SET_VARIABLES && data == NULL)
+        return true;
+    if ((command == RETRO_ENVIRONMENT_SET_CORE_OPTIONS ||
+         command == RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2) && data == NULL) {
+        options_reset();
+        return true;
+    }
+    if (command == RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY && data == NULL)
+        return true;
     if (data == NULL)
         return false;
 
@@ -210,13 +221,13 @@ static bool environment(unsigned command, void *data)
         return options_register_v1(data);
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL: {
         const struct retro_core_options_intl *intl = data;
-        return options_register_v1(intl->us);
+        return intl->us != NULL && options_register_v1(intl->us);
     }
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
         return options_register_v2(data);
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
         const struct retro_core_options_v2_intl *intl = data;
-        return options_register_v2(intl->us);
+        return intl->us != NULL && options_register_v2(intl->us);
     }
     case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
         *(bool *)data = options_update_pending();
@@ -250,6 +261,13 @@ static bool environment(unsigned command, void *data)
         return false;
     }
 }
+
+#ifdef BANANA_RETRO_TESTING
+bool core_environment_test(unsigned command, void *data)
+{
+    return environment(command, data);
+}
+#endif
 
 static void video(const void *data, unsigned width, unsigned height, size_t pitch)
 {

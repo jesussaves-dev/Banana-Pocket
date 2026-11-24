@@ -16,11 +16,22 @@
 
 struct control_client {
 	int fd;
-	pid_t pid;
+	unsigned role;
 	bool authenticated;
-	uint64_t last_request_id;
 	unsigned char cached[BANANA_RETRO_CONTROL_MAX_PACKET];
 	size_t cached_size;
+};
+
+enum { CONTROL_ROLE_UI, CONTROL_ROLE_SLEEP, CONTROL_ROLE_COUNT,
+	CONTROL_REPLAY_HISTORY = 16 };
+
+struct control_replay {
+	uint64_t id;
+	uint16_t type;
+	size_t request_size;
+	unsigned char request[BANANA_RETRO_CONTROL_MAX_PAYLOAD];
+	size_t response_size;
+	unsigned char response[BANANA_RETRO_CONTROL_MAX_PACKET];
 };
 
 struct control_server {
@@ -35,6 +46,9 @@ struct control_server {
 	ino_t socket_ino;
 	bool failed_handshake;
 	uint64_t last_request_id;
+	uint64_t role_request_id[CONTROL_ROLE_COUNT];
+	struct control_replay replay[CONTROL_ROLE_COUNT][CONTROL_REPLAY_HISTORY];
+	size_t replay_next[CONTROL_ROLE_COUNT];
 	uint64_t last_mutation_id;
 	uint16_t last_mutation_type;
 	uint16_t last_mutation_result;
@@ -138,6 +152,29 @@ static void send_error(struct control_server *s, struct control_client *c,
 	}
 }
 
+static struct control_replay *find_replay(struct control_server *s, unsigned role,
+					  uint64_t id)
+{
+	for (size_t i = 0; i < CONTROL_REPLAY_HISTORY; ++i)
+		if (s->replay[role][i].id == id) return &s->replay[role][i];
+	return NULL;
+}
+
+static void remember_replay(struct control_server *s, struct control_client *c,
+			    uint16_t type, uint64_t id, const unsigned char *payload,
+			    size_t request_size)
+{
+	if (!c->cached_size || request_size > BANANA_RETRO_CONTROL_MAX_PAYLOAD) return;
+	struct control_replay *entry = &s->replay[c->role][s->replay_next[c->role]];
+	s->replay_next[c->role] = (s->replay_next[c->role] + 1) % CONTROL_REPLAY_HISTORY;
+	entry->id = id;
+	entry->type = type;
+	entry->request_size = request_size;
+	if (request_size) memcpy(entry->request, payload, request_size);
+	entry->response_size = c->cached_size;
+	memcpy(entry->response, c->cached, c->cached_size);
+}
+
 static void close_client(struct control_client *c)
 {
 	if (c->fd >= 0) close(c->fd);
@@ -163,9 +200,32 @@ static bool open_client(struct control_server *s)
 		close(fd);
 		return true;
 	}
-	c->pid = cred.pid;
+	c->role = cred.pid == s->ui_pid ? CONTROL_ROLE_UI : CONTROL_ROLE_SLEEP;
 	c->fd = fd;
 	return true;
+}
+
+static bool authorized(const struct control_client *c, uint16_t type,
+		       const unsigned char *payload, size_t size)
+{
+	if (type == BANANA_RETRO_CTL_HELLO) return false;
+	if (c->role == CONTROL_ROLE_UI) {
+		if (type == BANANA_RETRO_CTL_PAUSE || type == BANANA_RETRO_CTL_RESUME)
+			return size == 9 && payload[0] == BANANA_RETRO_CTL_OWNER_UI;
+		return type == BANANA_RETRO_CTL_GET_STATUS ||
+			type == BANANA_RETRO_CTL_FLUSH_SRAM ||
+			type == BANANA_RETRO_CTL_SAVE_STATE ||
+			type == BANANA_RETRO_CTL_LOAD_STATE ||
+			type == BANANA_RETRO_CTL_GET_OPTIONS ||
+			type == BANANA_RETRO_CTL_SET_OPTION ||
+			type == BANANA_RETRO_CTL_RESET || type == BANANA_RETRO_CTL_QUIT;
+	}
+	if (c->role == CONTROL_ROLE_SLEEP) {
+		if (type == BANANA_RETRO_CTL_GET_STATUS) return true;
+		return (type == BANANA_RETRO_CTL_PAUSE || type == BANANA_RETRO_CTL_RESUME) &&
+			size == 9 && payload[0] == BANANA_RETRO_CTL_OWNER_SLEEP;
+	}
+	return false;
 }
 
 static bool encode_options(struct control_server *s, const unsigned char *request,
@@ -241,7 +301,8 @@ static uint16_t dispatch(struct control_server *s, struct control_client *c, uin
 	case BANANA_RETRO_CTL_RESUME:
 		if (n != 9 || (p[0] != BANANA_RETRO_CTL_OWNER_UI && p[0] != BANANA_RETRO_CTL_OWNER_SLEEP))
 			return BANANA_RETRO_CTL_INVALID;
-		if (c->pid != (p[0] == BANANA_RETRO_CTL_OWNER_UI ? s->ui_pid : s->sleep_pid))
+		if ((c->role == CONTROL_ROLE_UI && p[0] != BANANA_RETRO_CTL_OWNER_UI) ||
+		    (c->role == CONTROL_ROLE_SLEEP && p[0] != BANANA_RETRO_CTL_OWNER_SLEEP))
 			return BANANA_RETRO_CTL_STALE_SESSION;
 		return s->ops.pause && s->ops.pause(s->ops.data, p[0], get64(p + 1),
 			type == BANANA_RETRO_CTL_PAUSE) ? BANANA_RETRO_CTL_OK : BANANA_RETRO_CTL_BAD_STATE;
@@ -313,34 +374,45 @@ static void handle_packet(struct control_server *s, struct control_client *c)
 		close_client(c);
 		return;
 	}
-	if (!c->authenticated) {
+	bool new_handshake = !c->authenticated;
+	if (new_handshake) {
 		if (type != BANANA_RETRO_CTL_HELLO || length != 0) {
 			s->failed_handshake = true;
 			close_client(c);
 			return;
 		}
 		c->authenticated = true;
-	} else if (id == c->last_request_id && c->cached_size) {
-		if (send(c->fd, c->cached, c->cached_size, MSG_DONTWAIT | MSG_NOSIGNAL) !=
-		    (ssize_t)c->cached_size) close_client(c);
+	}
+	const unsigned char *payload = packet + BANANA_RETRO_CONTROL_HEADER_SIZE;
+	if (type != BANANA_RETRO_CTL_HELLO && !authorized(c, type, payload, length)) {
+		send_error(s, c, type, id, BANANA_RETRO_CTL_UNSUPPORTED);
 		return;
-	} else if (id < s->last_request_id) {
-		send_error(s, c, type, id, BANANA_RETRO_CTL_STALE_SESSION);
+	}
+	struct control_replay *old = find_replay(s, c->role, id);
+	if (old) {
+		if (old->type != type || old->request_size != length ||
+		    (length && memcmp(old->request, payload, length) != 0)) {
+			send_error(s, c, type, id, BANANA_RETRO_CTL_INVALID);
+			return;
+		}
+		if (send(c->fd, old->response, old->response_size, MSG_DONTWAIT | MSG_NOSIGNAL) !=
+		    (ssize_t)old->response_size) close_client(c);
 		return;
-	} else if (type == BANANA_RETRO_CTL_HELLO) {
+	}
+	if (type == BANANA_RETRO_CTL_HELLO && !new_handshake) {
 		send_error(s, c, type, id, BANANA_RETRO_CTL_INVALID);
 		return;
 	}
-	if (id <= s->last_request_id) {
+	if (id <= s->role_request_id[c->role]) {
 		send_error(s, c, type, id, BANANA_RETRO_CTL_STALE_SESSION);
 		return;
 	}
 	unsigned char body[BANANA_RETRO_CONTROL_MAX_PAYLOAD] = {0};
 	size_t body_size = 0;
-	uint16_t result = dispatch(s, c, type, packet + BANANA_RETRO_CONTROL_HEADER_SIZE,
-				   length, body, &body_size);
-	s->last_request_id = id;
-	c->last_request_id = id;
+	uint16_t result = type == BANANA_RETRO_CTL_HELLO ? BANANA_RETRO_CTL_OK :
+		dispatch(s, c, type, payload, length, body, &body_size);
+	s->role_request_id[c->role] = id;
+	if (id > s->last_request_id) s->last_request_id = id;
 	if (type == BANANA_RETRO_CTL_PAUSE || type == BANANA_RETRO_CTL_RESUME ||
 	    type == BANANA_RETRO_CTL_FLUSH_SRAM || type == BANANA_RETRO_CTL_SAVE_STATE ||
 	    type == BANANA_RETRO_CTL_LOAD_STATE || type == BANANA_RETRO_CTL_SET_OPTION ||
@@ -349,6 +421,7 @@ static void handle_packet(struct control_server *s, struct control_client *c)
 		s->last_mutation_type = type;
 		s->last_mutation_result = result;
 	}
+	c->cached_size = 0;
 	if (result != BANANA_RETRO_CTL_OK) {
 		unsigned char response[BANANA_RETRO_CONTROL_MAX_PACKET];
 		memcpy(response + BANANA_RETRO_CTL_MAGIC, BANANA_RETRO_CONTROL_MAGIC, 4);
@@ -365,7 +438,12 @@ static void handle_packet(struct control_server *s, struct control_client *c)
 		    (ssize_t)c->cached_size) close_client(c);
 		return;
 	}
-	send_result(s, c, type, id, body, body_size, true);
+	if (result == BANANA_RETRO_CTL_OK) {
+		send_result(s, c, type, id, body, body_size, true);
+		remember_replay(s, c, type, id, payload, length);
+	} else {
+		send_error(s, c, type, id, result);
+	}
 }
 
 struct control_server *control_open_from_env(const struct control_ops *ops,
@@ -389,10 +467,11 @@ struct control_server *control_open_from_env(const struct control_ops *ops,
 		s->clients[i].fd = -1;
 	s->peer_uid = geteuid();
 	s->ui_pid = (pid_t)pid;
-	s->sleep_pid = s->ui_pid;
+	s->sleep_pid = 0;
 	if (sleep_text) {
 		uint64_t sleep_pid;
-		if (!parse_number(sleep_text, INT_MAX, &sleep_pid) || sleep_pid == 0) {
+		if (!parse_number(sleep_text, INT_MAX, &sleep_pid) || sleep_pid == 0 ||
+		    sleep_pid == pid) {
 			free(s); errno = EINVAL; return NULL;
 		}
 		s->sleep_pid = (pid_t)sleep_pid;

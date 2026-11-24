@@ -41,6 +41,8 @@ struct control_ops {
 	bool (*quit)(void *data);
 };
 
+/* UI and sleep peers are distinguished by SO_PEERCRED PID; an unset sleep PID
+ * disables that role, and equal configured PIDs are rejected as ambiguous. */
 struct control_server *control_open_from_env(const struct control_ops *ops,
 						     const unsigned char session_id[16]);
 void control_close(struct control_server *server);

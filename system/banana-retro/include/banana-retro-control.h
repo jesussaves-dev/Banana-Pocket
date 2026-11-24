@@ -76,10 +76,16 @@ enum banana_retro_control_capability {
  * current value, default), u8 choice count, u8 flags (bit 0 visible, bit 1 restart
  * required), then that many length-prefixed choices. Page again at offset+returned.
  * GET_STATUS response body: u32 flags (bit 0 ready, bit 1 paused), u32 owner mask,
- * u64 previous completed request ID, u32 capabilities, u32 PCM state, u32 queued
- * PCM frames, u64 underruns, u64 outstanding ID (zero for this synchronous MVP),
+ * u64 highest completed request ID observed across roles, u32 capabilities, u32 PCM
+ * state, u32 queued PCM frames, u64 underruns, u64 outstanding ID (zero for this MVP),
  * u64 last mutation ID, u16 last mutation type, u16 last mutation result, then
  * three length-prefixed strings: core name, core version, and content identity.
+ * Request IDs increase independently for the authenticated UI and sleep roles.
+ * Exact duplicate successful requests replay their original response from a
+ * bounded history of 16 requests per role, including after reconnect. A stale
+ * or evicted request returns STALE_SESSION; its outcome is unknown and must not
+ * be reported as successful. The status mutation tuple describes only the most
+ * recent mutation and cannot resolve older requests by itself.
  */
 
 #endif

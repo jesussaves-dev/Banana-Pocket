@@ -123,10 +123,8 @@ bool options_register_v1(const struct retro_core_option_definition *definitions)
 
 bool options_register_v2(const struct retro_core_options_v2 *definitions)
 {
-	if (!definitions || !definitions->definitions) {
-		options_reset();
-		return definitions == NULL || definitions->definitions == NULL;
-	}
+	if (!definitions) { options_reset(); return true; }
+	if (!definitions->definitions) return false;
 	for (size_t n = 0; n <= OPTIONS_MAX; ++n) {
 		const struct retro_core_option_v2_definition *def = &definitions->definitions[n];
 		if (!def->key) return true;
