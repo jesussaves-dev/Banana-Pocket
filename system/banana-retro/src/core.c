@@ -1,6 +1,8 @@
 #define _XOPEN_SOURCE 700
 
 #include "core.h"
+#include "options.h"
+#include "banana-retro-control.h"
 #include "input_evdev.h"
 #include "audio_alsa.h"
 #include "saves.h"
@@ -33,6 +35,7 @@ struct core_api {
     void (*retro_get_system_av_info)(struct retro_system_av_info *);
     void (*retro_set_controller_port_device)(unsigned, unsigned);
     void (*retro_run)(void);
+    void (*retro_reset)(void);
     void (*retro_unload_game)(void);
     void (*retro_deinit)(void);
     void *(*retro_get_memory_data)(unsigned);
@@ -65,6 +68,8 @@ static struct {
     bool loaded;
     void *content;
     struct retro_system_av_info av;
+    const char *name;
+    const char *version;
     struct core_video video;
     unsigned capacity_width, capacity_height;
     unsigned rotation;
@@ -126,12 +131,13 @@ static bool resolve_exports(void)
     RESOLVE(retro_get_system_av_info);
     RESOLVE(retro_set_controller_port_device);
     RESOLVE(retro_run);
+    RESOLVE(retro_reset);
     RESOLVE(retro_unload_game);
     RESOLVE(retro_deinit);
 #undef RESOLVE
 
     static const char *const unused_exports[] = {
-        "retro_reset", "retro_cheat_reset", "retro_cheat_set",
+        "retro_cheat_reset", "retro_cheat_set",
         "retro_load_game_special", "retro_get_region",
         "retro_get_memory_data", "retro_get_memory_size"
     };
@@ -195,6 +201,40 @@ static bool environment(unsigned command, void *data)
     case RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES:
         *(uint64_t *)data = UINT64_C(1) << RETRO_DEVICE_JOYPAD;
         return true;
+    case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
+        *(unsigned *)data = options_api_version();
+        return true;
+    case RETRO_ENVIRONMENT_SET_VARIABLES:
+        return options_register_v0(data);
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
+        return options_register_v1(data);
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL: {
+        const struct retro_core_options_intl *intl = data;
+        return options_register_v1(intl->us);
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
+        return options_register_v2(data);
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
+        const struct retro_core_options_v2_intl *intl = data;
+        return options_register_v2(intl->us);
+    }
+    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+        *(bool *)data = options_update_pending();
+        options_clear_update();
+        return true;
+    case RETRO_ENVIRONMENT_GET_VARIABLE: {
+        struct retro_variable *variable = data;
+        variable->value = options_get(variable->key);
+        return variable->value != NULL;
+    }
+    case RETRO_ENVIRONMENT_SET_VARIABLE: {
+        const struct retro_variable *variable = data;
+        return options_set(variable->key, variable->value);
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY: {
+        const struct retro_core_option_display *display = data;
+        return options_set_visible(display->key, display->visible);
+    }
     default:
         return false;
     }
@@ -447,6 +487,7 @@ bool core_load(const char *core_path, const char *content_path, const struct cor
 
     if (video_sink)
         session.video = *video_sink;
+    options_reset();
     session.pixel_format = RETRO_PIXEL_FORMAT_0RGB1555;
     api->retro_set_environment(environment);
     api->retro_set_video_refresh(video);
@@ -457,6 +498,8 @@ bool core_load(const char *core_path, const char *content_path, const struct cor
     api->retro_init();
     session.initialized = true;
     api->retro_get_system_info(&info);
+    session.name = info.library_name;
+    session.version = info.library_version;
     if (!prepare_content(&game, info.need_fullpath))
         return false;
     if (!api->retro_load_game(&game)) {
@@ -481,6 +524,19 @@ const struct retro_game_geometry *core_geometry(void)
     return &session.av.geometry;
 }
 
+const char *core_name(void) { return session.name ? session.name : ""; }
+const char *core_version(void) { return session.version ? session.version : ""; }
+uint32_t core_capabilities(void)
+{
+    uint32_t caps = options_count() ? BANANA_RETRO_CTL_CAP_OPTIONS : 0;
+    if (session.api.retro_get_memory_data && session.api.retro_get_memory_size)
+        caps |= BANANA_RETRO_CTL_CAP_MEMORY;
+    if (session.api.retro_serialize_size && session.api.retro_serialize &&
+        session.api.retro_unserialize)
+        caps |= BANANA_RETRO_CTL_CAP_STATE;
+    return caps;
+}
+
 bool core_step(unsigned frame)
 {
     session.frame = (struct frame_observation){0};
@@ -503,6 +559,21 @@ bool core_step(unsigned frame)
                   (int)result->last_left, (int)result->last_right,
                   result->input_polls, result->input_queries) >= 0;
 }
+
+bool core_reset(void)
+{
+    if (!session.loaded || session.running || !session.api.retro_reset)
+        return false;
+    session.api.retro_reset();
+    return true;
+}
+
+const char *core_option_get(const char *key) { return options_get(key); }
+bool core_option_set(const char *key, const char *value) { return options_set(key, value); }
+bool core_option_update_pending(void) { return options_update_pending(); }
+void core_option_update_clear(void) { options_clear_update(); }
+size_t core_option_count(void) { return options_count(); }
+const struct core_option *core_option_at(size_t index) { return options_at(index); }
 
 bool core_release(void)
 {
@@ -598,4 +669,9 @@ bool core_persistence_commit(struct saves *saves, int state_slot)
                            state, state_size);
     free(state);
     return ok;
+}
+
+bool core_persistence_flush(struct saves *saves)
+{
+    return core_persistence_commit(saves, -1);
 }

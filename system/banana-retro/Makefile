@@ -29,16 +29,17 @@ CHECK_VIDEO_OBJS = $(OUT)/video_wayland.o $(WL_CODE:.c=.o)
 
 strict_cflags = -std=c99 -Wall -Wextra -Werror -pedantic
 
-.PHONY: all install check check-binaries check-video check-input check-audio check-saves
+.PHONY: all install check check-binaries check-video check-input check-audio check-saves check-control
 all: $(OUT)/banana-retro
 
 install: $(OUT)/banana-retro
 	$(INSTALL) -D -m 0755 $(OUT)/banana-retro $(DESTDIR)$(PREFIX)/bin/banana-retro
 	$(INSTALL) -D -m 0644 config/defaults.conf $(DESTDIR)$(SYSCONFDIR)/banana/retro/defaults.conf
 
-$(OUT)/banana-retro: src/main.c src/core.c src/core.h src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
+$(OUT)/banana-retro: src/main.c src/core.c src/core.h src/control.c src/control.h src/options.c src/options.h \
+		include/banana-retro-control.h src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
 	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(CFLAGS) $(strict_cflags) $(LDFLAGS) -o $@ \
-		src/main.c src/core.c src/input_evdev.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
+		src/main.c src/core.c src/control.c src/options.c src/input_evdev.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
 		-Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(ALSA_LIBS) -pthread $(LDLIBS)
 
 $(OUT)/xdg-shell-client-protocol.h: $(XDG_XML)
@@ -59,9 +60,10 @@ $(OUT)/fixture-wrong-api.so: tests/fixture_core.c include/libretro.h
 $(OUT)/fixture-missing-export.so: tests/fixture_core.c include/libretro.h
 	$(CC) $(CPPFLAGS) -Iinclude $(CFLAGS) $(strict_cflags) -DFIXTURE_MISSING_EXPORT -shared -fPIC $(LDFLAGS) -o $@ $< $(LDLIBS)
 
-$(OUT)/fixture-runtime: src/main.c src/core.c src/core.h src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
+$(OUT)/fixture-runtime: src/main.c src/core.c src/core.h src/control.c src/control.h src/options.c src/options.h \
+		include/banana-retro-control.h src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
 	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(CFLAGS) $(strict_cflags) -DSAVES_TESTING $(LDFLAGS) -o $@ \
-		src/main.c src/core.c src/input_evdev.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
+		src/main.c src/core.c src/control.c src/options.c src/input_evdev.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
 		-Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(ALSA_LIBS) -pthread $(LDLIBS)
 
 $(OUT)/fixture-no-serialize.so: tests/fixture_core.c include/libretro.h
@@ -123,6 +125,19 @@ $(OUT)/fixture-check-saves: tests/check-saves.c src/saves.h $(OUT)/saves-test.o
 check-saves: $(OUT)/fixture-check-saves $(OUT)/fixture-runtime $(OUT)/fixture.so $(OUT)/fixture-no-serialize.so $(OUT)/fixture-no-serialize-size.so $(OUT)/fixture-no-serialize-call.so $(OUT)/fixture-no-unserialize.so
 	$(OUT)/fixture-check-saves $(OUT)/fixture-runtime $(OUT)/fixture.so $(OUT)/fixture-no-serialize.so $(OUT)/fixture-no-serialize-size.so $(OUT)/fixture-no-serialize-call.so $(OUT)/fixture-no-unserialize.so
 
+$(OUT)/fixture-check-control: tests/check-control.c src/main.c src/control.c src/control.h src/options.c src/options.h \
+		src/input_evdev.c src/input_evdev.h src/core.c src/core.h src/audio_alsa.c src/audio_alsa.h \
+		src/saves.c src/saves.h src/video_wayland.c src/video_wayland.h include/banana-retro-control.h $(VIDEO)
+	$(CC) $(CPPFLAGS) -Isrc $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(shell $(PKG_CONFIG) --cflags wayland-server) \
+		$(CFLAGS) $(strict_cflags) -ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections \
+		-Wl,--wrap=wl_display_connect -o $@ tests/check-control.c src/control.c src/options.c \
+		src/input_evdev.c src/core.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
+		-Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(ALSA_LIBS) \
+		$(shell $(PKG_CONFIG) --libs wayland-server) -pthread $(LDLIBS)
+
+check-control: $(OUT)/fixture-check-control
+	$(OUT)/fixture-check-control
+
 check:
 	@set -eu; \
 	work=$$(mktemp -d "$${TMPDIR:-/tmp}/banana-retro-check.XXXXXX"); \
@@ -133,4 +148,5 @@ check:
 	$(MAKE) -s OUT="$$work" check-video; \
 	$(MAKE) -s OUT="$$work" check-input; \
 	$(MAKE) -s OUT="$$work" check-audio; \
-	$(MAKE) -s OUT="$$work" check-saves
+	$(MAKE) -s OUT="$$work" check-saves; \
+	$(MAKE) -s OUT="$$work" check-control
