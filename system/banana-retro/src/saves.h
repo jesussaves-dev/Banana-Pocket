@@ -23,6 +23,10 @@ struct saves *saves_open(const char *root, const char *core_path,
 			 const char *content_path);
 struct saves *saves_open_with_options(const char *root, const char *core_path,
 				      const char *content_path, const char *options_fingerprint);
+/* Active session options affect state compatibility, while the launch profile
+ * continues to identify the battery-save store. */
+void saves_set_state_options(struct saves *saves, const char *options);
+bool saves_checkpoint_options_match(const struct saves *saves);
 bool saves_set_legacy_core_name(struct saves *saves, const char *library_name);
 void saves_close(struct saves *saves);
 bool saves_has_no_generation(struct saves *saves);
@@ -42,15 +46,14 @@ bool saves_load_state(struct saves *saves, unsigned slot, void *data, size_t siz
 bool saves_state_present(struct saves *saves, unsigned slot);
 bool saves_checkpoint_present(struct saves *saves);
 bool saves_load_checkpoint(struct saves *saves, void *data, size_t size);
+/* Publish a checkpoint and its resume marker after the generation is durable. */
 bool saves_commit_checkpoint(struct saves *saves, const void *sram, size_t sram_size,
 		const void *rtc, size_t rtc_size, const void *checkpoint, size_t checkpoint_size);
-bool saves_resume_record(struct saves *saves);
-bool saves_resume_available(struct saves *saves, char checkpoint_hash[65]);
-/* Load the marked checkpoint and memory from one verified generation. */
-bool saves_load_resume(struct saves *saves, void *state, size_t state_size,
+bool saves_resume_available(struct saves *saves, char token[65]);
+/* Load the checkpoint and memory only while the verified marker token matches. */
+bool saves_load_resume(struct saves *saves, const char *token, void *state, size_t state_size,
 		void *sram, size_t sram_size, void *rtc, size_t rtc_size);
-bool saves_resume_clear(struct saves *saves);
-bool saves_resume_clear_if(struct saves *saves, const char checkpoint_hash[65]);
+bool saves_resume_clear_if(struct saves *saves, const char token[65]);
 bool saves_commit(struct saves *saves, const void *sram, size_t sram_size,
 		  const void *rtc, size_t rtc_size, int state_slot,
 		  const void *state, size_t state_size);
@@ -65,6 +68,7 @@ enum saves_test_event {
 	SAVES_TEST_PARENT_DIR_FSYNC,
 	SAVES_TEST_GENERATION_RENAME,
 	SAVES_TEST_CURRENT_RENAME,
+	SAVES_TEST_RESUME_RENAME,
 	SAVES_TEST_AFTER_MANIFEST_WRITE,
 	SAVES_TEST_AFTER_GENERATION_RENAME,
 	SAVES_TEST_AFTER_CURRENT_RENAME,
@@ -73,7 +77,7 @@ enum saves_test_event {
 void saves_test_fail_event(enum saves_test_event event, unsigned occurrence);
 void saves_test_crash_event(enum saves_test_event event);
 void saves_test_set_hook(void (*hook)(void));
-bool saves_test_downgrade_current_manifest(struct saves *saves);
+bool saves_test_downgrade_current_manifest(struct saves *saves, unsigned version);
 #endif
 
 /* These wrappers run only between core frames, while the core is quiescent. */

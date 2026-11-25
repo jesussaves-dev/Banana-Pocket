@@ -18,7 +18,7 @@ static retro_audio_sample_t sample;
 static retro_audio_sample_batch_t batch;
 static retro_input_poll_t poll_input;
 static retro_input_state_t read_input;
-static unsigned frame;
+static unsigned frame, unserialize_calls;
 static uint8_t save_ram[4], save_rtc[2];
 static const char *content_bytes;
 static const char expected_content[] = "BRC1\n";
@@ -99,6 +99,12 @@ void retro_set_input_state(retro_input_state_t cb)
 void retro_init(void)
 {
     advance(INPUT_SET, INITIALIZED, "init");
+    if (mode_is("persistence-options")) {
+        const struct retro_variable vars[] = {
+            {"fixture_mode", "Test mode; first|second|third"}, {NULL, NULL}
+        };
+        require(environment(RETRO_ENVIRONMENT_SET_VARIABLES, (void *)vars), "register options");
+    }
 }
 
 void retro_get_system_info(struct retro_system_info *info)
@@ -174,6 +180,10 @@ void retro_run(void)
     require(stage == CONTROLLER_SET, "run order");
     ++frame;
     fprintf(stderr, "fixture run %u\n", frame);
+    if (mode_is("persistence-options") && frame == 2) {
+        struct retro_variable option = {"fixture_mode", "third"};
+        require(environment(RETRO_ENVIRONMENT_SET_VARIABLE, &option), "set option from core");
+    }
 
     poll_input();
     require(read_input(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A) == 0,
@@ -227,12 +237,20 @@ bool retro_serialize(void *data, size_t len)
 }
 bool retro_unserialize(const void *data, size_t len)
 {
+    ++unserialize_calls;
     const char *reject = getenv("BANANA_RETRO_TEST_REJECT_UNSERIALIZE");
     if (reject != NULL && strcmp(reject, "1") == 0) return false;
     if (data == NULL || len != sizeof(frame)) return false;
     memcpy(&frame, data, sizeof(frame));
+    if (mode_is("persistence-options")) {
+        memset(save_ram, 0, sizeof(save_ram));
+        memset(save_rtc, 0, sizeof(save_rtc));
+    }
     return true;
 }
+
+unsigned fixture_unserialize_calls(void) { return unserialize_calls; }
+
 void retro_cheat_reset(void) {}
 void retro_cheat_set(unsigned index, bool enabled, const char *code)
 {

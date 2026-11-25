@@ -17,8 +17,12 @@ const char *core_name(void);
 const struct retro_game_geometry *core_geometry(void);
 bool core_step(unsigned frame);
 bool core_save_memory_sizes(size_t *sram_size, size_t *rtc_size);
+enum { CORE_OPTIONS_FINGERPRINT_SIZE = 4097 };
+bool core_option_set(const char *key, const char *value);
+bool core_option_set(const char *key, const char *value);
+bool core_options_fingerprint(char fingerprint[CORE_OPTIONS_FINGERPRINT_SIZE]);
 bool core_persistence_checkpoint(struct saves *saves);
-bool core_persistence_restore_checkpoint(struct saves *saves);
+bool core_persistence_restore_checkpoint(struct saves *saves, const char *token);
 bool core_release(void);
 
 #endif

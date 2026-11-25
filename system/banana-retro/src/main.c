@@ -36,20 +36,8 @@ static struct wl_display *native_display;
 
 static struct saves *open_saves_profile(const char *root,const char *core,const char *content)
 {
-    char fingerprint[4097];
-    size_t used = 0;
-    int n = snprintf(fingerprint, sizeof(fingerprint), "banana-retro-options-v1:");
-    if (n < 0 || (size_t)n >= sizeof(fingerprint)) return NULL;
-    used = (size_t)n;
-    for (size_t i = 0; i < core_option_count(); ++i) {
-        const struct core_option *option = core_option_at(i);
-        if (!option) return NULL;
-        n = snprintf(fingerprint + used, sizeof(fingerprint) - used,
-                     "%zu:%s%zu:%s", strlen(option->key), option->key,
-                     strlen(option->value), option->value);
-        if (n < 0 || (size_t)n >= sizeof(fingerprint) - used) return NULL;
-        used += (size_t)n;
-    }
+    char fingerprint[CORE_OPTIONS_FINGERPRINT_SIZE];
+    if (!core_options_fingerprint(fingerprint)) return NULL;
     struct saves *saves = saves_open_with_options(root, core, content, fingerprint);
     if (saves) (void)saves_set_legacy_core_name(saves, core_name());
     return saves;
@@ -193,7 +181,8 @@ struct native_runtime {
     bool stopped;
     bool failed_load;
     bool committed;
-    bool checkpoint_invalid;
+    bool started;
+    bool commit_intent_marked;
     bool ui_paused;
     bool sleep_paused;
     uint64_t sleep_epoch;
@@ -254,18 +243,24 @@ static bool control_pause(void *data, unsigned owner, uint64_t epoch, bool acqui
     return true;
 }
 
+static bool begin_save(struct native_runtime *runtime)
+{
+    if (!runtime->started || !runtime->saves) return false;
+    if (!runtime->commit_intent_marked)
+        runtime->commit_intent_marked = mark_commit_intent();
+    return runtime->commit_intent_marked;
+}
+
 static bool control_flush(void *data)
 {
     struct native_runtime *runtime = data;
-    return runtime->saves && mark_commit_intent() && core_persistence_flush(runtime->saves);
+    return begin_save(runtime) && core_persistence_flush(runtime->saves);
 }
 
 static bool control_save_state(void *data, unsigned slot)
 {
     struct native_runtime *runtime = data;
-    if (!runtime->saves || !mark_commit_intent()) return false;
-    if (!core_persistence_commit(runtime->saves, (int)slot)) return false;
-    return true;
+    return begin_save(runtime) && core_persistence_commit(runtime->saves, (int)slot);
 }
 
 static bool control_load_state(void *data, unsigned slot)
@@ -309,14 +304,11 @@ static bool control_option(void *data, size_t index, const char **key,
 static bool control_set_option(void *data, const char *key, const char *value,
                                unsigned scope, bool *restart_required)
 {
-    struct native_runtime *runtime = data;
+    (void)data;
     if (scope != BANANA_RETRO_CTL_SCOPE_SESSION) return false;
     const char *previous = core_option_get(key);
     bool changed = previous && strcmp(previous, value) != 0;
     if (!core_option_set(key, value)) return false;
-    if (!changed) { *restart_required = false; return true; }
-    runtime->checkpoint_invalid = true;
-    if (runtime->saves) (void)saves_resume_clear(runtime->saves);
     *restart_required = changed;
     return true;
 }
@@ -332,18 +324,21 @@ static bool control_reset(void *data)
     return true;
 }
 
+static bool finish_persistence(struct native_runtime *runtime, bool quick_resume)
+{
+    if (!control_flush(runtime)) return false;
+    bool slot_saved = runtime->save_state_slot < 0 ||
+        core_persistence_commit(runtime->saves, runtime->save_state_slot);
+    if (quick_resume && !core_persistence_checkpoint(runtime->saves))
+        fputs("Native quick resume checkpoint unavailable\n", stderr);
+    return slot_saved;
+}
+
 static bool control_quit(void *data)
 {
     struct native_runtime *runtime = data;
-    if (!runtime->saves || !mark_commit_intent()) return false;
-    if (runtime->save_state_slot >= 0 &&
-        !core_persistence_commit(runtime->saves, runtime->save_state_slot)) return false;
-    if (runtime->checkpoint_invalid) {
-        if (runtime->save_state_slot < 0 && !core_persistence_flush(runtime->saves)) return false;
-        if (!saves_resume_clear(runtime->saves)) return false;
-    } else if (!core_persistence_checkpoint(runtime->saves) ||
-               !saves_resume_record(runtime->saves)) return false;
-    runtime->committed = true;
+    if (runtime->started && !finish_persistence(runtime, true)) return false;
+    runtime->committed = runtime->started;
     runtime->stopped = true;
     return true;
 }
@@ -351,16 +346,15 @@ static bool control_quit(void *data)
 static bool power_checkpoint(void *data)
 {
     struct native_runtime *runtime = data;
-    if (!runtime->saves || runtime->checkpoint_invalid || !mark_commit_intent()) return false;
+    if (!begin_save(runtime)) return false;
     if (runtime->save_state_slot >= 0 &&
         !core_persistence_commit(runtime->saves, runtime->save_state_slot)) return false;
-    return core_persistence_checkpoint(runtime->saves) && saves_resume_record(runtime->saves);
+    return core_persistence_checkpoint(runtime->saves);
 }
 
 static bool control_shutdown(void *data)
 {
-    struct native_runtime *runtime = data;
-    return control_quit(data) && !runtime->checkpoint_invalid;
+    return control_quit(data);
 }
 
 static bool parse_session_id(const char *text, unsigned char session_id[16])
@@ -504,6 +498,7 @@ int main(int argc, char **argv)
     bool skip_save_commit = false;
     bool stopped = false, ran = false, ok;
     bool readiness_reached = false;
+    bool readiness_gated_launch = getenv("BANANA_RETRO_READY_FILE") != NULL;
     const char *startup_error_code = "runtime-start";
     struct wayland_video *video = NULL;
     struct input_evdev *input = NULL;
@@ -618,7 +613,7 @@ int main(int argc, char **argv)
             if (quick_resume && load_state_slot < 0 && !checkpoint_load && resume_hash[0])
                 (void)saves_resume_clear_if(runtime.saves, resume_hash);
             bool loaded = checkpoint_load
-                ? core_persistence_restore_checkpoint(runtime.saves)
+                ? core_persistence_restore_checkpoint(runtime.saves, resume_hash)
                 : core_persistence_load(runtime.saves, load_state_slot);
             if (!loaded) {
                 startup_error_code = "persistence-load";
@@ -711,17 +706,24 @@ int main(int argc, char **argv)
             if (result == RETRO_PACED_FAILED) ok = false;
             else {
                 ran = true; ++frame;
-                if (runtime.control && !readiness_reached && wayland_video_presented(video)) {
+                if (!runtime.started && wayland_video_presented(video) &&
+                    (!readiness_gated_launch || runtime.control)) {
                     if (!mark_ready()) {
                         startup_error_code = "readiness-publish";
                         fprintf(stderr, "Native readiness publication failed: %s\n", strerror(errno));
                         ok = false;
-                    } else readiness_reached = true;
+                    } else {
+                        readiness_reached = true;
+                        runtime.started = true;
+                    }
                 }
             }
         } else {
             ok = core_step(frame);
-            if (ok) ran = true;
+            if (ok) {
+                ran = true;
+                runtime.started = !readiness_gated_launch;
+            }
             ++frame;
 #ifdef SAVES_TESTING
             if (ok && test_persistence) {
@@ -750,24 +752,12 @@ int main(int argc, char **argv)
     if (!ok && !readiness_reached) mark_startup_error(startup_error_code);
     skip_save_commit = skip_save_commit || runtime.failed_load || runtime.committed;
     if (runtime.control) control_close(runtime.control);
-    bool readiness_gated_launch = getenv("BANANA_RETRO_READY_FILE") != NULL;
-    if (runtime.saves && !skip_save_commit && (!readiness_gated_launch || readiness_reached)) {
-        bool committed = mark_commit_intent();
-        if (committed && quick_resume && !runtime.checkpoint_invalid && save_state_slot < 0) {
-            committed = core_persistence_checkpoint(runtime.saves) &&
-                saves_resume_record(runtime.saves);
-        } else if (committed) {
-            committed = core_persistence_commit(runtime.saves, save_state_slot);
-            if (committed && quick_resume && !runtime.checkpoint_invalid)
-                committed = core_persistence_checkpoint(runtime.saves) &&
-                    saves_resume_record(runtime.saves);
-            else if (committed && quick_resume && runtime.checkpoint_invalid)
-                committed = saves_resume_clear(runtime.saves);
-        }
-        if (!committed) {
-            fputs("Native save generation commit failed\n", stderr);
-            ok = false;
-        }
+    if (ok && video && ran && !readiness_gated_launch && wayland_video_presented(video))
+        runtime.started = true;
+    if (runtime.saves && runtime.started && !skip_save_commit &&
+        !finish_persistence(&runtime, quick_resume)) {
+        fputs("Native save generation commit failed\n", stderr);
+        ok = false;
     }
     if (!core_release()) ok = false;
     saves_close(runtime.saves);

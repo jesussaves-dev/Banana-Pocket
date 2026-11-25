@@ -63,10 +63,10 @@ $(OUT)/fixture-wrong-api.so: tests/fixture_core.c include/libretro.h
 $(OUT)/fixture-missing-export.so: tests/fixture_core.c include/libretro.h
 	$(CC) $(CPPFLAGS) -Iinclude $(CFLAGS) $(strict_cflags) -DFIXTURE_MISSING_EXPORT -shared -fPIC $(LDFLAGS) -o $@ $< $(LDLIBS)
 
-$(OUT)/fixture-runtime: src/main.c src/core.c src/core.h src/control.c src/control.h src/options.c src/options.h \
+$(OUT)/fixture-runtime: tests/check-runtime-persistence.c src/main.c src/core.c src/core.h src/control.c src/control.h src/options.c src/options.h \
 		$(CONTROL_HEADER) src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
 	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(CFLAGS) $(strict_cflags) -DSAVES_TESTING $(LDFLAGS) -o $@ \
-		src/main.c src/core.c src/control.c src/options.c src/input_evdev.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
+		$< src/core.c src/control.c src/options.c src/input_evdev.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
 		-Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(ALSA_LIBS) -pthread $(LDLIBS)
 
 $(OUT)/fixture-no-serialize.so: tests/fixture_core.c include/libretro.h

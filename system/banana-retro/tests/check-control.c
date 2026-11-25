@@ -790,7 +790,7 @@ static void test_runtime_operations(const char *core_path)
 	int content_fd = open(content, O_WRONLY | O_CREAT | O_EXCL, 0600);
 	assert(content_fd >= 0 && write(content_fd, "runtime", 7) == 7 && close(content_fd) == 0);
 	assert(core_load(core_path, content, NULL));
-	struct saves *saves = saves_open(save_root, core_path, content); assert(saves);
+	struct saves *saves = open_saves_profile(save_root, core_path, content); assert(saves);
 	void *fixture = dlopen(core_path, RTLD_NOW | RTLD_LOCAL); assert(fixture);
 	void *symbol = dlsym(fixture, "fixture_counter"); assert(symbol);
 	unsigned (*counter)(void) = NULL; assert(sizeof(counter) == sizeof(symbol));
@@ -804,7 +804,7 @@ static void test_runtime_operations(const char *core_path)
 	struct audio_alsa *audio = new_audio(&pcm, 48000); assert(audio);
 	open_fake(audio, &pcm);
 	core_set_audio_output(audio);
-	struct native_runtime runtime = { .audio=audio, .saves=saves, .save_state_slot=2 };
+	struct native_runtime runtime = { .audio=audio, .saves=saves, .save_state_slot=2, .started=true };
 	char socket_path[256], ui_pid[32];
 	assert(snprintf(socket_path, sizeof(socket_path), "%s/control.sock", base) > 0);
 	assert(snprintf(ui_pid, sizeof(ui_pid), "%ld", (long)getpid()) > 0);
@@ -922,7 +922,7 @@ static void test_runtime_operations(const char *core_path)
 	char checkpoint_hash[65];
 	assert(saves_resume_available(saves, checkpoint_hash) && !runtime.stopped && !pause_owners(&runtime));
 	memory[0] = 0;
-	assert(core_persistence_restore_checkpoint(saves) && memory[0] == 0x7e);
+	assert(core_persistence_restore_checkpoint(saves, checkpoint_hash) && memory[0] == 0x7e);
 	runtime.saves = NULL;
 	power.id = 8;
 	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_IO_ERROR);
