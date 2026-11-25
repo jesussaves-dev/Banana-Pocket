@@ -27,6 +27,8 @@ struct audio_alsa {
     atomic_uint generation;
     atomic_uint input_rate;
     atomic_bool paused;
+    atomic_uint sleep_request; /* Odd while the power peer owns PCM suspension. */
+    atomic_uint sleep_ack;
     atomic_bool started;
     atomic_bool stopping;
     atomic_bool degraded_reported;
@@ -264,7 +266,13 @@ struct audio_alsa *audio_alsa_create_with_ops(unsigned input_rate,
         free(audio);
         return NULL;
     }
-    rc = pthread_cond_init(&audio->ready_cond, NULL);
+    pthread_condattr_t attr;
+    rc = pthread_condattr_init(&attr);
+    if (rc == 0) {
+        rc = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+        if (rc == 0) rc = pthread_cond_init(&audio->ready_cond, &attr);
+        (void)pthread_condattr_destroy(&attr);
+    }
     if (rc != 0) {
         (void)pthread_mutex_destroy(&audio->ready_mutex);
         close(audio->wake_fd);
@@ -278,6 +286,8 @@ struct audio_alsa *audio_alsa_create_with_ops(unsigned input_rate,
     atomic_init(&audio->generation, 1);
     atomic_init(&audio->input_rate, input_rate);
     atomic_init(&audio->paused, false);
+    atomic_init(&audio->sleep_request, 0);
+    atomic_init(&audio->sleep_ack, 0);
     atomic_init(&audio->started, false);
     atomic_init(&audio->stopping, false);
     atomic_init(&audio->degraded_reported, false);
@@ -593,9 +603,22 @@ static bool recover_xrun(struct audio_alsa *audio, int error)
     return false;
 }
 
+static bool sleep_requested(struct audio_alsa *audio)
+{
+    unsigned request = atomic_load(&audio->sleep_request);
+    if (!(request & 1u)) return false;
+    if (atomic_load(&audio->sleep_ack) != request) {
+        close_pcm(audio);
+        audio->retry_at_ns = 0;
+        atomic_store(&audio->sleep_ack, request);
+        set_state(audio, AUDIO_ALSA_STOPPED);
+    }
+    return true;
+}
+
 static bool pump_once(struct audio_alsa *audio)
 {
-    if (atomic_load_explicit(&audio->stopping, memory_order_acquire))
+    if (atomic_load_explicit(&audio->stopping, memory_order_acquire) || sleep_requested(audio))
         return true;
     uint64_t now = audio_now(audio);
     if (!audio->pcm) {
@@ -655,7 +678,7 @@ static bool pump_once(struct audio_alsa *audio)
             audio->pending_offset = 0;
         }
         update_delay(audio);
-    } else if (written == 0 || written == -EAGAIN || written == -EWOULDBLOCK) {
+    } else if (written == 0 || written == -EINTR || written == -EAGAIN || written == -EWOULDBLOCK) {
         return true;
     } else if (written == -EPIPE || written == -ESTRPIPE) {
         (void)recover_xrun(audio, (int)written);
@@ -674,6 +697,10 @@ static void *worker_main(void *data)
 {
     struct audio_alsa *audio = data;
     while (!atomic_load_explicit(&audio->stopping, memory_order_acquire)) {
+        if (sleep_requested(audio)) {
+            (void)wait_for_wake(audio, -1);
+            continue;
+        }
         uint64_t now = audio_now(audio);
         if (!audio->pcm && now < audio->retry_at_ns) {
             uint64_t left = audio->retry_at_ns - now;
@@ -711,12 +738,12 @@ bool audio_alsa_start(struct audio_alsa *audio)
     return true;
 }
 
-bool audio_alsa_wait_ready(struct audio_alsa *audio, unsigned timeout_ms)
+static bool wait_state(struct audio_alsa *audio, unsigned sleep_request, unsigned timeout_ms)
 {
     if (!audio)
         return false;
     struct timespec deadline;
-    if (clock_gettime(CLOCK_REALTIME, &deadline) != 0)
+    if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
         return false;
     deadline.tv_sec += timeout_ms / 1000;
     deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
@@ -725,13 +752,39 @@ bool audio_alsa_wait_ready(struct audio_alsa *audio, unsigned timeout_ms)
         deadline.tv_nsec -= 1000000000L;
     }
     (void)pthread_mutex_lock(&audio->ready_mutex);
+    bool ready;
     int rc = 0;
-    while (atomic_load_explicit(&audio->state, memory_order_acquire) != AUDIO_ALSA_READY &&
-           !atomic_load_explicit(&audio->stopping, memory_order_acquire) && rc == 0)
+    for (;;) {
+        ready = sleep_request ? (atomic_load(&audio->sleep_ack) == sleep_request &&
+                                 atomic_load(&audio->state) == AUDIO_ALSA_STOPPED) :
+            atomic_load(&audio->state) == AUDIO_ALSA_READY;
+        if (ready || rc || atomic_load(&audio->stopping)) break;
         rc = pthread_cond_timedwait(&audio->ready_cond, &audio->ready_mutex, &deadline);
-    bool ready = atomic_load_explicit(&audio->state, memory_order_acquire) == AUDIO_ALSA_READY;
+    }
     (void)pthread_mutex_unlock(&audio->ready_mutex);
     return ready;
+}
+
+bool audio_alsa_wait_ready(struct audio_alsa *audio, unsigned timeout_ms)
+{
+    return wait_state(audio, 0, timeout_ms);
+}
+
+/* Called only by the runtime thread. The worker acknowledges after closing its PCM. */
+bool audio_alsa_sleep(struct audio_alsa *audio, bool acquire)
+{
+    unsigned request = atomic_load(&audio->sleep_request);
+    if (((request & 1u) != 0) != acquire) {
+        ++request;
+        atomic_store(&audio->sleep_request, request);
+        audio_alsa_rebase(audio);
+    }
+    if (!acquire) return true;
+    if (!audio->thread_started) (void)sleep_requested(audio);
+    if (wait_state(audio, request, 500)) return true;
+    atomic_store(&audio->sleep_request, request + 1);
+    notify_worker(audio);
+    return false;
 }
 
 void audio_alsa_close(struct audio_alsa *audio)

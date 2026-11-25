@@ -14,6 +14,7 @@ struct input_evdev;
 struct input_evdev *input_evdev_open(const char *device_directory);
 int input_evdev_wait(struct input_evdev *input, int timeout_ms);
 int input_evdev_fd(const struct input_evdev *input);
+bool input_evdev_resume(struct input_evdev *input);
 bool input_evdev_poll(struct input_evdev *input);
 uint16_t input_evdev_mask(const struct input_evdev *input, unsigned port);
 bool input_evdev_snapshot(struct input_evdev *input, uint16_t masks[RETRO_INPUT_MAX_DEVICES]);

@@ -206,7 +206,7 @@ static uint32_t pause_owners(const struct native_runtime *runtime)
     return (runtime->ui_paused ? 1u : 0u) | (runtime->sleep_paused ? 2u : 0u);
 }
 
-static bool power_checkpoint(struct native_runtime *runtime);
+static bool power_checkpoint(void *data);
 
 static void control_status(void *data, struct control_status *status)
 {
@@ -234,16 +234,20 @@ static bool control_pause(void *data, unsigned owner, uint64_t epoch, bool acqui
         if (acquire) {
             if (!epoch || (runtime->sleep_paused && epoch != runtime->sleep_epoch) ||
                 (!runtime->sleep_paused && epoch <= runtime->sleep_epoch)) return false;
-            if (!power_checkpoint(runtime)) return false;
+            if (!power_checkpoint(runtime) ||
+                (runtime->audio && !audio_alsa_sleep(runtime->audio, true))) return false;
             runtime->sleep_epoch = epoch;
             runtime->sleep_paused = true;
         } else {
             if (!runtime->sleep_paused || epoch != runtime->sleep_epoch) return false;
+            if (runtime->audio) (void)audio_alsa_sleep(runtime->audio, false);
             runtime->sleep_paused = false;
         }
     } else return false;
     bool paused = pause_owners(runtime) != 0;
     if (runtime->audio) audio_alsa_set_paused(runtime->audio, paused);
+    if (was_paused && !paused && runtime->input && !input_evdev_resume(runtime->input))
+        return false;
     if (was_paused && !paused && runtime->runner) {
         return retro_paced_start(runtime->runner, core_refresh_rate(), monotonic_ns());
     }
@@ -253,7 +257,7 @@ static bool control_pause(void *data, unsigned owner, uint64_t epoch, bool acqui
 static bool control_flush(void *data)
 {
     struct native_runtime *runtime = data;
-    return runtime->saves && core_persistence_flush(runtime->saves);
+    return runtime->saves && mark_commit_intent() && core_persistence_flush(runtime->saves);
 }
 
 static bool control_save_state(void *data, unsigned slot)
@@ -310,6 +314,7 @@ static bool control_set_option(void *data, const char *key, const char *value,
     const char *previous = core_option_get(key);
     bool changed = previous && strcmp(previous, value) != 0;
     if (!core_option_set(key, value)) return false;
+    if (!changed) { *restart_required = false; return true; }
     runtime->checkpoint_invalid = true;
     if (runtime->saves) (void)saves_resume_clear(runtime->saves);
     *restart_required = changed;
@@ -343,12 +348,19 @@ static bool control_quit(void *data)
     return true;
 }
 
-static bool power_checkpoint(struct native_runtime *runtime)
+static bool power_checkpoint(void *data)
 {
+    struct native_runtime *runtime = data;
     if (!runtime->saves || runtime->checkpoint_invalid || !mark_commit_intent()) return false;
     if (runtime->save_state_slot >= 0 &&
         !core_persistence_commit(runtime->saves, runtime->save_state_slot)) return false;
     return core_persistence_checkpoint(runtime->saves) && saves_resume_record(runtime->saves);
+}
+
+static bool control_shutdown(void *data)
+{
+    struct native_runtime *runtime = data;
+    return control_quit(data) && !runtime->checkpoint_invalid;
 }
 
 static bool parse_session_id(const char *text, unsigned char session_id[16])
@@ -613,7 +625,7 @@ int main(int argc, char **argv)
                 fputs("No compatible native save or requested state slot\n", stderr);
                 if (checkpoint_load && !saves_resume_clear_if(runtime.saves, resume_hash))
                     fputs("Failed to clear the rejected native resume marker\n", stderr);
-                if (load_state_slot >= 0 || checkpoint_load) {
+                if (load_state_slot >= 0 || checkpoint_load || !saves_has_no_generation(runtime.saves)) {
                     skip_save_commit = true;
                     ok = false;
                 }
@@ -667,6 +679,8 @@ int main(int argc, char **argv)
             .option = control_option,
             .set_option = control_set_option,
             .reset = control_reset,
+            .checkpoint = power_checkpoint,
+            .shutdown = control_shutdown,
             .quit = control_quit
         };
         const char *session_text = getenv("BANANA_RETRO_SESSION_ID");

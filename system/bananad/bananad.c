@@ -440,8 +440,9 @@ static int retro_wait_fd(int fd, short events, double deadline)
 		int rc = poll(&pfd, 1, ms);
 		if (rc < 0 && errno == EINTR) continue;
 		if (rc <= 0) { if (rc == 0) errno = ETIMEDOUT; return 0; }
+		if (pfd.revents & events) return 1;
 		if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) { errno = EPIPE; return 0; }
-		return (pfd.revents & events) != 0;
+		return 0;
 	}
 }
 
@@ -459,16 +460,16 @@ static int retro_send_request(int fd, const unsigned char session[16], uint16_t 
 	size_t size = BANANA_RETRO_CONTROL_HEADER_SIZE + (epoch ? 8 : 0);
 	ssize_t sent;
 	for (;;) {
-		if (!retro_wait_fd(fd, POLLOUT, deadline)) return 0;
+		if (!retro_wait_fd(fd, POLLOUT, deadline)) return -1;
 		sent = send(fd, packet, size, MSG_NOSIGNAL);
 		if (sent < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
 		break;
 	}
-	if (sent != (ssize_t)size) return 0;
+	if (sent != (ssize_t)size) return -1;
 	ssize_t got;
 	for (;;) {
-		if (!retro_wait_fd(fd, POLLIN, deadline)) return 0;
-		got = recv(fd, packet, sizeof(packet), 0);
+		if (!retro_wait_fd(fd, POLLIN, deadline)) return -1;
+		got = recv(fd, packet, sizeof(packet), MSG_TRUNC);
 		if (got < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
 		break;
 	}
@@ -479,7 +480,7 @@ static int retro_send_request(int fd, const unsigned char session[16], uint16_t 
 	    retro_get64(packet + BANANA_RETRO_CTL_REQUEST_ID) != id ||
 	    memcmp(packet + BANANA_RETRO_CTL_SESSION_ID, session, 16) != 0 ||
 	    retro_get16(packet + BANANA_RETRO_CTL_FLAGS) != 0 ||
-	    retro_get16(packet + BANANA_RETRO_CTL_LENGTH) != 2) return 0;
+	    retro_get16(packet + BANANA_RETRO_CTL_LENGTH) != 2) return -1;
 	return (int)retro_get16(packet + BANANA_RETRO_CONTROL_HEADER_SIZE);
 }
 
@@ -543,10 +544,17 @@ static void retro_system_shutdown_finalize(void *data);
 static void retro_system_resume_marker(void *data, const char *rom, int remember)
 {
 	(void)data;
-	if (remember && rom && *rom) {
-		FILE *f = fopen("/data/banana/resume", "w");
-		if (f) { fprintf(f, "%s\n", rom); fclose(f); }
-	} else unlink("/data/banana/resume");
+	if (!remember || !rom || !*rom) { unlink("/data/banana/resume"); return; }
+	FILE *f = fopen("/data/banana/resume.tmp", "w");
+	if (!f) return;
+	int ok = fprintf(f, "%s\n", rom) > 0 && fflush(f) == 0 && fsync(fileno(f)) == 0;
+	if (fclose(f) != 0) ok = 0;
+	if (!ok || rename("/data/banana/resume.tmp", "/data/banana/resume") < 0) {
+		unlink("/data/banana/resume.tmp");
+		return;
+	}
+	int dir = open("/data/banana", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (dir >= 0) { if (fsync(dir) < 0) sleep_log("resume directory sync failed: %s", strerror(errno)); close(dir); }
 }
 static const struct retro_power_ops retro_system_ops = {
 	.request = retro_system_request, .signal_group = retro_system_signal,
@@ -657,8 +665,9 @@ static int retro_shutdown_child(const struct retro_power_ops *ops, pid_t game, p
 static int retro_shutdown_session(const struct retro_power_ops *ops, pid_t game, pid_t pg,
 				  uint64_t epoch, const char *rom)
 {
-	if (ops->resume_marker) ops->resume_marker(ops->data, rom, game > 0 && rom && *rom);
 	int result = game > 0 ? retro_shutdown_child(ops, game, pg, epoch) : RETRO_POWER_NONE;
+	if (ops->resume_marker && (result == RETRO_POWER_NONE || result == RETRO_POWER_OK))
+		ops->resume_marker(ops->data, rom, game > 0 && rom && *rom);
 	if (ops->shutdown_finalize) ops->shutdown_finalize(ops->data);
 	return result;
 }
@@ -1216,7 +1225,16 @@ static int sleep_save_state(pid_t game)
 	}
 }
 
-/* Sessions that survive a hang: while a RetroArch game runs, every 180 s (session_secs) its automatic state is written
+static int session_checkpoint(const struct retro_power_ops *ops, pid_t game,
+			      int (*legacy_save)(pid_t))
+{
+	int native = ops->request(ops->data, BANANA_RETRO_CTL_CHECKPOINT, 0, 1500);
+	if (native == RETRO_POWER_NONE) return legacy_save(game);
+	if (native != RETRO_POWER_OK) sleep_log("native periodic checkpoint unconfirmed");
+	return native == RETRO_POWER_OK;
+}
+
+/* Sessions that survive a hang: while a game runs, every 180 s (session_secs) its automatic state is written
  * and /data/banana/resume names the ROM (the menu's "resume?" card at the next boot, the state loaded by Quick
  * resume). The menu clears the marker when the game quits to it, so only a hang, a crash of the whole handheld or a
  * pulled battery leaves it behind. Written whole and renamed, so a cut during the write leaves the old one. */
@@ -1226,13 +1244,9 @@ static void session_tick(void)
 	pid_t game = pid_of("/run/banana/game.pid");
 	read_str("/run/banana/game.path", rom, sizeof rom);
 	if (!game || !rom[0] || access("/run/banana/shutting-down", F_OK) == 0) return;
-	if (!sleep_save_state(game)) return;	/* no state, no point promising a resume */
-	FILE *f = fopen("/data/banana/resume.tmp", "w");
-	if (!f) return;
-	int ok = fprintf(f, "%s\n", rom) > 0;
-	ok = fflush(f) == 0 && fsync(fileno(f)) == 0 && ok;
-	ok = fclose(f) == 0 && ok;
-	if (!ok || rename("/data/banana/resume.tmp", "/data/banana/resume") < 0) unlink("/data/banana/resume.tmp");
+	if (session_checkpoint(&retro_system_ops, game, sleep_save_state) &&
+	    pid_of("/run/banana/game.pid") == game)
+		retro_system_resume_marker(NULL, rom, 1);
 }
 
 /* ---- standby: the SoC awake behind a dark panel ------------------------------------------------------------------- */
@@ -2554,7 +2568,7 @@ static int selftest_retro_lifecycle(void)
 	mock.terminate_after_waits = 2;
 	CHECK("direct shutdown marker order and reap", retro_shutdown_session(&ops, 100, 100, 53,
 	      "game.rom") == RETRO_POWER_OK && mock.resume_marked && !mock.child_alive &&
-	      !mock.term_requested && mock.waits == 2 && strstr(mock.order, "MXF") != NULL);
+	      !mock.term_requested && mock.waits == 2 && strstr(mock.order, "XMF") != NULL);
 	mock.child_alive = 1;
 	mock.waits = 0;
 	mock.terminate_after_waits = 1;

@@ -18,7 +18,7 @@ mkdir -p "$W/libexec" "$W/bin" "$W/libretro" "$W/run"
 for c in gpsp mgba gambatte fceumm pcsx_rearmed; do : > "$W/libretro/${c}_libretro.so"; done
 ROM="$W/game with spaces.gba"
 : > "$ROM"
-cp "$LAUNCH/libretro-core.sh" "$W/libexec/libretro-core.sh"
+sed "s#/usr/libexec/banana#$W/libexec#g" "$LAUNCH/libretro-core.sh" > "$W/libexec/libretro-core.sh"
 
 export BANANA_LIBRETRO_DIR="$W/libretro" BANANA_SETTINGS_FILE="$W/settings.conf"
 export BANANA_IMAGE_SETTINGS_FILE="$W/image-settings.conf" BANANA_RETRO_RULES_FILE="$W/rules.conf"
@@ -55,6 +55,11 @@ chmod +x "$W/libexec/ra-secrets" "$W/libexec/run-retroarch"
 cat > "$W/bin/banana-retro" <<'EOF'
 #!/bin/sh
 case ${NATIVE_MODE:-fail} in
+    environment)
+        [ "$WAYLAND_DISPLAY" = banana-0 ] &&
+            [ "$XDG_RUNTIME_DIR" = "$BANANA_RUN_DIR/wayland" ] || exit 1
+        : > "$BANANA_RETRO_READY_FILE"
+        exit 49 ;;
     committed) : > "$BANANA_RETRO_COMMITTED_FILE"; exit 43 ;;
     ready-exit)
         : > "$BANANA_RETRO_READY_FILE"
@@ -103,6 +108,17 @@ grep -q -- '--resolved-core' "$W/fallback.log" && ok "runtime rule disabled rout
 
 printf 'runtime.gba.mgba = banana-retro\n' > "$BANANA_RETRO_RULES_FILE"
 printf 'runtime.gba.gpsp = banana-retro\n' >> "$BANANA_RETRO_RULES_FILE"
+# Enter through the installed systems.conf launcher with a clean display environment.
+sed -e "s#/usr/libexec/banana#$W/libexec#g" "$LAUNCH/run-retroarch" > "$W/entry"
+rm -f "$W/fallback.log"
+( unset WAYLAND_DISPLAY XDG_RUNTIME_DIR
+  BANANA_RUN_DIR="$W/run" BANANA_SYSTEM=gba BANANA_CORE=mgba NATIVE_MODE=environment \
+    sh "$W/entry" gpsp "$ROM" ) >"$W/out" 2>&1
+status=$?
+[ "$status" -eq 49 ] && [ ! -s "$W/fallback.log" ] &&
+    ok "native child inherits the production compositor endpoint" ||
+    bad "native compositor environment missing"
+
 rm -f "$W/fallback.log"
 launch >"$W/out" 2>&1
 if grep -q -- '--resolved-core' "$W/fallback.log" && grep -q 'startup error=process-exit' "$W/out"; then
@@ -110,10 +126,10 @@ if grep -q -- '--resolved-core' "$W/fallback.log" && grep -q 'startup error=proc
 else bad "typed pre-readiness fallback missing"; fi
 
 rm -f "$W/fallback.log"
-BANANA_SHADER=custom launch >"$W/out" 2>&1
+BANANA_SHADER=custom NATIVE_MODE=ready-exit launch >"$W/out" 2>&1
 grep -q -- '--resolved-core' "$W/fallback.log" && ok "a selected RetroArch shader keeps the RetroArch path" || bad "shader compatibility route changed"
 rm -f "$W/fallback.log"
-RA_USER=player launch >"$W/out" 2>&1
+RA_USER=player NATIVE_MODE=ready-exit launch >"$W/out" 2>&1
 grep -q -- '--resolved-core' "$W/fallback.log" && ok "a configured RetroAchievements account keeps the RetroArch path" || bad "achievement compatibility route changed"
 
 rm -f "$W/fallback.log" "$W/run"/*
@@ -139,6 +155,20 @@ for mode in never-ready ignore-term; do
         cat "$W/out"
     fi
 done
+
+# Terminating the launcher during startup must never exec the fallback.
+rm -f "$W/native.pid" "$W/fallback.log"
+BANANA_SYSTEM=gba BANANA_RUN_DIR="$W/run" NATIVE_PID_MARKER="$W/native.pid" \
+    NATIVE_MODE=ignore-term "$W/libexec/run-libretro" --resolved mgba "$W/libretro/mgba_libretro.so" "$ROM" >"$W/out" 2>&1 &
+wrapper=$!
+tries=0
+while [ ! -s "$W/native.pid" ] && [ "$tries" -lt 100 ]; do sleep 0.02; tries=$((tries+1)); done
+kill -TERM "$wrapper" && wait "$wrapper"
+status=$?
+child=$(cat "$W/native.pid")
+if [ "$status" -ne 0 ] && [ ! -s "$W/fallback.log" ] && ! kill -0 "$child" 2>/dev/null; then
+    ok "cancelled startup reaps a TERM-resistant child without fallback"
+else bad "cancelled startup left a running game or switched runtimes"; fi
 
 for mode in late-commit late-ready; do
     rm -f "$W/fallback.log" "$W/native.pid" "$W/run"/*

@@ -171,8 +171,9 @@ static void test_partial_write_xrun_and_rate(void)
     fake.write_script[1] = -EAGAIN;
     fake.write_script[2] = 20;
     fake.write_script[3] = -EPIPE;
-    fake.write_script_count = 4;
-    for (unsigned i = 0; i < 5; ++i)
+    fake.write_script[4] = -EINTR;
+    fake.write_script_count = 5;
+    for (unsigned i = 0; i < 6; ++i)
         assert(audio_alsa_pump_once(audio));
     assert(fake.written_frames == AUDIO_ALSA_CHUNK_FRAMES);
     for (size_t i = 0; i < fake.written_frames; ++i) {
@@ -249,8 +250,11 @@ static void test_disconnect_and_thread_shutdown(void)
     audio = new_audio(&threaded, 48000);
     assert(audio != NULL && audio_alsa_start(audio));
     assert(audio_alsa_wait_ready(audio, 1000));
+    assert(audio_alsa_sleep(audio, true));
+    assert(threaded.close_calls == 1 && !audio_alsa_wait_ready(audio, 1));
+    assert(audio_alsa_sleep(audio, false) && audio_alsa_wait_ready(audio, 1000));
     audio_alsa_close(audio);
-    assert(threaded.open_calls == 1 && threaded.close_calls == 1);
+    assert(threaded.open_calls == 2 && threaded.close_calls == 2);
 }
 
 static void test_resampling_and_negative_drift(void)

@@ -123,7 +123,7 @@ $(OUT)/saves-test.o: src/saves.c src/saves.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(strict_cflags) -DSAVES_TESTING -c src/saves.c -o $@
 
 $(OUT)/fixture-check-saves: tests/check-saves.c src/saves.h $(OUT)/saves-test.o
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(strict_cflags) -DSAVES_TESTING $(LDFLAGS) -o $@ tests/check-saves.c $(OUT)/saves-test.o $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(strict_cflags) -DSAVES_TESTING $(LDFLAGS) -Wl,--wrap=fsync -Wl,--wrap=fstatvfs -o $@ tests/check-saves.c $(OUT)/saves-test.o $(LDLIBS)
 
 check-saves: $(OUT)/fixture-check-saves $(OUT)/fixture-runtime $(OUT)/fixture.so $(OUT)/fixture-no-serialize.so $(OUT)/fixture-no-serialize-size.so $(OUT)/fixture-no-serialize-call.so $(OUT)/fixture-no-unserialize.so
 	$(OUT)/fixture-check-saves $(OUT)/fixture-runtime $(OUT)/fixture.so $(OUT)/fixture-no-serialize.so $(OUT)/fixture-no-serialize-size.so $(OUT)/fixture-no-serialize-call.so $(OUT)/fixture-no-unserialize.so $(CURDIR)/tests/legacy-fixtures

@@ -27,6 +27,8 @@ struct control_ops {
 	void *data;
 	void (*status)(void *data, struct control_status *status);
 	bool (*pause)(void *data, unsigned owner, uint64_t epoch, bool acquire);
+	bool (*checkpoint)(void *data);
+	bool (*shutdown)(void *data);
 	bool (*flush)(void *data);
 	bool (*save_state)(void *data, unsigned slot);
 	bool (*load_state)(void *data, unsigned slot);

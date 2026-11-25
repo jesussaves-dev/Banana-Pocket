@@ -40,6 +40,7 @@ enum banana_retro_control_type {
 	BANANA_RETRO_CTL_SLEEP_ABORT = 13,
 	BANANA_RETRO_CTL_WAKE = 14,
 	BANANA_RETRO_CTL_SHUTDOWN = 15,
+	BANANA_RETRO_CTL_CHECKPOINT = 16,
 };
 
 enum banana_retro_control_result {
@@ -74,6 +75,7 @@ enum banana_retro_control_capability {
 /* Payloads after the common header:
  * PAUSE/RESUME: u8 owner, u64 epoch (zero for UI; increasing nonzero sleep epoch).
  * PREPARE_SLEEP/SLEEP_ABORT/WAKE/SHUTDOWN: u64 nonzero power epoch; these are sleep-role only.
+ * CHECKPOINT: no payload, sleep-role only; commit a resume checkpoint without changing pause holds.
  * SAVE_STATE/LOAD_STATE: u32 slot. GET_OPTIONS: u16 offset, u16 descriptor limit.
  * SET_OPTION: u16 key bytes, u16 value bytes, u8 scope, key bytes, value bytes.
  * GET_OPTIONS response body: u16 total, u16 returned, then returned descriptors;

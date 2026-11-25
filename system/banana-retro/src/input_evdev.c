@@ -21,6 +21,7 @@ struct input_device {
 	int fd;
 	bool active;
 	bool dropped;
+	uint16_t suppressed;
 	enum input_profile_kind profile;
 	unsigned hat_axes;
 	char path[PATH_MAX];
@@ -419,6 +420,7 @@ bool input_evdev_poll(struct input_evdev *in)
 					remove_device(in, dev);
 					break;
 				}
+				if (!dev->dropped) dev->suppressed &= input_pad_mask(&dev->pad);
 			}
 			if (!dev->active) break;
 		}
@@ -428,10 +430,25 @@ bool input_evdev_poll(struct input_evdev *in)
 	return true;
 }
 
+bool input_evdev_resume(struct input_evdev *in)
+{
+	if (!input_evdev_poll(in)) return false;
+	for (unsigned i = 0; i < RETRO_INPUT_MAX_DEVICES; ++i) {
+		struct input_device *dev = &in->devices[i];
+		if (!dev->active) continue;
+		if (!query_device_state(dev, &dev->pad)) {
+			remove_device(in, dev);
+			continue;
+		}
+		dev->suppressed = input_pad_mask(&dev->pad);
+	}
+	return true;
+}
+
 uint16_t input_evdev_mask(const struct input_evdev *in, unsigned port)
 {
 	return in && port < RETRO_INPUT_MAX_DEVICES && in->devices[port].active ?
-		input_pad_mask(&in->devices[port].pad) : 0;
+		input_pad_mask(&in->devices[port].pad) & ~in->devices[port].suppressed : 0;
 }
 
 bool input_evdev_snapshot(struct input_evdev *in, uint16_t masks[RETRO_INPUT_MAX_DEVICES])

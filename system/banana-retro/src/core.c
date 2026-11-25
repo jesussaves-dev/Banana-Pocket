@@ -183,6 +183,9 @@ static bool environment(unsigned command, void *data)
         return false;
 
     switch (command) {
+    case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
+        *(const char **)data = "/data/bios";
+        return true;
     case RETRO_ENVIRONMENT_GET_CAN_DUPE:
         *(bool *)data = session.video.submit != NULL;
         return true;

@@ -691,7 +691,18 @@ static void test_options(void)
 	def[0].key = "fixture_video"; def[0].desc = "Video"; def[0].default_value = "rgb";
 	def[0].values[0].value = "rgb"; def[0].values[1].value = "xrgb";
 	struct retro_core_options_v2 v2 = { .definitions = def };
+	char help[512]; memset(help, 'h', sizeof(help) - 1); help[sizeof(help)-1] = 0;
+	def[0].info = help;
+	char choices[48][8];
+	for (unsigned i = 0; i < 48; ++i) {
+		snprintf(choices[i], sizeof(choices[i]), "pal%u", i);
+		def[0].values[2+i].value = choices[i];
+	}
 	assert(options_register_v2(&v2));
+	assert(options_at(2)->choice_count == 50 && options_set("fixture_video", choices[47]));
+	assert(options_set("fixture_video", "rgb"));
+	const char *bios = NULL;
+	assert(core_environment_test(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &bios) && !strcmp(bios, "/data/bios"));
 	assert(options_count() == 3 && strcmp(options_get("fixture_video"), "rgb") == 0);
 }
 
@@ -816,6 +827,7 @@ static void test_runtime_operations(const char *core_path)
 		.flush=control_flush, .save_state=control_save_state,
 		.load_state=control_load_state, .option_count=control_option_count,
 		.option=control_option, .set_option=control_set_option,
+		.checkpoint=power_checkpoint, .shutdown=control_shutdown,
 		.reset=control_reset, .quit=control_quit
 	};
 	struct control_server *server = control_open_from_env(&ops, session);
@@ -902,8 +914,22 @@ static void test_runtime_operations(const char *core_path)
 	assert(core_persistence_load(saves, -1));
 	assert(memory[0] == 0x39);
 
+	packet_size = make_packet(request, BANANA_RETRO_CTL_CHECKPOINT, 12, session, NULL, 0);
+	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_UNSUPPORTED);
+	power = (struct peer_request){ .type=BANANA_RETRO_CTL_CHECKPOINT, .id=7 };
+	memory[0] = 0x7e;
+	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_OK);
+	char checkpoint_hash[65];
+	assert(saves_resume_available(saves, checkpoint_hash) && !runtime.stopped && !pause_owners(&runtime));
+	memory[0] = 0;
+	assert(core_persistence_restore_checkpoint(saves) && memory[0] == 0x7e);
+	runtime.saves = NULL;
+	power.id = 8;
+	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_IO_ERROR);
+	runtime.saves = saves;
+
 	memory[0] = 0x5a;
-	power = (struct peer_request){ .type=BANANA_RETRO_CTL_SHUTDOWN, .epoch=73, .id=7 };
+	power = (struct peer_request){ .type=BANANA_RETRO_CTL_SHUTDOWN, .epoch=73, .id=9 };
 	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_OK);
 	assert(runtime.stopped && runtime.committed);
 	memory[0] = 0x22;

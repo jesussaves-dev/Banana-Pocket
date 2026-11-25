@@ -63,6 +63,7 @@ struct audio_alsa *audio_alsa_create_with_ops(unsigned input_rate,
 struct audio_alsa *audio_alsa_open(unsigned input_rate);
 bool audio_alsa_start(struct audio_alsa *audio);
 bool audio_alsa_pump_once(struct audio_alsa *audio);
+bool audio_alsa_sleep(struct audio_alsa *audio, bool acquire);
 bool audio_alsa_wait_ready(struct audio_alsa *audio, unsigned timeout_ms);
 size_t audio_alsa_write(struct audio_alsa *audio, const int16_t *stereo, size_t frames);
 void audio_alsa_set_input_rate(struct audio_alsa *audio, unsigned rate);

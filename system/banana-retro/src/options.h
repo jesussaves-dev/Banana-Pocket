@@ -6,12 +6,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-enum { OPTIONS_MAX = 128, OPTIONS_MAX_VALUES = 24, OPTIONS_TEXT = 128 };
+enum { OPTIONS_MAX = 128, OPTIONS_MAX_VALUES = RETRO_NUM_CORE_OPTION_VALUES_MAX, OPTIONS_TEXT = 128 };
 
 struct core_option {
 	char key[OPTIONS_TEXT];
 	char description[OPTIONS_TEXT];
-	char info[OPTIONS_TEXT];
 	char default_value[OPTIONS_TEXT];
 	char value[OPTIONS_TEXT];
 	char choices[OPTIONS_MAX_VALUES][OPTIONS_TEXT];

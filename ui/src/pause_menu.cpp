@@ -266,6 +266,7 @@ void PauseMenu::close(bool resumeGame)
 	bool was = open;
 	open = pending = false;
 	if (!was) return;
+	if (nativePauseHeld) input.grab(false); // resync in the native child after ungrab
 	if (resumeGame && nativePauseHeld)
 	{
 		if (native.pause(false) != NativePauseResult::Applied)
@@ -275,10 +276,10 @@ void PauseMenu::close(bool resumeGame)
 		}
 	}
 	else if (resumeGame && nativeSignalStopped) signalTree(gamePid, SIGCONT);
+	if (!nativePauseHeld) input.grab(false);
 	nativePauseHeld = nativeSignalStopped = nativeActive = nativeAttempt = false;
 	native.clear();
 	nativeOptions.clear();
-	input.grab(false);
 	unlink("/run/banana/overlay-open");
 	hideCard();
 	comp.reconfigure();	// a Frame row change: the game hears its new size now that it can answer

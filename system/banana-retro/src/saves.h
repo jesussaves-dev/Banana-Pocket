@@ -25,6 +25,7 @@ struct saves *saves_open_with_options(const char *root, const char *core_path,
 				      const char *content_path, const char *options_fingerprint);
 bool saves_set_legacy_core_name(struct saves *saves, const char *library_name);
 void saves_close(struct saves *saves);
+bool saves_has_no_generation(struct saves *saves);
 bool saves_load_memory(struct saves *saves, void *sram, size_t sram_size,
 		       void *rtc, size_t rtc_size);
 /* Preview hashes the profile, coherent source set, file contents, and destination

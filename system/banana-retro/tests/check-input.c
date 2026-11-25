@@ -359,6 +359,15 @@ static void test_hotplug_lifecycle(void)
 	mock_event(EV_SYN, SYN_REPORT, 0);
 	assert(input_evdev_wait(input, 100) > 0 && input_evdev_snapshot(input, masks));
 	assert(masks[0] == (1u << 9));
+	/* The UI owned the fd grab during these transitions. */
+	mock_key(BTN_NORTH, false);
+	mock_key(BTN_EAST, true);
+	assert(input_evdev_resume(input) && input_evdev_snapshot(input, masks) && masks[0] == 0);
+	mock_event(EV_KEY, BTN_EAST, 2);
+	assert(input_evdev_snapshot(input, masks) && masks[0] == 0);
+	mock_event(EV_KEY, BTN_EAST, 0);
+	mock_event(EV_KEY, BTN_EAST, 1);
+	assert(input_evdev_snapshot(input, masks) && masks[0] == (1u << 8));
 	assert(close(mock_write_fd) == 0);
 	mock_write_fd = -1;
 	assert(unlink(mock_path) == 0);

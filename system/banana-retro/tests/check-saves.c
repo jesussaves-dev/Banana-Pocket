@@ -4,6 +4,8 @@
 #include <assert.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <sys/statvfs.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -13,6 +15,29 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+/* Model the squashfs ancestor of a writable data mount, without a host mount. */
+static struct stat immutable_root;
+static unsigned immutable_syncs;
+static bool on_immutable_root(int fd)
+{
+	struct stat st;
+	return immutable_root.st_ino && fstat(fd, &st) == 0 &&
+		st.st_dev == immutable_root.st_dev && st.st_ino == immutable_root.st_ino;
+}
+int __real_fsync(int fd);
+int __wrap_fsync(int fd)
+{
+	if (on_immutable_root(fd)) { ++immutable_syncs; errno = EINVAL; return -1; }
+	return __real_fsync(fd);
+}
+int __real_fstatvfs(int fd, struct statvfs *fs);
+int __wrap_fstatvfs(int fd, struct statvfs *fs)
+{
+	int rc = __real_fstatvfs(fd, fs);
+	if (rc == 0 && on_immutable_root(fd)) fs->f_flag |= ST_RDONLY;
+	return rc;
+}
 
 static void put(const char *path,const void *data,size_t size)
 {
@@ -315,6 +340,13 @@ int main(int argc,char **argv)
 	put(core,"core-build-two",14);struct saves *incompatible=saves_open(root,core,content);assert(incompatible);assert(!saves_load_memory(incompatible,NULL,0,NULL,0));saves_close(incompatible);put(core,"core-build-one",14);
 	uint8_t serialized[4]={0},decoded[4]={0},source[]={6,2,6,4};assert(saves_state_capture(serialize_ok,source,serialized,sizeof(serialized)));assert(!memcmp(source,serialized,sizeof(source)));assert(!saves_state_capture(serialize_fail,source,serialized,sizeof(serialized)));assert(saves_state_restore(unserialize_ok,decoded,serialized,sizeof(serialized)));assert(!memcmp(source,decoded,sizeof(source)));assert(!saves_state_restore(unserialize_fail,decoded,serialized,sizeof(serialized)));
 	/* New nested roots retry parent syncs after a failed mkdir publication. */
+	assert(stat("/", &immutable_root) == 0);
+	char absolute_root[4096];
+	assert(snprintf(absolute_root, sizeof(absolute_root), "%s/data/retro/saves", base) > 0);
+	preserve_seed(absolute_root, core, content, 0x73);
+	assert_saved_byte(absolute_root, core, content, 0x73);
+	assert(immutable_syncs > 0);
+	immutable_root.st_ino = 0;
 	char nested_root[4096],identity_root[4096],existing_root[4096];assert(snprintf(nested_root,sizeof(nested_root),"%s/new/nested/save-root",base)>0);saves_test_fail_event(SAVES_TEST_PARENT_DIR_FSYNC,path_components(base)+1);assert(!saves_open(nested_root,core,content));struct saves *nested=saves_open(nested_root,core,content);assert(nested);uint8_t durable_byte=0x6d;assert(saves_commit(nested,&durable_byte,1,NULL,0,-1,NULL,0));saves_close(nested);assert_saved_byte(nested_root,core,content,durable_byte);
 	/* A failed identity-parent sync is retried even though the identity dir exists. */
 	assert(snprintf(identity_root,sizeof(identity_root),"%s/identity/nested/root",base)>0);saves_test_fail_event(SAVES_TEST_PARENT_DIR_FSYNC,path_components(identity_root)+1);assert(!saves_open(identity_root,core,content));struct saves *identity=saves_open(identity_root,core,content);assert(identity);assert(saves_commit(identity,&durable_byte,1,NULL,0,-1,NULL,0));saves_close(identity);assert_saved_byte(identity_root,core,content,durable_byte);
@@ -339,6 +371,15 @@ int main(int argc,char **argv)
 	for(size_t i=0;i<sizeof(crashes)/sizeof(crashes[0]);i++){char cr[4096];assert(snprintf(cr,sizeof(cr),"%s/crash-%zu",base,i)>0);preserve_seed(cr,core,content,0x11);pid_t child=fork();assert(child>=0);if(child==0){struct saves *cs=saves_open(cr,core,content);if(!cs)_exit(1);saves_test_crash_event(crashes[i]);(void)saves_commit(cs,"\x22",1,NULL,0,-1,NULL,0);_exit(2);}int status;assert(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==86);assert_saved_byte(cr,core,content,i==2?0x22:0x11);}
 	/* Exercise the real executable's normal-exit and SIGTERM persistence path. */
 	const char *runtime=argv[1],*fixture=argv[2];char rom[4096],rr[4096];assert(snprintf(rom,sizeof(rom),"%s/runtime.rom",base)>0);put(rom,"BRC1\n",5);assert(snprintf(rr,sizeof(rr),"%s/runtime-normal",base)>0);assert(runtime_run(runtime,fixture,rom,rr,false,0,0)==0);assert(runtime_has_save(rr,fixture,rom));assert(snprintf(rr,sizeof(rr),"%s/runtime-term",base)>0);assert(runtime_run(runtime,fixture,rom,rr,true,0,0)==0);assert(runtime_has_save(rr,fixture,rom));
+	/* A failed cold load must not replace the only generation with blank SRAM. */
+	char damaged_ident[4096], damaged_memory[4096];
+	only_entry(rr, damaged_ident, sizeof(damaged_ident));
+	uint64_t damaged_gen = current(damaged_ident);
+	assert(snprintf(damaged_memory, sizeof(damaged_memory), "%s/g%016llx/memory",
+		damaged_ident, (unsigned long long)damaged_gen) > 0);
+	put(damaged_memory, "bad", 3);
+	assert(runtime_run(runtime, fixture, rom, rr, false, 0, 0) != 0);
+	assert(current(damaged_ident) == damaged_gen);
 	for(int i=3;i<7;i++){assert(snprintf(rr,sizeof(rr),"%s/runtime-optional-%d",base,i)>0);assert(runtime_run(runtime,argv[i],rom,rr,false,0,0)==0);assert(runtime_has_save(rr,argv[i],rom));}
 	assert(snprintf(rr,sizeof(rr),"%s/runtime-state-load",base)>0);assert(runtime_run(runtime,argv[3],rom,rr,false,1,0)!=0);assert(!runtime_has_save(rr,argv[3],rom));assert(snprintf(rr,sizeof(rr),"%s/runtime-state-save",base)>0);assert(runtime_run(runtime,argv[3],rom,rr,false,2,0)!=0);assert(!runtime_has_save(rr,argv[3],rom));
 	assert(snprintf(rr,sizeof(rr),"%s/runtime-quick-resume",base)>0);assert(runtime_run(runtime,fixture,rom,rr,false,0,1)==0);assert(runtime_run(runtime,fixture,rom,rr,false,0,2)==0);

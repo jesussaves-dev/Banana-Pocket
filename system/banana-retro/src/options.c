@@ -15,25 +15,22 @@ static bool copy_text(char *to, const char *from)
 	return true;
 }
 
-static struct core_option *new_item(const char *key, const char *description,
-					    const char *info)
+static struct core_option *new_item(const char *key, const char *description)
 {
 	if (!key || !*key || strlen(key) >= OPTIONS_TEXT)
 		return NULL;
 	for (size_t i = 0; i < count; ++i) {
 		if (strcmp(items[i].key, key) != 0) continue;
-		if (strlen(description ? description : "") >= OPTIONS_TEXT ||
-		    strlen(info ? info : "") >= OPTIONS_TEXT) return NULL;
+		if (strlen(description ? description : "") >= OPTIONS_TEXT) return NULL;
 		items[i].choice_count = 0;
 		memset(items[i].choices, 0, sizeof(items[i].choices));
-		return copy_text(items[i].description, description) && copy_text(items[i].info, info) ?
+		return copy_text(items[i].description, description) ?
 			&items[i] : NULL;
 	}
 	if (count == OPTIONS_MAX) return NULL;
 	struct core_option *item = &items[count];
 	memset(item, 0, sizeof(*item));
-	if (!copy_text(item->key, key) || !copy_text(item->description, description) ||
-	    !copy_text(item->info, info))
+	if (!copy_text(item->key, key) || !copy_text(item->description, description))
 		return NULL;
 	item->visible = true;
 	++count;
@@ -87,7 +84,7 @@ bool options_register_v0(const struct retro_variable *definitions)
 		if (dlen >= sizeof(description)) return false;
 		memcpy(description, def->value, dlen);
 		description[dlen] = '\0';
-		struct core_option *item = new_item(def->key, description, "");
+		struct core_option *item = new_item(def->key, description);
 		if (!item) return false;
 		char values[OPTIONS_TEXT];
 		if (!copy_text(values, sep + 2)) return false;
@@ -110,7 +107,7 @@ bool options_register_v1(const struct retro_core_option_definition *definitions)
 	for (size_t n = 0; n <= OPTIONS_MAX; ++n) {
 		const struct retro_core_option_definition *def = &definitions[n];
 		if (!def->key) return true;
-		struct core_option *item = new_item(def->key, def->desc, def->info);
+		struct core_option *item = new_item(def->key, def->desc);
 		if (!item) return false;
 		for (size_t i = 0; i < RETRO_NUM_CORE_OPTION_VALUES_MAX; ++i) {
 			if (!def->values[i].value) break;
@@ -129,8 +126,7 @@ bool options_register_v2(const struct retro_core_options_v2 *definitions)
 		const struct retro_core_option_v2_definition *def = &definitions->definitions[n];
 		if (!def->key) return true;
 		struct core_option *item = new_item(def->key,
-				def->desc_categorized && *def->desc_categorized ? def->desc_categorized : def->desc,
-				def->info_categorized && *def->info_categorized ? def->info_categorized : def->info);
+				def->desc_categorized && *def->desc_categorized ? def->desc_categorized : def->desc);
 		if (!item) return false;
 		for (size_t i = 0; i < RETRO_NUM_CORE_OPTION_VALUES_MAX; ++i) {
 			if (!def->values[i].value) break;

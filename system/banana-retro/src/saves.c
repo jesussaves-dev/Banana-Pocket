@@ -11,6 +11,7 @@
 #include <string.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -198,13 +199,26 @@ static int make_dirs(const char *path)
 		if(n==1&&start[0]=='.')continue;
 		if((n==2&&start[0]=='.'&&start[1]=='.')||n==0||n>NAME_MAX){close(fd);errno=EINVAL;return -1;}
 		char component[NAME_MAX+1];memcpy(component,start,n);component[n]=0;
-		if(mkdirat(fd,component,0700)<0&&errno!=EEXIST){close(fd);return -1;}
-		int child=openat(fd,component,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+		bool created = false;
+		const int flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
+		int child = openat(fd, component, flags);
+		if (child < 0 && errno == ENOENT) {
+			created = mkdirat(fd, component, 0700) == 0;
+			if (!created && errno != EEXIST) { close(fd); return -1; }
+			child = openat(fd, component, flags);
+		}
 		if(child<0){close(fd);return -1;}
 		struct stat st;if(fstat(child,&st)<0){int saved=errno;close(child);close(fd);errno=saved;return -1;}
 		if(!S_ISDIR(st.st_mode)){close(child);close(fd);errno=ENOTDIR;return -1;}
 		/* Retry the parent sync even for existing entries after a prior failure. */
-		if(!sync_parent_directory(fd)){int saved=errno;close(child);close(fd);errno=saved;return -1;}
+		if (!sync_parent_directory(fd)) {
+			int saved = errno;
+			struct statvfs fs;
+			/* An existing entry on the immutable image needs no publication. */
+			if (created || fstatvfs(fd, &fs) < 0 || !(fs.f_flag & ST_RDONLY)) {
+				close(child); close(fd); errno = saved; return -1;
+			}
+		}
 		if(close(fd)<0){close(child);return -1;}
 		fd=child;
 	}
@@ -318,6 +332,21 @@ static uint64_t highest_generation(int rootfd)
 	DIR *d=directory_stream(rootfd);if(!d)return 0;uint64_t highest=0;struct dirent *e;
 	while((e=readdir(d))!=NULL){if(e->d_name[0]!='g'||strlen(e->d_name)!=17)continue;char *end;errno=0;uint64_t g=strtoull(e->d_name+1,&end,16);if(errno==0&&*end==0&&g>highest)highest=g;}closedir(d);return highest;
 }
+/* Only an unused store can safely start with blank core memory after a failed load. */
+bool saves_has_no_generation(struct saves *s)
+{
+	DIR *dir = directory_stream(s->directory_fd);
+	if (!dir) return false;
+	struct dirent *entry;
+	errno = 0;
+	while ((entry = readdir(dir)) != NULL) {
+		if (!strcmp(entry->d_name, "CURRENT") ||
+		    (entry->d_name[0] == 'g' && strlen(entry->d_name) == 17)) break;
+	}
+	bool empty = !entry && !errno;
+	return closedir(dir) == 0 && empty;
+}
+
 static void remove_generation_at(int rootfd,const char *name)
 {
 	int fd=openat(rootfd,name,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);if(fd<0)return;DIR *d=fdopendir(fd);if(!d){close(fd);return;}struct dirent *e;while((e=readdir(d))!=NULL)if(strcmp(e->d_name,".")&&strcmp(e->d_name,".."))(void)unlinkat(fd,e->d_name,0);closedir(d);(void)unlinkat(rootfd,name,AT_REMOVEDIR);
@@ -589,7 +618,9 @@ static bool saves_commit_internal(struct saves *s,const void *sram,size_t ss,con
 				  const void *checkpoint,size_t checkpoint_size)
 {
 	if(!s||(!sram&&ss)||(!rtc&&rs)||ss>MAX_MEMORY||rs>MAX_MEMORY||ss+rs>MAX_MEMORY||slot>=(int)SAVES_STATE_SLOTS||slot< -1||(!state&&state_size)||state_size>MAX_STATE||(slot<0&&state_size)||(slot>=0&&state_size==0)||(!checkpoint&&checkpoint_size)||checkpoint_size>MAX_STATE)return false;
-	struct manifest prev={0};bool have=find_generation(s,&prev);uint64_t highest=highest_generation(s->directory_fd);uint64_t generation=highest> (have?prev.generation:0)?highest+1:(have?prev.generation+1:1);if(generation==0)return false;
+	struct manifest prev={0};bool have=find_generation(s,&prev);
+	if (!have && !saves_has_no_generation(s)) return false;
+	uint64_t highest=highest_generation(s->directory_fd);uint64_t generation=highest> (have?prev.generation:0)?highest+1:(have?prev.generation+1:1);if(generation==0)return false;
 	struct manifest m={.generation=generation,.sram_size=ss,.rtc_size=rs,.checkpoint_size=checkpoint_size};memcpy(m.core,s->core,HASH_SIZE);memcpy(m.content,s->content,HASH_SIZE);memcpy(m.path,s->path,HASH_SIZE);memcpy(m.options,s->options,HASH_SIZE);
 	char temp[64],final[32];int n=-1,tdfd=-1;bool made=false;
 	for(unsigned i=0;i<100;i++){n=snprintf(temp,sizeof(temp),".tmp-%ld-%016" PRIx64 "-%u",(long)getpid(),generation,i);if(n<0||(size_t)n>=sizeof(temp))return false;if(mkdirat(s->directory_fd,temp,0700)==0){made=true;break;}if(errno!=EEXIST)return false;}

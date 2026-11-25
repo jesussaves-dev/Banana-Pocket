@@ -52,10 +52,17 @@ export BANANA_RETRO_READY_FILE=$ready_file
 export BANANA_RETRO_COMMITTED_FILE=$committed_file
 export BANANA_RETRO_STARTUP_ERROR_FILE=$error_file
 
+# The native branch runs before RetroArch sets up its Wayland environment.
+export XDG_RUNTIME_DIR=/run/banana/wayland WAYLAND_DISPLAY=banana-0
+cancelled=0
+native_pid=
+cancel_launch() {
+    cancelled=1
+    [ -z "$native_pid" ] || kill -TERM "$native_pid" 2>/dev/null || :
+}
+trap cancel_launch TERM HUP INT
 /usr/bin/banana-retro "$core_path" "$rom" --wayland &
 native_pid=$!
-native_waited=0
-native_status=0
 proc_start() {
     [ -r "/proc/$1/stat" ] || return 1
     line=$(cat "/proc/$1/stat") || return 1
@@ -107,24 +114,25 @@ publish_session() {
     return 0
 }
 publish_session starting "$$" || :
-reap_native() {
-    if [ "$native_waited" -eq 0 ]; then
-        wait "$native_pid"
-        native_status=$?
-        native_waited=1
-    fi
-    return "$native_status"
+cleanup_session() {
+    rm -f "$socket" "$metadata" "$ready_file" "$committed_file" "$error_file"
 }
-forward_term() { kill -TERM "$native_pid" 2>/dev/null || :; reap_native || :; }
-forward_int() { kill -INT "$native_pid" 2>/dev/null || :; reap_native || :; }
-trap forward_term TERM HUP
-trap forward_int INT
+stop_native() {
+    if ! native_exited; then
+        kill -TERM "$native_pid" 2>/dev/null || :
+        if ! wait_native_exit 20; then
+            kill -KILL "$native_pid" 2>/dev/null || :
+            wait_native_exit 40 || return 1
+        fi
+    fi
+    return 0
+}
 
 # Bound startup fallback to the pre-readiness window. The unique socket and
 # runtime readiness file cannot be inherited from an earlier PID/session.
 attempt=0
 ready=0
-while [ "$attempt" -lt 100 ]; do
+while [ "$cancelled" -eq 0 ] && [ "$attempt" -lt 100 ]; do
     [ -f "$metadata" ] || publish_session starting "$native_pid" || :
     if [ -f "$ready_file" ]; then
         ready=1
@@ -135,38 +143,38 @@ while [ "$attempt" -lt 100 ]; do
     attempt=$((attempt + 1))
 done
 if [ -f "$ready_file" ]; then ready=1; fi
-if [ "$ready" -eq 1 ]; then
-    if ! publish_session ready "$native_pid"; then
-        echo "run-libretro: native readiness metadata could not be published" >&2
-        if kill -0 "$native_pid" 2>/dev/null; then
-            kill -TERM "$native_pid" 2>/dev/null || :
-            reap_native || :
-            result=1
-        else
-            reap_native
+if [ "$ready" -eq 1 ] && [ "$cancelled" -eq 0 ]; then
+    if publish_session ready "$native_pid"; then
+        if [ "$cancelled" -eq 0 ]; then
+            wait "$native_pid"
             result=$?
+            if [ "$cancelled" -eq 0 ]; then
+                cleanup_session
+                exit "$result"
+            fi
         fi
-        rm -f "$socket" "$ready_file"
-        exit "$result"
+    else
+        echo "run-libretro: native readiness metadata could not be published" >&2
+        if native_exited; then
+            wait "$native_pid"
+            result=$?
+            cleanup_session
+            exit "$result"
+        fi
+        cancelled=1
     fi
-    reap_native
-    result=$?
-    rm -f "$metadata" "$ready_file" "$committed_file" "$error_file"
-    exit "$result"
 fi
 
-if ! native_exited; then
-    kill -TERM "$native_pid" 2>/dev/null || :
-    if ! wait_native_exit 20; then
-        kill -KILL "$native_pid" 2>/dev/null || :
-        if ! wait_native_exit 40; then
-            echo "run-libretro: native child did not exit after bounded TERM/KILL; refusing fallback" >&2
-            exit 1
-        fi
-    fi
+if ! stop_native; then
+    echo "run-libretro: native child did not exit after bounded TERM/KILL; refusing fallback" >&2
+    exit 1
 fi
-reap_native
+wait "$native_pid"
 startup_result=$?
+if [ "$cancelled" -ne 0 ]; then
+    cleanup_session
+    exit 1
+fi
 if [ -e "$ready_file" ]; then
     echo "run-libretro: native readiness appeared during termination; refusing runtime switch" >&2
     rm -f "$socket" "$metadata" "$ready_file" "$committed_file" "$error_file"
@@ -185,4 +193,5 @@ esac
 rm -f "$socket" "$metadata" "$ready_file" "$error_file"
 echo "run-libretro: native startup error=$startup_kind status=$startup_result before readiness; falling back to RetroArch" >&2
 rm -f "$committed_file"
+[ "$cancelled" -eq 0 ] || exit 1
 fallback

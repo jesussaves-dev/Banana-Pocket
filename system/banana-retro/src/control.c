@@ -223,6 +223,7 @@ static bool authorized(const struct control_client *c, uint16_t type,
 	}
 	if (c->role == CONTROL_ROLE_SLEEP) {
 		if (type == BANANA_RETRO_CTL_GET_STATUS) return true;
+		if (type == BANANA_RETRO_CTL_CHECKPOINT) return size == 0;
 		if (type == BANANA_RETRO_CTL_PREPARE_SLEEP || type == BANANA_RETRO_CTL_SLEEP_ABORT ||
 		    type == BANANA_RETRO_CTL_WAKE || type == BANANA_RETRO_CTL_SHUTDOWN)
 			return size == 8 && get64(payload) != 0;
@@ -310,6 +311,9 @@ static uint16_t dispatch(struct control_server *s, struct control_client *c, uin
 			return BANANA_RETRO_CTL_STALE_SESSION;
 		return s->ops.pause && s->ops.pause(s->ops.data, p[0], get64(p + 1),
 			type == BANANA_RETRO_CTL_PAUSE) ? BANANA_RETRO_CTL_OK : BANANA_RETRO_CTL_BAD_STATE;
+	case BANANA_RETRO_CTL_CHECKPOINT:
+		return s->ops.checkpoint && s->ops.checkpoint(s->ops.data) ?
+			BANANA_RETRO_CTL_OK : BANANA_RETRO_CTL_IO_ERROR;
 	case BANANA_RETRO_CTL_FLUSH_SRAM:
 		if (n != 0) return BANANA_RETRO_CTL_INVALID;
 		return s->ops.flush && s->ops.flush(s->ops.data) ? BANANA_RETRO_CTL_OK : BANANA_RETRO_CTL_IO_ERROR;
@@ -362,7 +366,7 @@ static uint16_t dispatch(struct control_server *s, struct control_client *c, uin
 		}
 		if (type == BANANA_RETRO_CTL_SHUTDOWN) {
 			if (get64(p) <= s->power_epoch) return BANANA_RETRO_CTL_BAD_STATE;
-			if (!s->ops.quit || !s->ops.quit(s->ops.data)) return BANANA_RETRO_CTL_IO_ERROR;
+			if (!s->ops.shutdown || !s->ops.shutdown(s->ops.data)) return BANANA_RETRO_CTL_IO_ERROR;
 			s->power_epoch = get64(p);
 			return BANANA_RETRO_CTL_OK;
 		}
@@ -445,7 +449,8 @@ static void handle_packet(struct control_server *s, struct control_client *c)
 	    type == BANANA_RETRO_CTL_LOAD_STATE || type == BANANA_RETRO_CTL_SET_OPTION ||
 	    type == BANANA_RETRO_CTL_RESET || type == BANANA_RETRO_CTL_QUIT ||
 	    type == BANANA_RETRO_CTL_PREPARE_SLEEP || type == BANANA_RETRO_CTL_SLEEP_ABORT ||
-	    type == BANANA_RETRO_CTL_WAKE || type == BANANA_RETRO_CTL_SHUTDOWN) {
+	    type == BANANA_RETRO_CTL_WAKE || type == BANANA_RETRO_CTL_SHUTDOWN ||
+	    type == BANANA_RETRO_CTL_CHECKPOINT) {
 		s->last_mutation_id = id;
 		s->last_mutation_type = type;
 		s->last_mutation_result = result;
