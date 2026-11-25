@@ -24,7 +24,7 @@
 
 // Phase 3C: three 1080x1240 LINEAR XR24 scanout slots, each with a DRM framebuffer and an EGLImage-backed FBO.
 // A client's 1240x1080 linear XR24/AR24 buffer is imported as an EGLImage, sampled by a full-target quad rotated
-// 90 degrees clockwise (ui/src/rotate.h), and glFinish()'d before the compositor commits the slot's FB.
+// 90 degrees clockwise (ui/src/rotate.h). Pass an EGL native fence to KMS, or glFinish() before commit if no fence is available.
 //
 // Lifetimes: the compositor owns the ClientBuffers and keeps each source referenced until the frame's flip; this
 // presenter owns the source EGLImages/textures (destroyed by forget(), called before the ClientBuffer is freed) and
