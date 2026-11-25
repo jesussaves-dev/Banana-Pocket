@@ -44,6 +44,7 @@ static bool test_event(enum saves_test_event event)
 
 struct saves {
 	int directory_fd;
+	uint64_t last_commit_generation;
 	unsigned char core[HASH_SIZE], content[HASH_SIZE], path[HASH_SIZE], options[HASH_SIZE];
 	unsigned char state_options[HASH_SIZE];
 	char core_file[NAME_MAX + 1], core_name[NAME_MAX + 1], content_file[NAME_MAX + 1];
@@ -146,21 +147,44 @@ static bool manifest_decode(const unsigned char *b,size_t n,struct manifest *m)
 	memcpy(m->core,b+o,HASH_SIZE);o+=HASH_SIZE;memcpy(m->content,b+o,HASH_SIZE);o+=HASH_SIZE;memcpy(m->path,b+o,HASH_SIZE);o+=HASH_SIZE;memcpy(m->options,b+o,HASH_SIZE);o+=HASH_SIZE;memcpy(m->memory_hash,b+o,HASH_SIZE);o+=HASH_SIZE;
 	if(version>=2){memcpy(m->checkpoint_hash,b+o,HASH_SIZE);o+=HASH_SIZE;}
 	memcpy(m->state_hash,b+o,sizeof(m->state_hash));o+=sizeof(m->state_hash);
+	/* Missing fingerprints stay zero when these payloads are copied forward. */
 	if(version>=3)memcpy(m->state_options,b+o,sizeof(m->state_options));
-	else for(unsigned i=0;i<SAVES_STATE_SLOTS;i++)memcpy(m->state_options[i],m->options,HASH_SIZE);
 	return true;
 }
-static bool fd_regular_size(int fd,size_t size)
+enum file_result { FILE_OK, FILE_INVALID, FILE_ERROR };
+
+static enum file_result missing_or_io_error(void)
 {
-	struct stat st;return fstat(fd,&st)==0&&S_ISREG(st.st_mode)&&st.st_size>=0&&(uintmax_t)st.st_size==(uintmax_t)size;
+	return errno==ENOENT||errno==ENOTDIR||errno==ELOOP ? FILE_INVALID : FILE_ERROR;
 }
+
+static enum file_result read_bytes(int fd,void *data,size_t size)
+{
+	size_t off=0;
+	while(off<size){
+		ssize_t n=read(fd,(char *)data+off,size-off);
+		if(n>0)off+=(size_t)n;
+		else if(n==0||errno!=EINTR)return FILE_ERROR;
+	}
+	return FILE_OK;
+}
+
+static enum file_result read_exact_status(int dirfd,const char *name,void *data,size_t size)
+{
+	int fd=openat(dirfd,name,O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
+	if(fd<0)return missing_or_io_error();
+	struct stat st;
+	enum file_result result=FILE_ERROR;
+	if(fstat(fd,&st)==0)
+		result=S_ISREG(st.st_mode)&&st.st_size>=0&&(uintmax_t)st.st_size==size ?
+			read_bytes(fd,data,size) : FILE_INVALID;
+	if(close(fd)<0)return FILE_ERROR;
+	return result;
+}
+
 static bool read_exact_at(int dirfd,const char *name,void *data,size_t size)
 {
-	int fd=openat(dirfd,name,O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);if(fd<0)return false;
-	bool ok=fd_regular_size(fd,size);size_t off=0;
-	while(ok&&off<size){ssize_t n=read(fd,(char*)data+off,size-off);if(n>0)off+=(size_t)n;else if(n<0&&errno==EINTR)continue;else ok=false;}
-	if(close(fd)<0)ok=false;
-	return ok&&off==size;
+	return read_exact_status(dirfd,name,data,size)==FILE_OK;
 }
 static bool write_file_at(int dirfd,const char *name,const void *data,size_t size)
 {
@@ -233,9 +257,10 @@ static bool generation_name(char name[32],uint64_t g)
 {int n=snprintf(name,32,"g%016" PRIx64,g);return n==17;}
 static bool open_generation(int rootfd,uint64_t g,int *generation_fd)
 {
-	char name[32];if(!generation_name(name,g))return false;
-	int fd=openat(rootfd,name,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);if(fd<0)return false;
-	struct stat st;bool ok=fstat(fd,&st)==0&&S_ISDIR(st.st_mode);if(!ok){close(fd);return false;}*generation_fd=fd;return true;
+	char name[32];
+	if(!generation_name(name,g)){errno=EINVAL;return false;}
+	*generation_fd=openat(rootfd,name,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+	return *generation_fd>=0;
 }
 static bool current_generation(int rootfd,uint64_t *generation)
 {
@@ -251,30 +276,55 @@ static DIR *directory_stream(int rootfd)
 	int fd=openat(rootfd,".",O_RDONLY|O_DIRECTORY|O_CLOEXEC);if(fd<0)return NULL;
 	DIR *d=fdopendir(fd);if(!d)close(fd);return d;
 }
+static enum file_result load_manifest_status(struct saves *s,uint64_t g,struct manifest *m)
+{
+	int gfd;
+	if(!open_generation(s->directory_fd,g,&gfd))return missing_or_io_error();
+	int fd=openat(gfd,"manifest",O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
+	enum file_result result=fd<0 ? missing_or_io_error() : FILE_OK;
+	if(close(gfd)<0)result=FILE_ERROR;
+	if(fd<0)return result;
+	unsigned char b[MANIFEST_SIZE];
+	struct stat st;
+	size_t size=0;
+	if(result==FILE_OK){
+		if(fstat(fd,&st)<0)result=FILE_ERROR;
+		else if(!S_ISREG(st.st_mode)||
+			(st.st_size!=MANIFEST_V1_SIZE&&st.st_size!=MANIFEST_V2_SIZE&&
+			 st.st_size!=MANIFEST_SIZE))result=FILE_INVALID;
+		else{
+			size=(size_t)st.st_size;
+			result=read_bytes(fd,b,size);
+		}
+	}
+	if(close(fd)<0)return FILE_ERROR;
+	if(result!=FILE_OK)return result;
+	if(!manifest_decode(b,size,m)||m->generation!=g||m->sram_size>MAX_MEMORY||
+	   m->rtc_size>MAX_MEMORY||m->sram_size+m->rtc_size>MAX_MEMORY||
+	   m->checkpoint_size>MAX_STATE)return FILE_INVALID;
+	if(memcmp(m->core,s->core,HASH_SIZE)||memcmp(m->content,s->content,HASH_SIZE)||
+	   memcmp(m->path,s->path,HASH_SIZE)||memcmp(m->options,s->options,HASH_SIZE))
+		return FILE_INVALID;
+	for(unsigned i=0;i<SAVES_STATE_SLOTS;i++)if(m->state_size[i]>MAX_STATE)return FILE_INVALID;
+	return FILE_OK;
+}
+
 static bool load_manifest(struct saves *s,uint64_t g,struct manifest *m)
 {
-	int gfd;if(!open_generation(s->directory_fd,g,&gfd))return false;
-	unsigned char b[MANIFEST_SIZE];int fd=openat(gfd,"manifest",O_RDONLY|O_CLOEXEC|O_NOFOLLOW);close(gfd);
-	if(fd<0)return false;
-	struct stat st;bool read_ok=fstat(fd,&st)==0&&S_ISREG(st.st_mode)&&st.st_size>=0&&
-		(st.st_size==MANIFEST_V1_SIZE||st.st_size==MANIFEST_V2_SIZE||st.st_size==MANIFEST_SIZE);
-	size_t size=read_ok?(size_t)st.st_size:0,off=0;
-	while(read_ok&&off<size){ssize_t n=read(fd,b+off,size-off);if(n>0)off+=(size_t)n;else if(n<0&&errno==EINTR)continue;else read_ok=false;}
-	if(close(fd)<0)read_ok=false;
-	if(!read_ok||off!=size||!manifest_decode(b,size,m))return false;
-	if(m->generation!=g||m->sram_size>MAX_MEMORY||m->rtc_size>MAX_MEMORY||m->sram_size+m->rtc_size>MAX_MEMORY||m->checkpoint_size>MAX_STATE)return false;
-	if(memcmp(m->core,s->core,HASH_SIZE)||memcmp(m->content,s->content,HASH_SIZE)||memcmp(m->path,s->path,HASH_SIZE)||memcmp(m->options,s->options,HASH_SIZE))return false;
-	for(unsigned i=0;i<SAVES_STATE_SLOTS;i++)if(m->state_size[i]>MAX_STATE)return false;
-	return true;
+	return load_manifest_status(s,g,m)==FILE_OK;
 }
 #ifdef SAVES_TESTING
 bool saves_test_downgrade_current_manifest(struct saves *s,unsigned version)
 {
-	uint64_t generation=0;if(!s||(version!=1&&version!=2)||!current_generation(s->directory_fd,&generation))return false;
+	uint64_t generation=0;if(!s||version<1||version>3||!current_generation(s->directory_fd,&generation))return false;
 	int gfd=-1;if(!open_generation(s->directory_fd,generation,&gfd))return false;
-	unsigned char encoded[MANIFEST_SIZE],legacy[MANIFEST_V2_SIZE];bool ok=read_exact_at(gfd,"manifest",encoded,sizeof(encoded));
+	unsigned char encoded[MANIFEST_SIZE],legacy[MANIFEST_SIZE];bool ok=read_exact_at(gfd,"manifest",encoded,sizeof(encoded));
 	struct manifest m={0};if(ok)ok=manifest_decode(encoded,sizeof(encoded),&m);
-	if(ok){manifest_encode(&m,legacy,version);int fd=openat(gfd,"manifest",O_WRONLY|O_TRUNC|O_CLOEXEC|O_NOFOLLOW);if(fd<0)ok=false;else{size_t off=0,size=version==1?MANIFEST_V1_SIZE:MANIFEST_V2_SIZE;while(ok&&off<size){ssize_t n=write(fd,legacy+off,size-off);if(n>0)off+=(size_t)n;else if(n<0&&errno==EINTR)continue;else ok=false;}if(ok&&fsync(fd)<0)ok=false;if(close(fd)<0)ok=false;}}
+	/* v3 writers used the unqualified options hash when saving a slot. */
+	if(ok&&version==3)
+		for(unsigned i=0;i<SAVES_STATE_SLOTS;i++)
+			if(m.state_size[i])memcpy(m.state_options[i],s->options,HASH_SIZE);
+	if(ok){manifest_encode(&m,legacy,version);int fd=openat(gfd,"manifest",O_WRONLY|O_TRUNC|O_CLOEXEC|O_NOFOLLOW);if(fd<0)ok=false;else{size_t off=0,size=version==1?MANIFEST_V1_SIZE:version==2?MANIFEST_V2_SIZE:MANIFEST_SIZE;while(ok&&off<size){ssize_t n=write(fd,legacy+off,size-off);if(n>0)off+=(size_t)n;else if(n<0&&errno==EINTR)continue;else ok=false;}if(ok&&fsync(fd)<0)ok=false;if(close(fd)<0)ok=false;}}
 	if(close(gfd)<0)ok=false;
 	return ok;
 }
@@ -295,16 +345,43 @@ static bool find_generation(struct saves *s,struct manifest *m)
 	for(size_t i=0;i<count;i++)if(load_manifest(s,candidates[i],m)&&validate_payloads(s,m))return true;
 	return false;
 }
-static bool load_candidate_payload(struct saves *s,const struct manifest *m,
-					  const char *name,size_t size,
-					  const unsigned char expected[HASH_SIZE],
-					  unsigned char **payload)
+static enum file_result load_candidate_payload(struct saves *s,const struct manifest *m,
+						 const char *name,size_t size,
+						 const unsigned char expected[HASH_SIZE],
+						 unsigned char **payload)
 {
-	*payload=NULL;if(size==0)return true;unsigned char *b=malloc(size);if(!b)return false;int gfd;
-	if(!open_generation(s->directory_fd,m->generation,&gfd)){free(b);return false;}
-	bool ok=read_exact_at(gfd,name,b,size);close(gfd);unsigned char hash[HASH_SIZE];
-	if(ok){digest_bytes(b,size,hash);ok=memcmp(hash,expected,HASH_SIZE)==0;}
-	if(!ok){free(b);return false;}*payload=b;return true;
+	*payload=NULL;
+	if(size==0)return FILE_OK;
+	unsigned char *b;
+#ifdef SAVES_TESTING
+	if(!strcmp(name,"checkpoint")&&test_event(SAVES_TEST_RESUME_ALLOC)){
+		errno=ENOMEM;
+		b=NULL;
+	}else
+#endif
+		b=malloc(size);
+	if(!b)return FILE_ERROR;
+	int gfd;
+	if(!open_generation(s->directory_fd,m->generation,&gfd)){
+		enum file_result result=missing_or_io_error();
+		free(b);
+		return result;
+	}
+	enum file_result result;
+#ifdef SAVES_TESTING
+	if(!strcmp(name,"checkpoint")&&test_event(SAVES_TEST_RESUME_READ))result=FILE_ERROR;
+	else
+#endif
+		result=read_exact_status(gfd,name,b,size);
+	if(close(gfd)<0)result=FILE_ERROR;
+	if(result==FILE_OK){
+		unsigned char hash[HASH_SIZE];
+		digest_bytes(b,size,hash);
+		if(memcmp(hash,expected,HASH_SIZE))result=FILE_INVALID;
+	}
+	if(result==FILE_OK)*payload=b;
+	else free(b);
+	return result;
 }
 static bool find_generation_payload(struct saves *s,struct manifest *m,
 					    const char *name,size_t size,
@@ -332,7 +409,7 @@ static bool find_generation_payload(struct saves *s,struct manifest *m,
 		const unsigned char *expected=m->memory_hash;
 		if(name[0]=='s')expected=m->state_hash[(unsigned)(name[6]-'0')*10u+(unsigned)(name[7]-'0')];
 		if(strcmp(name,"checkpoint")==0)expected=m->checkpoint_hash;
-		if(load_candidate_payload(s,m,name,size,expected,payload))return true;
+		if(load_candidate_payload(s,m,name,size,expected,payload)==FILE_OK)return true;
 	}
 	return false;
 }
@@ -360,7 +437,7 @@ static void remove_generation_at(int rootfd,const char *name)
 {
 	int fd=openat(rootfd,name,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);if(fd<0)return;DIR *d=fdopendir(fd);if(!d){close(fd);return;}struct dirent *e;while((e=readdir(d))!=NULL)if(strcmp(e->d_name,".")&&strcmp(e->d_name,".."))(void)unlinkat(fd,e->d_name,0);closedir(d);(void)unlinkat(rootfd,name,AT_REMOVEDIR);
 }
-enum { RESUME_V3_SIZE = 85 };
+enum { RESUME_GENERATION_SIZE = 85, RESUME_VERIFIED_OPTIONS = 4 };
 
 struct resume_marker {
 	uint64_t generation;
@@ -375,11 +452,11 @@ static bool read_resume_marker(struct saves *s,struct resume_marker *marker)
 	memset(marker,0,sizeof(*marker));
 	int fd=openat(s->directory_fd,"RESUME",O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
 	if(fd<0)return errno==ENOENT||errno==ELOOP;
-	char data[RESUME_V3_SIZE];
+	char data[RESUME_GENERATION_SIZE];
 	struct stat st;
 	bool ok=fstat(fd,&st)==0;
 	size_t size=0,offset=0;
-	if(ok&&S_ISREG(st.st_mode)&&(st.st_size==3||st.st_size==68||st.st_size==RESUME_V3_SIZE))
+	if(ok&&S_ISREG(st.st_mode)&&(st.st_size==3||st.st_size==68||st.st_size==RESUME_GENERATION_SIZE))
 		size=(size_t)st.st_size;
 	while(ok&&offset<size){
 		ssize_t n=read(fd,data+offset,size-offset);
@@ -389,13 +466,14 @@ static bool read_resume_marker(struct saves *s,struct resume_marker *marker)
 	}
 	if(close(fd)<0)ok=false;
 	if(!ok)return false;
-	if(size==RESUME_V3_SIZE&&!memcmp(data,"v3\n",3)&&data[19]=='\n'&&data[84]=='\n'&&
+	if(size==RESUME_GENERATION_SIZE&&data[0]=='v'&&(data[1]=='3'||data[1]=='4')&&
+	   data[2]=='\n'&&data[19]=='\n'&&data[84]=='\n'&&
 	   strspn(data+3,"0123456789abcdef")==16&&strspn(data+20,"0123456789abcdef")==64){
 		data[19]=0;
 		marker->generation=strtoull(data+3,NULL,16);
 		if(marker->generation){
 			memcpy(marker->hash,data+20,64);
-			marker->version=3;
+			marker->version=(unsigned)(data[1]-'0');
 		}
 	}else if(size==68&&!memcmp(data,"v2\n",3)&&data[67]=='\n'&&
 		 strspn(data+3,"0123456789abcdef")==64){
@@ -427,7 +505,7 @@ static uint64_t latest_checkpoint(struct saves *s,bool validate)
 		if(errno||*end||g<=latest||!load_manifest(s,g,&m)||!m.checkpoint_size)continue;
 		unsigned char *data=NULL;
 		if(!validate||load_candidate_payload(s,&m,"checkpoint",(size_t)m.checkpoint_size,
-						    m.checkpoint_hash,&data))latest=g;
+						    m.checkpoint_hash,&data)==FILE_OK)latest=g;
 		free(data);
 	}
 	closedir(d);
@@ -445,12 +523,28 @@ static void prune_generations(struct saves *s,uint64_t current,uint64_t previous
 		char *end;errno=0;uint64_t g=strtoull(e->d_name+1,&end,16);
 		if(errno||*end||g==current||g==previous||g==checkpoint||g==marker.generation)continue;
 		struct manifest m;
-		if((marker.version==1||marker.version==2)&&load_manifest(s,g,&m)&&
-		   legacy_resume_candidate(&marker,&m))continue;
+		if(marker.version==1||marker.version==2){
+			enum file_result result=load_manifest_status(s,g,&m);
+			if(result==FILE_ERROR||(result==FILE_OK&&legacy_resume_candidate(&marker,&m)))continue;
+		}
 		remove_generation_at(s->directory_fd,e->d_name);
 	}
 	closedir(d);
 }
+
+static void digest_verified_options(const unsigned char options[HASH_SIZE],
+				    unsigned char verified[HASH_SIZE])
+{
+	/* Earlier writers recorded requested options. Qualify newly captured
+	 * slots without changing the manifest format or battery store identity. */
+	static const char prefix[]="banana-retro-verified-state-options-v1:";
+	struct sha256 h;
+	sha_init(&h);
+	sha_update(&h,prefix,sizeof(prefix)-1);
+	sha_update(&h,options,HASH_SIZE);
+	sha_final(&h,verified);
+}
+
 struct saves *saves_open_with_options(const char *root,const char *core_path,const char *content_path,const char *options)
 {
 	if(!root||!core_path||!content_path||!options||strlen(root)>=PATH_MAX||strlen(options)>4096)return NULL;
@@ -458,7 +552,7 @@ struct saves *saves_open_with_options(const char *root,const char *core_path,con
 	struct saves *s=calloc(1,sizeof(*s));if(!s){free(core);free(content);return NULL;}s->directory_fd=-1;
 	memcpy(s->destination_root,root,strlen(root)+1);
 	bool ok=digest_file(core,s->core)&&digest_file(content,s->content);digest_bytes(content,strlen(content),s->path);digest_bytes(options,strlen(options),s->options);
-	memcpy(s->state_options,s->options,HASH_SIZE);
+	digest_verified_options(s->options,s->state_options);
 	int root_fd=ok?make_dirs(root):-1;
 	if(root_fd<0)ok=false;
 	if(ok){struct sha256 h;unsigned char key[HASH_SIZE];sha_init(&h);sha_update(&h,s->core,HASH_SIZE);sha_update(&h,s->content,HASH_SIZE);sha_update(&h,s->path,HASH_SIZE);sha_update(&h,s->options,HASH_SIZE);sha_final(&h,key);static const char hex[]="0123456789abcdef";char leaf[HASH_SIZE*2+1];for(unsigned i=0;i<HASH_SIZE;i++){leaf[2*i]=hex[key[i]>>4];leaf[2*i+1]=hex[key[i]&15];}leaf[64]=0;
@@ -485,11 +579,15 @@ struct saves *saves_open(const char *root,const char *core_path,const char *cont
 {return saves_open_with_options(root,core_path,content_path,"banana-retro-options-v1:none");}
 void saves_set_state_options(struct saves *s,const char *options)
 {
-	digest_bytes(options,strlen(options),s->state_options);
+	unsigned char hash[HASH_SIZE];
+	digest_bytes(options,strlen(options),hash);
+	digest_verified_options(hash,s->state_options);
 }
 bool saves_checkpoint_options_match(const struct saves *s)
 {
-	return memcmp(s->state_options,s->options,HASH_SIZE)==0;
+	unsigned char verified[HASH_SIZE];
+	digest_verified_options(s->options,verified);
+	return memcmp(s->state_options,verified,HASH_SIZE)==0;
 }
 bool saves_set_legacy_core_name(struct saves *s,const char *name)
 {
@@ -735,7 +833,7 @@ static bool saves_commit_internal(struct saves *s,const void *sram,size_t ss,con
 	for(unsigned i=0;ok&&i<SAVES_STATE_SLOTS;i++){
 		char f[32];(void)snprintf(f,sizeof(f),"state-%02u",i);
 		if((int)i==slot){m.state_size[i]=state_size;memcpy(m.state_options[i],s->state_options,HASH_SIZE);digest_bytes(state,state_size,m.state_hash[i]);ok=write_file_at(tdfd,f,state,state_size);}
-		else if(have&&prev.state_size[i]){unsigned char *b=NULL;if(!load_candidate_payload(s,&prev,f,(size_t)prev.state_size[i],prev.state_hash[i],&b)){ok=false;break;}m.state_size[i]=prev.state_size[i];memcpy(m.state_options[i],prev.state_options[i],HASH_SIZE);memcpy(m.state_hash[i],prev.state_hash[i],HASH_SIZE);ok=write_file_at(tdfd,f,b,(size_t)m.state_size[i]);free(b);}
+		else if(have&&prev.state_size[i]){unsigned char *b=NULL;if(load_candidate_payload(s,&prev,f,(size_t)prev.state_size[i],prev.state_hash[i],&b)!=FILE_OK){ok=false;break;}m.state_size[i]=prev.state_size[i];memcpy(m.state_options[i],prev.state_options[i],HASH_SIZE);memcpy(m.state_hash[i],prev.state_hash[i],HASH_SIZE);ok=write_file_at(tdfd,f,b,(size_t)m.state_size[i]);free(b);}
 	}
 	if(ok){
 		unsigned char encoded[MANIFEST_SIZE];
@@ -783,16 +881,24 @@ static bool saves_commit_internal(struct saves *s,const void *sram,size_t ss,con
 	return ok;
 }
 bool saves_commit(struct saves *s,const void *sram,size_t ss,const void *rtc,size_t rs,int slot,const void *state,size_t state_size)
-{if(!s||flock(s->directory_fd,LOCK_EX)<0)return false;bool ok=saves_commit_internal(s,sram,ss,rtc,rs,slot,state,state_size,NULL,0,NULL);(void)flock(s->directory_fd,LOCK_UN);return ok;}
+{
+	if(!s||flock(s->directory_fd,LOCK_EX)<0)return false;
+	struct manifest m;
+	bool ok=saves_commit_internal(s,sram,ss,rtc,rs,slot,state,state_size,NULL,0,&m);
+	s->last_commit_generation=ok ? m.generation : 0;
+	(void)flock(s->directory_fd,LOCK_UN);
+	return ok;
+}
 static bool publish_resume(struct saves *s,const struct manifest *m)
 {
-	char data[RESUME_V3_SIZE+1],temp[64],hash[65];
+	char data[RESUME_GENERATION_SIZE+1],temp[64],hash[65];
 	hex_digest(m->hash,hash);
-	int n=snprintf(data,sizeof(data),"v3\n%016" PRIx64 "\n%s\n",m->generation,hash);
+	int n=snprintf(data,sizeof(data),"v%u\n%016" PRIx64 "\n%s\n",
+		(unsigned)RESUME_VERIFIED_OPTIONS,m->generation,hash);
 	int tn=snprintf(temp,sizeof(temp),".RESUME-%ld",(long)getpid());
-	if(n!=RESUME_V3_SIZE||tn<0||(size_t)tn>=sizeof(temp))return false;
+	if(n!=RESUME_GENERATION_SIZE||tn<0||(size_t)tn>=sizeof(temp))return false;
 	(void)unlinkat(s->directory_fd,temp,0);
-	bool ok=write_file_at(s->directory_fd,temp,data,RESUME_V3_SIZE);
+	bool ok=write_file_at(s->directory_fd,temp,data,RESUME_GENERATION_SIZE);
 #ifdef SAVES_TESTING
 	if(ok&&test_event(SAVES_TEST_RESUME_RENAME))ok=false;
 #endif
@@ -830,68 +936,104 @@ bool saves_load_checkpoint(struct saves *s,void *data,size_t size)
 	if(!find_generation_payload(s,&m,"checkpoint",size,SIZE_MAX,SIZE_MAX,&b)){free(b);return false;}
 	memcpy(data,b,size);free(b);return true;
 }
-static bool resume_generation(struct saves *s,struct manifest *m,char token[65])
+static enum saves_resume_result resume_file_result(enum file_result result)
+{
+	if(result==FILE_OK)return SAVES_RESUME_READY;
+	return result==FILE_INVALID ? SAVES_RESUME_INVALID : SAVES_RESUME_RETRY;
+}
+
+static enum saves_resume_result resume_generation(struct saves *s,struct manifest *m,char token[65])
 {
 	token[0]=0;
 	struct resume_marker marker;
-	/* Legacy markers could refer to a checkpoint copied into a later battery
-	 * save. Preserve the raw payloads without automatically mixing snapshots. */
-	if(!read_resume_marker(s,&marker)||marker.version!=3)return false;
+	if(!read_resume_marker(s,&marker))return SAVES_RESUME_RETRY;
+	/* Older writers did not verify the core's effective options. Keep those
+	 * snapshots and their markers for recovery without automatically loading them. */
+	if(marker.version!=RESUME_VERIFIED_OPTIONS||!saves_checkpoint_options_match(s))
+		return SAVES_RESUME_NONE;
+	enum file_result result=load_manifest_status(s,marker.generation,m);
 	memcpy(token,marker.hash,sizeof(marker.hash));
-	if(!saves_checkpoint_options_match(s)||!load_manifest(s,marker.generation,m)||
-	   m->version!=3||!m->checkpoint_size)return false;
+	if(result!=FILE_OK)return resume_file_result(result);
 	char hash[65];
 	hex_digest(m->hash,hash);
-	return strcmp(token,hash)==0;
+	return m->version==3&&m->checkpoint_size&&strcmp(token,hash)==0 ?
+		SAVES_RESUME_READY : SAVES_RESUME_INVALID;
 }
 
-bool saves_resume_available(struct saves *s,char token[65])
+static enum saves_resume_result load_resume_payloads(struct saves *s,const struct manifest *m,
+						     unsigned char **memory,unsigned char **checkpoint)
 {
-	if(!token)return false;
+	enum file_result result=load_candidate_payload(s,m,"memory",
+		(size_t)(m->sram_size+m->rtc_size),m->memory_hash,memory);
+	if(result==FILE_OK)
+		result=load_candidate_payload(s,m,"checkpoint",(size_t)m->checkpoint_size,
+			m->checkpoint_hash,checkpoint);
+	return resume_file_result(result);
+}
+
+enum saves_resume_result saves_resume_probe(struct saves *s,char token[65])
+{
+	if(!token)return SAVES_RESUME_RETRY;
 	token[0]=0;
-	if(!s||flock(s->directory_fd,LOCK_SH)<0)return false;
+	if(!s||flock(s->directory_fd,LOCK_SH)<0)return SAVES_RESUME_RETRY;
 	struct manifest m;
 	unsigned char *checkpoint=NULL,*memory=NULL;
-	bool ok=resume_generation(s,&m,token)&&
-		load_candidate_payload(s,&m,"memory",(size_t)(m.sram_size+m.rtc_size),m.memory_hash,&memory)&&
-		load_candidate_payload(s,&m,"checkpoint",(size_t)m.checkpoint_size,m.checkpoint_hash,&checkpoint);
+	enum saves_resume_result result=resume_generation(s,&m,token);
+	if(result==SAVES_RESUME_READY)result=load_resume_payloads(s,&m,&memory,&checkpoint);
 	free(memory);
 	free(checkpoint);
 	(void)flock(s->directory_fd,LOCK_UN);
-	return ok;
+	return result;
 }
-bool saves_load_resume(struct saves *s,const char *expected_token,void *state,size_t size,
-		       void *sram,size_t ss,void *rtc,size_t rs)
+
+enum saves_resume_result saves_load_resume(struct saves *s,const char *expected_token,void *state,size_t size,
+					  void *sram,size_t ss,void *rtc,size_t rs)
 {
 	if(!s||!expected_token||!state||!size||size>MAX_STATE||(!sram&&ss)||(!rtc&&rs)||
 	   ss>MAX_MEMORY||rs>MAX_MEMORY-ss||flock(s->directory_fd,LOCK_SH)<0)
-		return false;
+		return SAVES_RESUME_RETRY;
 	struct manifest m;
 	char token[65];
 	unsigned char *checkpoint=NULL,*memory=NULL;
-	bool ok=resume_generation(s,&m,token)&&strcmp(expected_token,token)==0&&
-		m.checkpoint_size==size&&
-		m.sram_size==ss&&m.rtc_size==rs&&
-		load_candidate_payload(s,&m,"memory",ss+rs,m.memory_hash,&memory)&&
-		load_candidate_payload(s,&m,"checkpoint",size,m.checkpoint_hash,&checkpoint);
-	if(ok){
+	enum saves_resume_result result=resume_generation(s,&m,token);
+	if(strcmp(expected_token,token))result=SAVES_RESUME_RETRY;
+	if(result==SAVES_RESUME_READY){
+		result=m.checkpoint_size==size&&m.sram_size==ss&&m.rtc_size==rs ?
+			load_resume_payloads(s,&m,&memory,&checkpoint) : SAVES_RESUME_INVALID;
+	}
+	if(result==SAVES_RESUME_READY){
 		memcpy(state,checkpoint,size);
 		if(ss)memcpy(sram,memory,ss);
 		if(rs)memcpy(rtc,memory+ss,rs);
 	}
 	free(checkpoint);
 	free(memory);
-	(void)flock(s->directory_fd,LOCK_UN);return ok;
+	(void)flock(s->directory_fd,LOCK_UN);
+	return result;
 }
+static bool retire_resume_marker(struct saves *s)
+{
+	return (unlinkat(s->directory_fd,"RESUME",0)==0||errno==ENOENT)&&
+		sync_parent_directory(s->directory_fd);
+}
+
 bool saves_resume_clear_if(struct saves *s,const char token[65])
 {
 	if(!s||!token||strlen(token)!=64||flock(s->directory_fd,LOCK_EX)<0)return false;
 	struct resume_marker marker;
 	bool ok=read_resume_marker(s,&marker);
-	if(ok&&marker.version==3&&strcmp(marker.hash,token)==0){
-		ok=unlinkat(s->directory_fd,"RESUME",0)==0||errno==ENOENT;
-		if(ok)ok=sync_parent_directory(s->directory_fd);
-	}
+	if(ok&&marker.version==RESUME_VERIFIED_OPTIONS&&strcmp(marker.hash,token)==0)
+		ok=retire_resume_marker(s);
+	(void)flock(s->directory_fd,LOCK_UN);
+	return ok;
+}
+
+bool saves_resume_retire(struct saves *s)
+{
+	if(!s||flock(s->directory_fd,LOCK_EX)<0)return false;
+	uint64_t current;
+	bool ok=s->last_commit_generation&&current_generation(s->directory_fd,&current)&&
+		current==s->last_commit_generation&&retire_resume_marker(s);
 	(void)flock(s->directory_fd,LOCK_UN);
 	return ok;
 }

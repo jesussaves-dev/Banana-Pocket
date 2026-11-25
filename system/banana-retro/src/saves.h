@@ -15,6 +15,16 @@ enum saves_legacy_result {
 	SAVES_LEGACY_INVALID
 };
 
+enum saves_resume_result {
+	/* No eligible marker, including legacy markers that require a cold start. */
+	SAVES_RESUME_NONE,
+	SAVES_RESUME_READY,
+	/* A confirmed rejection. Probe returns the marker token for conditional removal. */
+	SAVES_RESUME_INVALID,
+	/* The attempt failed without establishing that the marker is invalid. */
+	SAVES_RESUME_RETRY
+};
+
 struct saves;
 typedef bool (*saves_state_fn)(void *context, void *buffer, size_t size);
 typedef bool (*saves_unserialize_fn)(void *context, const void *buffer, size_t size);
@@ -49,11 +59,14 @@ bool saves_load_checkpoint(struct saves *saves, void *data, size_t size);
 /* Publish a checkpoint and its resume marker after the generation is durable. */
 bool saves_commit_checkpoint(struct saves *saves, const void *sram, size_t sram_size,
 		const void *rtc, size_t rtc_size, const void *checkpoint, size_t checkpoint_size);
-bool saves_resume_available(struct saves *saves, char token[65]);
+enum saves_resume_result saves_resume_probe(struct saves *saves, char token[65]);
 /* Load the checkpoint and memory only while the verified marker token matches. */
-bool saves_load_resume(struct saves *saves, const char *token, void *state, size_t state_size,
+enum saves_resume_result saves_load_resume(struct saves *saves, const char *token,
+		void *state, size_t state_size,
 		void *sram, size_t sram_size, void *rtc, size_t rtc_size);
 bool saves_resume_clear_if(struct saves *saves, const char token[65]);
+/* Retire resume after this handle's battery commit, if it still owns CURRENT. */
+bool saves_resume_retire(struct saves *saves);
 bool saves_commit(struct saves *saves, const void *sram, size_t sram_size,
 		  const void *rtc, size_t rtc_size, int state_slot,
 		  const void *state, size_t state_size);
@@ -72,16 +85,14 @@ enum saves_test_event {
 	SAVES_TEST_AFTER_MANIFEST_WRITE,
 	SAVES_TEST_AFTER_GENERATION_RENAME,
 	SAVES_TEST_AFTER_CURRENT_RENAME,
-	SAVES_TEST_AFTER_VALIDATION
+	SAVES_TEST_AFTER_VALIDATION,
+	SAVES_TEST_RESUME_ALLOC,
+	SAVES_TEST_RESUME_READ
 };
 void saves_test_fail_event(enum saves_test_event event, unsigned occurrence);
 void saves_test_crash_event(enum saves_test_event event);
 void saves_test_set_hook(void (*hook)(void));
 bool saves_test_downgrade_current_manifest(struct saves *saves, unsigned version);
 #endif
-
-/* These wrappers run only between core frames, while the core is quiescent. */
-bool core_persistence_load(struct saves *saves, int state_slot);
-bool core_persistence_commit(struct saves *saves, int state_slot);
 
 #endif

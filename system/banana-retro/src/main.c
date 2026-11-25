@@ -195,6 +195,7 @@ static uint32_t pause_owners(const struct native_runtime *runtime)
     return (runtime->ui_paused ? 1u : 0u) | (runtime->sleep_paused ? 2u : 0u);
 }
 
+static bool save_battery(struct native_runtime *runtime);
 static bool power_checkpoint(void *data);
 
 static void control_status(void *data, struct control_status *status)
@@ -223,7 +224,7 @@ static bool control_pause(void *data, unsigned owner, uint64_t epoch, bool acqui
         if (acquire) {
             if (!epoch || (runtime->sleep_paused && epoch != runtime->sleep_epoch) ||
                 (!runtime->sleep_paused && epoch <= runtime->sleep_epoch)) return false;
-            if (!power_checkpoint(runtime) ||
+            if (!save_battery(runtime) || !power_checkpoint(runtime) ||
                 (runtime->audio && !audio_alsa_sleep(runtime->audio, true))) return false;
             runtime->sleep_epoch = epoch;
             runtime->sleep_paused = true;
@@ -266,12 +267,12 @@ static bool control_save_state(void *data, unsigned slot)
 static bool control_load_state(void *data, unsigned slot)
 {
     struct native_runtime *runtime = data;
-    bool ok = runtime->saves && core_persistence_load(runtime->saves, (int)slot);
-    if (!ok) {
+    enum core_load_result result = core_persistence_load(runtime->saves, (int)slot);
+    if (result == CORE_LOAD_FAILED) {
         runtime->failed_load = true;
         runtime->stopped = true;
     }
-    return ok;
+    return result == CORE_LOAD_OK;
 }
 
 static size_t control_option_count(void *data)
@@ -324,13 +325,42 @@ static bool control_reset(void *data)
     return true;
 }
 
+static bool save_battery(struct native_runtime *runtime)
+{
+    if (control_flush(runtime)) return true;
+    fputs("Native battery save failed\n", stderr);
+    return false;
+}
+
+static bool save_requested_slot(struct native_runtime *runtime)
+{
+    if (runtime->save_state_slot < 0 ||
+        core_persistence_commit(runtime->saves, runtime->save_state_slot)) return true;
+    fputs("Native requested state slot save failed\n", stderr);
+    return false;
+}
+
+static enum core_checkpoint_result publish_checkpoint(struct native_runtime *runtime)
+{
+    enum core_checkpoint_result result = core_persistence_checkpoint(runtime->saves);
+    if (result == CORE_CHECKPOINT_UNAVAILABLE)
+        fputs("Native quick resume checkpoint unavailable\n", stderr);
+    else if (result == CORE_CHECKPOINT_ERROR)
+        fputs("Native quick resume checkpoint failed\n", stderr);
+    return result;
+}
+
 static bool finish_persistence(struct native_runtime *runtime, bool quick_resume)
 {
-    if (!control_flush(runtime)) return false;
-    bool slot_saved = runtime->save_state_slot < 0 ||
-        core_persistence_commit(runtime->saves, runtime->save_state_slot);
-    if (quick_resume && !core_persistence_checkpoint(runtime->saves))
-        fputs("Native quick resume checkpoint unavailable\n", stderr);
+    if (!save_battery(runtime)) return false;
+    bool slot_saved = save_requested_slot(runtime);
+    enum core_checkpoint_result result = quick_resume ?
+        publish_checkpoint(runtime) : CORE_CHECKPOINT_UNAVAILABLE;
+    if (result == CORE_CHECKPOINT_ERROR) return false;
+    if (result == CORE_CHECKPOINT_UNAVAILABLE && !saves_resume_retire(runtime->saves)) {
+        fputs("Native resume marker retirement failed\n", stderr);
+        return false;
+    }
     return slot_saved;
 }
 
@@ -347,9 +377,35 @@ static bool power_checkpoint(void *data)
 {
     struct native_runtime *runtime = data;
     if (!begin_save(runtime)) return false;
-    if (runtime->save_state_slot >= 0 &&
-        !core_persistence_commit(runtime->saves, runtime->save_state_slot)) return false;
-    return core_persistence_checkpoint(runtime->saves);
+    bool slot_saved = save_requested_slot(runtime);
+    return publish_checkpoint(runtime) == CORE_CHECKPOINT_OK && slot_saved;
+}
+
+static void clear_rejected_resume(struct saves *saves, const char *token)
+{
+    if (!saves_resume_clear_if(saves, token))
+        fputs("Failed to clear the rejected native resume marker\n", stderr);
+}
+
+static bool load_persistence(struct saves *saves, int state_slot, bool quick_resume)
+{
+    if (quick_resume && state_slot < 0) {
+        char token[65];
+        enum saves_resume_result result = saves_resume_probe(saves, token);
+        bool restore = result == SAVES_RESUME_READY;
+        if (restore) result = core_persistence_restore_checkpoint(saves, token);
+        if (result == SAVES_RESUME_READY) return true;
+        if (result == SAVES_RESUME_RETRY) {
+            fputs("Native resume checkpoint temporarily unavailable\n", stderr);
+            return false;
+        }
+        if (result == SAVES_RESUME_INVALID) {
+            clear_rejected_resume(saves, token);
+            if (restore) return false;
+        }
+    }
+    return core_persistence_load(saves, state_slot) == CORE_LOAD_OK ||
+        (state_slot < 0 && saves_has_no_generation(saves));
 }
 
 static bool control_shutdown(void *data)
@@ -606,25 +662,11 @@ int main(int argc, char **argv)
             fputs("Native save storage unavailable\n", stderr);
             skip_save_commit = load_state_slot >= 0;
             ok = false;
-        } else {
-            char resume_hash[65] = {0};
-            bool checkpoint_load = quick_resume && load_state_slot < 0 &&
-                saves_resume_available(runtime.saves, resume_hash);
-            if (quick_resume && load_state_slot < 0 && !checkpoint_load && resume_hash[0])
-                (void)saves_resume_clear_if(runtime.saves, resume_hash);
-            bool loaded = checkpoint_load
-                ? core_persistence_restore_checkpoint(runtime.saves, resume_hash)
-                : core_persistence_load(runtime.saves, load_state_slot);
-            if (!loaded) {
-                startup_error_code = "persistence-load";
-                fputs("No compatible native save or requested state slot\n", stderr);
-                if (checkpoint_load && !saves_resume_clear_if(runtime.saves, resume_hash))
-                    fputs("Failed to clear the rejected native resume marker\n", stderr);
-                if (load_state_slot >= 0 || checkpoint_load || !saves_has_no_generation(runtime.saves)) {
-                    skip_save_commit = true;
-                    ok = false;
-                }
-            }
+        } else if (!load_persistence(runtime.saves, load_state_slot, quick_resume)) {
+            startup_error_code = "persistence-load";
+            fputs("Native save or requested state slot could not be loaded\n", stderr);
+            skip_save_commit = true;
+            ok = false;
         }
     }
     if (ok && video) ok = wayland_video_configure(video, core_geometry());
@@ -755,10 +797,8 @@ int main(int argc, char **argv)
     if (ok && video && ran && !readiness_gated_launch && wayland_video_presented(video))
         runtime.started = true;
     if (runtime.saves && runtime.started && !skip_save_commit &&
-        !finish_persistence(&runtime, quick_resume)) {
-        fputs("Native save generation commit failed\n", stderr);
+        !finish_persistence(&runtime, quick_resume))
         ok = false;
-    }
     if (!core_release()) ok = false;
     saves_close(runtime.saves);
     core_set_audio_output(NULL);

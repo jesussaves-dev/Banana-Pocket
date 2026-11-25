@@ -18,7 +18,8 @@ static retro_audio_sample_t sample;
 static retro_audio_sample_batch_t batch;
 static retro_input_poll_t poll_input;
 static retro_input_state_t read_input;
-static unsigned frame, unserialize_calls;
+static unsigned frame, effective_mode, serialize_calls, unserialize_calls;
+enum { FIXTURE_MODE_SHIFT = 24 };
 static uint8_t save_ram[4], save_rtc[2];
 static const char *content_bytes;
 static const char expected_content[] = "BRC1\n";
@@ -181,8 +182,17 @@ void retro_run(void)
     ++frame;
     fprintf(stderr, "fixture run %u\n", frame);
     if (mode_is("persistence-options") && frame == 2) {
-        struct retro_variable option = {"fixture_mode", "third"};
-        require(environment(RETRO_ENVIRONMENT_SET_VARIABLE, &option), "set option from core");
+        if (getenv("BANANA_RETRO_TEST_CORE_SET_OPTION")) {
+            struct retro_variable option = {"fixture_mode", "third"};
+            require(environment(RETRO_ENVIRONMENT_SET_VARIABLE, &option), "set option from core");
+        }
+    }
+    if (mode_is("persistence-options")) {
+        struct retro_variable option = {"fixture_mode", NULL};
+        require(environment(RETRO_ENVIRONMENT_GET_VARIABLE, &option) && option.value,
+                "read effective option");
+        effective_mode = strcmp(option.value, "first") == 0 ? 0u :
+                         strcmp(option.value, "second") == 0 ? 1u : 2u;
     }
 
     poll_input();
@@ -231,8 +241,11 @@ void retro_reset(void) {}
 size_t retro_serialize_size(void) { return sizeof(frame); }
 bool retro_serialize(void *data, size_t len)
 {
+    ++serialize_calls;
+    if (getenv("BANANA_RETRO_TEST_REJECT_SERIALIZE")) return false;
     if (data == NULL || len != sizeof(frame)) return false;
-    memcpy(data, &frame, sizeof(frame));
+    unsigned state = frame | (effective_mode << FIXTURE_MODE_SHIFT);
+    memcpy(data, &state, sizeof(state));
     return true;
 }
 bool retro_unserialize(const void *data, size_t len)
@@ -241,15 +254,21 @@ bool retro_unserialize(const void *data, size_t len)
     const char *reject = getenv("BANANA_RETRO_TEST_REJECT_UNSERIALIZE");
     if (reject != NULL && strcmp(reject, "1") == 0) return false;
     if (data == NULL || len != sizeof(frame)) return false;
-    memcpy(&frame, data, sizeof(frame));
+    unsigned state;
+    memcpy(&state, data, sizeof(state));
+    if ((state >> FIXTURE_MODE_SHIFT) != effective_mode) return false;
+    frame = state;
     if (mode_is("persistence-options")) {
         memset(save_ram, 0, sizeof(save_ram));
         memset(save_rtc, 0, sizeof(save_rtc));
+        frame &= (1u << FIXTURE_MODE_SHIFT) - 1u;
     }
     return true;
 }
 
+unsigned fixture_serialize_calls(void) { return serialize_calls; }
 unsigned fixture_unserialize_calls(void) { return unserialize_calls; }
+unsigned fixture_effective_mode(void) { return effective_mode; }
 
 void retro_cheat_reset(void) {}
 void retro_cheat_set(unsigned index, bool enabled, const char *code)

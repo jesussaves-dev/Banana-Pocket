@@ -66,6 +66,8 @@ static struct {
     struct core_api api;
     bool initialized;
     bool loaded;
+    bool options_observed;
+    bool state_options_uncertain;
     void *content;
     struct retro_system_av_info av;
     const char *name;
@@ -164,6 +166,13 @@ static bool set_geometry(const struct retro_game_geometry *geometry)
     return true;
 }
 
+static bool options_registered(bool ok)
+{
+    /* A failed registration can also leave partially changed definitions. */
+    if (session.options_observed || session.loaded) session.state_options_uncertain = true;
+    return ok;
+}
+
 static bool environment(unsigned command, void *data)
 {
     if (command == RETRO_ENVIRONMENT_GET_INPUT_BITMASKS)
@@ -175,7 +184,7 @@ static bool environment(unsigned command, void *data)
     if ((command == RETRO_ENVIRONMENT_SET_CORE_OPTIONS ||
          command == RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2) && data == NULL) {
         options_reset();
-        return true;
+        return options_registered(true);
     }
     if (command == RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY && data == NULL)
         return true;
@@ -219,18 +228,18 @@ static bool environment(unsigned command, void *data)
         *(unsigned *)data = options_api_version();
         return true;
     case RETRO_ENVIRONMENT_SET_VARIABLES:
-        return options_register_v0(data);
+        return options_registered(options_register_v0(data));
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
-        return options_register_v1(data);
+        return options_registered(options_register_v1(data));
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL: {
         const struct retro_core_options_intl *intl = data;
-        return intl->us != NULL && options_register_v1(intl->us);
+        return intl->us != NULL && options_registered(options_register_v1(intl->us));
     }
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
-        return options_register_v2(data);
+        return options_registered(options_register_v2(data));
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
         const struct retro_core_options_v2_intl *intl = data;
-        return intl->us != NULL && options_register_v2(intl->us);
+        return intl->us != NULL && options_registered(options_register_v2(intl->us));
     }
     case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
         *(bool *)data = options_update_pending();
@@ -240,6 +249,7 @@ static bool environment(unsigned command, void *data)
         struct retro_variable *variable = data;
         if (variable->key == NULL)
             return false;
+        session.options_observed = true;
         variable->value = options_get(variable->key);
         return true;
     }
@@ -592,7 +602,15 @@ bool core_reset(void)
 }
 
 const char *core_option_get(const char *key) { return options_get(key); }
-bool core_option_set(const char *key, const char *value) { return options_set(key, value); }
+bool core_option_set(const char *key, const char *value)
+{
+    const char *previous = options_get(key);
+    bool changed = previous && value && strcmp(previous, value) != 0;
+    if (!options_set(key, value)) return false;
+    /* A core may still be using a previous value after the request is reverted. */
+    if (changed) session.state_options_uncertain = true;
+    return true;
+}
 bool core_option_update_pending(void) { return options_update_pending(); }
 void core_option_update_clear(void) { options_clear_update(); }
 size_t core_option_count(void) { return options_count(); }
@@ -635,7 +653,7 @@ bool core_options_fingerprint(char fingerprint[CORE_OPTIONS_FINGERPRINT_SIZE])
 static bool sync_state_options(struct saves *saves)
 {
     char fingerprint[CORE_OPTIONS_FINGERPRINT_SIZE];
-    if (!core_options_fingerprint(fingerprint)) return false;
+    if (session.state_options_uncertain || !core_options_fingerprint(fingerprint)) return false;
     saves_set_state_options(saves, fingerprint);
     return true;
 }
@@ -652,11 +670,11 @@ static bool persistence_unserialize(void *context, const void *buffer, size_t si
     return api->retro_unserialize(buffer, size);
 }
 
-bool core_persistence_load(struct saves *saves, int state_slot)
+enum core_load_result core_persistence_load(struct saves *saves, int state_slot)
 {
     if (!saves || !session.loaded || !session.api.retro_get_memory_data ||
-        !session.api.retro_get_memory_size)
-        return false;
+        !session.api.retro_get_memory_size || (state_slot >= 0 && session.state_options_uncertain))
+        return CORE_LOAD_REJECTED;
     size_t sram_size = session.api.retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
     size_t rtc_size = session.api.retro_get_memory_size(RETRO_MEMORY_RTC);
     void *sram = session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
@@ -665,29 +683,29 @@ bool core_persistence_load(struct saves *saves, int state_slot)
     size_t size = 0;
     if (state_slot >= 0) {
         if (state_slot >= SAVES_STATE_SLOTS || !session.api.retro_serialize_size ||
-            !session.api.retro_unserialize)
-            return false;
+            !session.api.retro_unserialize || !sync_state_options(saves))
+            return CORE_LOAD_REJECTED;
         size = session.api.retro_serialize_size();
         if (size == 0 || size > 256u * 1024u * 1024u)
-            return false;
+            return CORE_LOAD_REJECTED;
         state = malloc(size);
         if (!state)
-            return false;
+            return CORE_LOAD_REJECTED;
         if (!sync_state_options(saves) ||
             !saves_load_state(saves, (unsigned)state_slot, state, size)) {
             free(state);
-            return false;
+            return CORE_LOAD_REJECTED;
         }
     }
     bool loaded = saves_load_memory(saves, sram, sram_size, rtc, rtc_size);
     if (!loaded) {
         free(state);
-        return false;
+        return CORE_LOAD_REJECTED;
     }
     bool restored = state_slot < 0 ||
                     saves_state_restore(persistence_unserialize, &session.api, state, size);
     free(state);
-    return restored;
+    return restored ? CORE_LOAD_OK : CORE_LOAD_FAILED;
 }
 
 bool core_persistence_commit(struct saves *saves, int state_slot)
@@ -699,10 +717,10 @@ bool core_persistence_commit(struct saves *saves, int state_slot)
     size_t state_size = 0;
     if (state_slot >= 0) {
         if (state_slot >= SAVES_STATE_SLOTS || !session.api.retro_serialize_size ||
-            !session.api.retro_serialize)
+            !session.api.retro_serialize || !sync_state_options(saves))
             return false;
         state_size = session.api.retro_serialize_size();
-        if (state_size == 0 || state_size > 256u * 1024u * 1024u)
+        if (state_size == 0 || state_size > 256u * 1024u * 1024u || session.state_options_uncertain)
             return false;
         state = malloc(state_size);
         if (!state || !saves_state_capture(persistence_serialize, &session.api, state, state_size)) {
@@ -710,12 +728,14 @@ bool core_persistence_commit(struct saves *saves, int state_slot)
             return false;
         }
     }
-    size_t sram_size = 0, rtc_size = 0;
-    bool ok = (state_slot < 0 || sync_state_options(saves)) &&
-        core_save_memory_sizes(&sram_size, &rtc_size) &&
-        saves_commit(saves, session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sram_size,
-                     session.api.retro_get_memory_data(RETRO_MEMORY_RTC), rtc_size,
-                     state_slot, state, state_size);
+    size_t sram_size, rtc_size;
+    bool ok = core_save_memory_sizes(&sram_size, &rtc_size);
+    if (ok) {
+        void *sram = session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+        void *rtc = session.api.retro_get_memory_data(RETRO_MEMORY_RTC);
+        ok = (state_slot < 0 || sync_state_options(saves)) &&
+            saves_commit(saves, sram, sram_size, rtc, rtc_size, state_slot, state, state_size);
+    }
     free(state);
     return ok;
 }
@@ -740,61 +760,80 @@ bool core_save_memory_sizes(size_t *sram_size, size_t *rtc_size)
     return true;
 }
 
-bool core_persistence_checkpoint(struct saves *saves)
+enum core_checkpoint_result core_persistence_checkpoint(struct saves *saves)
 {
-    size_t sram_size = 0, rtc_size = 0;
-    if (!saves || !session.loaded || !session.api.retro_get_memory_data ||
-        !session.api.retro_get_memory_size || !session.api.retro_serialize_size ||
-        !session.api.retro_serialize || !sync_state_options(saves) ||
-        !saves_checkpoint_options_match(saves))
-        return false;
+    if (!saves || !session.loaded) return CORE_CHECKPOINT_ERROR;
+    if (!session.api.retro_serialize_size || !session.api.retro_serialize ||
+        !session.api.retro_unserialize || !sync_state_options(saves) ||
+        !saves_checkpoint_options_match(saves)) return CORE_CHECKPOINT_UNAVAILABLE;
     size_t state_size = session.api.retro_serialize_size();
-    if (!state_size || state_size > 256u * 1024u * 1024u) return false;
+    if (!state_size || state_size > 256u * 1024u * 1024u || session.state_options_uncertain)
+        return CORE_CHECKPOINT_UNAVAILABLE;
     void *state = malloc(state_size);
-    if (!state || !saves_state_capture(persistence_serialize, &session.api, state, state_size)) {
-        free(state);
-        return false;
+    if (!state) return CORE_CHECKPOINT_ERROR;
+    enum core_checkpoint_result result = CORE_CHECKPOINT_UNAVAILABLE;
+    if (saves_state_capture(persistence_serialize, &session.api, state, state_size)) {
+        size_t sram_size, rtc_size;
+        result = CORE_CHECKPOINT_ERROR;
+        if (core_save_memory_sizes(&sram_size, &rtc_size)) {
+            void *sram = session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+            void *rtc = session.api.retro_get_memory_data(RETRO_MEMORY_RTC);
+            if (!sync_state_options(saves)) result = CORE_CHECKPOINT_UNAVAILABLE;
+            else if (saves_commit_checkpoint(saves, sram, sram_size, rtc, rtc_size, state, state_size))
+                result = CORE_CHECKPOINT_OK;
+        }
     }
-    bool ok = sync_state_options(saves) && core_save_memory_sizes(&sram_size, &rtc_size) &&
-        saves_commit_checkpoint(saves, session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sram_size,
-                                session.api.retro_get_memory_data(RETRO_MEMORY_RTC), rtc_size,
-                                state, state_size);
     free(state);
-    return ok;
+    return result;
 }
 
-static bool restore_checkpoint_memory(const unsigned char *memory,size_t ss,size_t rs)
+static enum saves_resume_result restore_checkpoint_memory(const unsigned char *memory,
+                                                          size_t ss, size_t rs)
 {
     size_t sram_size, rtc_size;
-    if (!core_save_memory_sizes(&sram_size, &rtc_size) || sram_size != ss || rtc_size != rs)
-        return false;
+    bool sizes_fit = core_save_memory_sizes(&sram_size, &rtc_size) &&
+        sram_size == ss && rtc_size == rs;
+    if (session.state_options_uncertain) return SAVES_RESUME_RETRY;
+    if (!sizes_fit)
+        return SAVES_RESUME_INVALID;
     void *sram = session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
     void *rtc = session.api.retro_get_memory_data(RETRO_MEMORY_RTC);
-    if ((!sram && ss) || (!rtc && rs)) return false;
+    if (session.state_options_uncertain) return SAVES_RESUME_RETRY;
+    if ((!sram && ss) || (!rtc && rs)) return SAVES_RESUME_INVALID;
     if (ss) memcpy(sram, memory, ss);
     if (rs) memcpy(rtc, memory + ss, rs);
-    return true;
+    return SAVES_RESUME_READY;
 }
 
-bool core_persistence_restore_checkpoint(struct saves *saves, const char *token)
+enum saves_resume_result core_persistence_restore_checkpoint(struct saves *saves, const char *token)
 {
     size_t sram_size = 0, rtc_size = 0;
-    if (!saves || !session.loaded || !session.api.retro_get_memory_data ||
-        !session.api.retro_get_memory_size || !session.api.retro_serialize_size ||
-        !session.api.retro_unserialize || !core_save_memory_sizes(&sram_size, &rtc_size))
-        return false;
+    if (!saves || !session.loaded || !sync_state_options(saves)) return SAVES_RESUME_RETRY;
+    if (!session.api.retro_serialize_size || !session.api.retro_unserialize)
+        return SAVES_RESUME_INVALID;
+    bool sizes_valid = core_save_memory_sizes(&sram_size, &rtc_size);
+    if (session.state_options_uncertain) return SAVES_RESUME_RETRY;
+    if (!sizes_valid) return SAVES_RESUME_INVALID;
     size_t state_size = session.api.retro_serialize_size();
-    if (!state_size || state_size > 256u * 1024u * 1024u) return false;
+    if (!sync_state_options(saves)) return SAVES_RESUME_RETRY;
+    if (!state_size || state_size > 256u * 1024u * 1024u) return SAVES_RESUME_INVALID;
     void *state = malloc(state_size);
     unsigned char *memory = malloc(sram_size + rtc_size + 1);
-    bool ok = state && memory && sync_state_options(saves) &&
-        saves_load_resume(saves, token, state, state_size, memory, sram_size,
-                          memory + sram_size, rtc_size) &&
-        restore_checkpoint_memory(memory, sram_size, rtc_size) &&
-        saves_state_restore(persistence_unserialize, &session.api, state, state_size);
-    /* Unserializing can replace the memory regions or their contents. */
-    if (ok) ok = restore_checkpoint_memory(memory, sram_size, rtc_size);
+    enum saves_resume_result result = SAVES_RESUME_RETRY;
+    if (state && memory)
+        result = saves_load_resume(saves, token, state, state_size, memory, sram_size,
+                                   memory + sram_size, rtc_size);
+    if (result == SAVES_RESUME_READY)
+        result = restore_checkpoint_memory(memory, sram_size, rtc_size);
+    if (result == SAVES_RESUME_READY) {
+        bool restored = saves_state_restore(persistence_unserialize, &session.api, state, state_size);
+        if (session.state_options_uncertain) result = SAVES_RESUME_RETRY;
+        else if (restored)
+            /* Unserializing can replace the memory regions or their contents. */
+            result = restore_checkpoint_memory(memory, sram_size, rtc_size);
+        else result = SAVES_RESUME_INVALID;
+    }
     free(memory);
     free(state);
-    return ok;
+    return result;
 }

@@ -100,6 +100,16 @@ static uint64_t current(const char *dir)
 {
 	char p[4096],b[32];int n=snprintf(p,sizeof(p),"%s/CURRENT",dir);assert(n>0&&(size_t)n<sizeof(p));int fd=open(p,O_RDONLY);if(fd<0)fprintf(stderr,"CURRENT open failed: %s\n",p);assert(fd>=0);ssize_t r=read(fd,b,sizeof(b)-1);assert(r>0);assert(close(fd)==0);b[r]=0;return strtoull(b,NULL,10);
 }
+static void assert_current_slot(const char *dir,const void *expected,size_t size)
+{
+	char path[4096];
+	int n=snprintf(path,sizeof(path),"%s/g%016llx/state-00",dir,(unsigned long long)current(dir));
+	assert(n>0&&(size_t)n<sizeof(path));
+	size_t actual_size;
+	uint8_t *actual=read_bytes(path,&actual_size);
+	assert(actual_size==size&&memcmp(actual,expected,size)==0);
+	free(actual);
+}
 static bool serialize_ok(void *ctx,void *buffer,size_t size){memcpy(buffer,ctx,size);return true;}
 static bool serialize_fail(void *ctx,void *buffer,size_t size){(void)ctx;(void)buffer;(void)size;return false;}
 static bool unserialize_ok(void *ctx,const void *buffer,size_t size){memcpy(ctx,buffer,size);return true;}
@@ -179,8 +189,8 @@ static void assert_resume_snapshot(struct saves *s,const char *expected_token,
 {
 	char token[65];
 	uint8_t saved_state=0,saved_sram=0,saved_rtc=0;
-	assert(saves_resume_available(s,token)&&strcmp(token,expected_token)==0);
-	assert(saves_load_resume(s,token,&saved_state,1,&saved_sram,1,&saved_rtc,1));
+	assert(saves_resume_probe(s,token)==SAVES_RESUME_READY&&strcmp(token,expected_token)==0);
+	assert(saves_load_resume(s,token,&saved_state,1,&saved_sram,1,&saved_rtc,1)==SAVES_RESUME_READY);
 	assert(saved_state==state&&saved_sram==sram&&saved_rtc==rtc);
 }
 
@@ -189,7 +199,7 @@ static void check_resume_publication(const char *root,const char *core,const cha
 	struct saves *s=saves_open(root,core,content);assert(s);
 	assert(saves_commit_checkpoint(s,"a",1,"b",1,"c",1));
 	char token[65],identity[4096],old_generation[4096];
-	assert(saves_resume_available(s,token));
+	assert(saves_resume_probe(s,token)==SAVES_RESUME_READY);
 	only_entry(root,identity,sizeof(identity));
 	uint64_t pinned=current(identity);
 	assert(snprintf(old_generation,sizeof(old_generation),"%s/g%016llx",
@@ -228,15 +238,31 @@ static void check_resume_publication(const char *root,const char *core,const cha
 	assert(!saves_commit_checkpoint(s,"n",1,"o",1,"c",1));
 	assert(access(old_generation,F_OK)==0);
 	char replacement[65];
-	assert(saves_resume_available(s,replacement)&&strcmp(token,replacement)!=0);
+	assert(saves_resume_probe(s,replacement)==SAVES_RESUME_READY&&strcmp(token,replacement)!=0);
 	assert_resume_snapshot(s,replacement,'c','n','o');
 	uint8_t unused=0;
-	assert(!saves_load_resume(s,token,&unused,1,&unused,1,&unused,1));
+	assert(saves_load_resume(s,token,&unused,1,&unused,1,&unused,1)==SAVES_RESUME_RETRY);
 
 	assert(saves_commit_checkpoint(s,"p",1,"q",1,"r",1));
-	assert(saves_resume_available(s,replacement));
+	assert(saves_resume_probe(s,replacement)==SAVES_RESUME_READY);
 	assert_resume_snapshot(s,replacement,'r','p','q');
 	assert(access(old_generation,F_OK)<0&&errno==ENOENT);
+
+	/* A battery-only shutdown cannot retire another writer's newly published resume. */
+	assert(saves_commit(s,"s",1,"t",1,-1,NULL,0));
+	struct saves *other=saves_open(root,core,content);assert(other);
+	assert(saves_commit_checkpoint(other,"u",1,"v",1,"w",1));
+	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_READY);
+	assert(!saves_resume_retire(s));
+	assert_resume_snapshot(s,replacement,'w','u','v');
+	saves_close(other);
+	assert(saves_commit(s,"x",1,"y",1,-1,NULL,0));
+	saves_test_fail_event(SAVES_TEST_PARENT_DIR_FSYNC,1);
+	assert(!saves_resume_retire(s));
+	assert(saves_resume_retire(s));
+	assert(saves_resume_probe(s,replacement)==SAVES_RESUME_NONE);
+	assert(saves_load_memory(s,&ordinary_sram,1,&ordinary_rtc,1));
+	assert(ordinary_sram=='x'&&ordinary_rtc=='y');
 	saves_close(s);
 }
 
@@ -251,24 +277,54 @@ static void check_legacy_resume(const char *root,const char *core,const char *co
 	assert(snprintf(marker,sizeof(marker),"%s/RESUME",identity)>0);
 	const char v2[]="v2\n2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6\n";
 	put(marker,v2,sizeof(v2)-1);
-	assert(!saves_resume_available(s,token)&&!token[0]);
+	assert(saves_resume_probe(s,token)==SAVES_RESUME_NONE&&!token[0]);
 	put(marker,"v1\n",3);
-	assert(!saves_resume_available(s,token)&&!token[0]);
+	assert(saves_resume_probe(s,token)==SAVES_RESUME_NONE&&!token[0]);
 	put(marker,v2,sizeof(v2)-1);
 	for(unsigned i=0;i<3;i++)assert(saves_commit(s,"e",1,"f",1,-1,NULL,0));
 	uint8_t state=0,sram=0,rtc=0;
-	assert(saves_load_state(s,0,&state,1)&&state=='d');
+	assert(saves_state_present(s,0)&&!saves_load_state(s,0,&state,1));
+	assert_current_slot(identity,"d",1);
 	assert(saves_load_checkpoint(s,&state,1)&&state=='c');
 	assert(saves_load_memory(s,&sram,1,&rtc,1)&&sram=='e'&&rtc=='f');
-	assert(!saves_resume_available(s,token)&&!token[0]);
+	assert(saves_resume_probe(s,token)==SAVES_RESUME_NONE&&!token[0]);
 	saves_test_fail_event(SAVES_TEST_RESUME_RENAME,1);
 	assert(!saves_commit_checkpoint(s,"e",1,"f",1,"xy",2));
 	for(unsigned i=0;i<3;i++)assert(saves_commit(s,"e",1,"f",1,-1,NULL,0));
 	assert(saves_load_checkpoint(s,&state,1)&&state=='c');
 	assert(saves_commit_checkpoint(s,"g",1,"h",1,"i",1));
-	assert(saves_resume_available(s,token));
+	assert(saves_resume_probe(s,token)==SAVES_RESUME_READY);
 	assert_resume_snapshot(s,token,'i','g','h');
-	assert(saves_load_state(s,0,&state,1)&&state=='d');
+	assert(saves_state_present(s,0)&&!saves_load_state(s,0,&state,1));
+	assert_current_slot(identity,"d",1);
+
+	/* The old generation-bound marker still selects cold start when its writer
+	 * could have mislabeled the effective core options. */
+	assert(saves_test_downgrade_current_manifest(s,3));
+	uint64_t generation=current(identity);
+	char manifest[4096];
+	assert(snprintf(manifest,sizeof(manifest),"%s/g%016llx/manifest",
+	                identity,(unsigned long long)generation)>0);
+	size_t manifest_size;
+	uint8_t *bytes=read_bytes(manifest,&manifest_size);
+	assert(manifest_size>32);
+	const char hex[]="0123456789abcdef";
+	for(unsigned i=0;i<32;i++){
+		uint8_t byte=bytes[manifest_size-32+i];
+		token[2*i]=hex[byte>>4];
+		token[2*i+1]=hex[byte&15];
+	}
+	free(bytes);
+	token[64]=0;
+	char v3[86];
+	assert(snprintf(v3,sizeof(v3),"v3\n%016llx\n%s\n",
+	                (unsigned long long)generation,token)==85);
+	put(marker,v3,sizeof(v3)-1);
+	assert(saves_resume_probe(s,token)==SAVES_RESUME_NONE&&!token[0]);
+	for(unsigned i=0;i<3;i++)assert(saves_commit(s,"e",1,"f",1,-1,NULL,0));
+	assert(saves_resume_probe(s,token)==SAVES_RESUME_NONE);
+	assert(saves_load_checkpoint(s,&state,1)&&state=='i');
+	assert_current_slot(identity,"d",1);
 	saves_close(s);
 }
 
@@ -306,7 +362,11 @@ int main(int argc,char **argv)
 	memset(got_sram,0,sizeof(got_sram));memset(got_rtc,0,sizeof(got_rtc));memset(got_state,0,sizeof(got_state));
 	assert(saves_load_memory(s,got_sram,sizeof(got_sram),got_rtc,sizeof(got_rtc)));
 	assert(!memcmp(sram,got_sram,sizeof(sram))&&!memcmp(rtc,got_rtc,sizeof(rtc)));
-	assert(saves_load_state(s,0,got_state,sizeof(got_state))&&!memcmp(state0,got_state,sizeof(state0)));
+	assert(saves_state_present(s,0)&&!saves_load_state(s,0,got_state,sizeof(got_state)));
+	char v1_identity[4096];
+	only_entry(root,v1_identity,sizeof(v1_identity));
+	assert_current_slot(v1_identity,state0,sizeof(state0));
+	assert(saves_commit(s,sram,sizeof(sram),rtc,sizeof(rtc),0,state0,sizeof(state0)));
 	/* Preview/import follows production discovery and preserves read-only legacy files. */
 	char legacy[4096],legacy_sram[4096],legacy_rtc[4096],legacy_native[4096];
 	assert(snprintf(legacy,sizeof(legacy),"%s/legacy",base)>0&&mkdir(legacy,0700)==0);
@@ -415,30 +475,31 @@ int main(int argc,char **argv)
 	assert(saves_commit(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),9,checkpoint_data,sizeof(checkpoint_data)));
 	assert(saves_commit_checkpoint(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),checkpoint_data,sizeof(checkpoint_data)));
 	assert(saves_checkpoint_present(checkpoint));
-	char resume_hash[65];assert(saves_resume_available(checkpoint,resume_hash));uint8_t checkpoint_out[sizeof(checkpoint_data)];
+	char resume_hash[65];assert(saves_resume_probe(checkpoint,resume_hash)==SAVES_RESUME_READY);uint8_t checkpoint_out[sizeof(checkpoint_data)];
 	assert(saves_load_checkpoint(checkpoint,checkpoint_out,sizeof(checkpoint_out))&&!memcmp(checkpoint_out,checkpoint_data,sizeof(checkpoint_data)));
 	assert(saves_load_state(checkpoint,9,checkpoint_out,sizeof(checkpoint_out))&&!memcmp(checkpoint_out,checkpoint_data,sizeof(checkpoint_data)));
 	/* Failed publication leaves the old resume generation usable. */
 	saves_test_fail_write_after(0);
 	uint8_t replacement_state[]={9,3,2,3};
 	assert(!saves_commit_checkpoint(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),replacement_state,sizeof(replacement_state)));
-	assert(saves_resume_available(checkpoint,resume_hash));
+	assert(saves_resume_probe(checkpoint,resume_hash)==SAVES_RESUME_READY);
 	char rejected_generation_hash[65];memcpy(rejected_generation_hash,resume_hash,sizeof(resume_hash));
 	assert(saves_commit_checkpoint(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),replacement_state,sizeof(replacement_state)));
-	assert(saves_resume_available(checkpoint,resume_hash));
+	assert(saves_resume_probe(checkpoint,resume_hash)==SAVES_RESUME_READY);
 	assert(strcmp(rejected_generation_hash,resume_hash)!=0);
 	assert(saves_resume_clear_if(checkpoint,rejected_generation_hash));
-	assert(saves_resume_available(checkpoint,rejected_generation_hash)&&strcmp(rejected_generation_hash,resume_hash)==0);
+	assert(saves_resume_probe(checkpoint,rejected_generation_hash)==SAVES_RESUME_READY&&strcmp(rejected_generation_hash,resume_hash)==0);
 	assert(snprintf(other_core,sizeof(other_core),"%s/other-core.so",base)>0);put(other_core,"different-core",14);
 	struct saves *stale_checkpoint=saves_open(checkpoint_root,other_core,content);assert(stale_checkpoint);
-	assert(!saves_resume_available(stale_checkpoint,resume_hash));saves_close(stale_checkpoint);
+	assert(saves_resume_probe(stale_checkpoint,resume_hash)==SAVES_RESUME_NONE);saves_close(stale_checkpoint);
 	struct saves *option_mismatch_checkpoint=saves_open_with_options(checkpoint_root,core,content,"options-changed");assert(option_mismatch_checkpoint);
-	assert(!saves_resume_available(option_mismatch_checkpoint,resume_hash));saves_close(option_mismatch_checkpoint);
+	assert(saves_resume_probe(option_mismatch_checkpoint,resume_hash)==SAVES_RESUME_NONE);saves_close(option_mismatch_checkpoint);
 	/* A checksum failure invalidates resume metadata; it cannot be unserialized. */
 	entry_with_file(checkpoint_root,"RESUME",checkpoint_ident,sizeof(checkpoint_ident));uint64_t checkpoint_generation=current(checkpoint_ident);
 	assert(snprintf(checkpoint_gen,sizeof(checkpoint_gen),"%s/g%016llx",checkpoint_ident,(unsigned long long)checkpoint_generation)>0);
-	assert(snprintf(checkpoint_state,sizeof(checkpoint_state),"%s/checkpoint",checkpoint_gen)>0);put(checkpoint_state,"x",1);
-	assert(!saves_resume_available(checkpoint,resume_hash));assert(resume_hash[0]);assert(saves_checkpoint_present(checkpoint));
+	assert(snprintf(checkpoint_state,sizeof(checkpoint_state),"%s/checkpoint",checkpoint_gen)>0);
+	put(checkpoint_state,(uint8_t[sizeof(replacement_state)]){0},sizeof(replacement_state));
+	assert(saves_resume_probe(checkpoint,resume_hash)==SAVES_RESUME_INVALID);assert(resume_hash[0]);assert(saves_checkpoint_present(checkpoint));
 	assert(saves_resume_clear_if(checkpoint,resume_hash));saves_close(checkpoint);
 	char publication_root[4096],legacy_resume_root[4096];
 	assert(snprintf(publication_root,sizeof(publication_root),"%s/resume-publication",base)>0);
@@ -508,9 +569,12 @@ int main(int argc,char **argv)
 	assert(runtime_run(runtime,argv[3],rom,rr,true,0,1)==0);
 	assert(runtime_has_save(rr,argv[3],rom));
 	assert(snprintf(rr,sizeof(rr),"%s/runtime-quit-callbacks",base)>0);
-	run_persistence_callbacks(runtime,"quit",argv[3],rom,rr);
-	assert(snprintf(rr,sizeof(rr),"%s/runtime-options",base)>0);
-	run_persistence_callbacks(runtime,"options",fixture,rom,rr);
+	run_persistence_callbacks(runtime,"quit",fixture,rom,rr);
+	const char *regressions[]={"options-ui","options-core","transient-resume","legacy-1","legacy-2","legacy-3"};
+	for(size_t i=0;i<sizeof(regressions)/sizeof(regressions[0]);i++){
+		assert(snprintf(rr,sizeof(rr),"%s/runtime-%s",base,regressions[i])>0);
+		run_persistence_callbacks(runtime,regressions[i],fixture,rom,rr);
+	}
 
 	/* A first-frame failure cannot replace a requested slot or the old resume. */
 	assert(snprintf(rr,sizeof(rr),"%s/runtime-failed-startup",base)>0);
@@ -521,14 +585,14 @@ int main(int argc,char **argv)
 	struct saves *failed_start=saves_open_with_options(rr,fixture,rom,"banana-retro-options-v1:");
 	assert(failed_start);
 	char original_token[65],after_failure[65];
-	assert(saves_resume_available(failed_start,original_token));
+	assert(saves_resume_probe(failed_start,original_token)==SAVES_RESUME_READY);
 	uint32_t original_state=0,after_state=0;
 	assert(saves_load_state(failed_start,0,&original_state,sizeof(original_state)));
 	assert(setenv("BANANA_RETRO_FIXTURE_MODE","bad-pitch",1)==0);
 	assert(runtime_run(runtime,fixture,rom,rr,false,2,2)!=0);
 	assert(unsetenv("BANANA_RETRO_FIXTURE_MODE")==0);
 	assert(current(failed_ident)==original_generation);
-	assert(saves_resume_available(failed_start,after_failure)&&strcmp(original_token,after_failure)==0);
+	assert(saves_resume_probe(failed_start,after_failure)==SAVES_RESUME_READY&&strcmp(original_token,after_failure)==0);
 	assert(saves_load_state(failed_start,0,&after_state,sizeof(after_state))&&after_state==original_state);
 	saves_close(failed_start);
 	assert(snprintf(rr,sizeof(rr),"%s/runtime-quick-resume",base)>0);assert(runtime_run(runtime,fixture,rom,rr,false,0,1)==0);assert(runtime_run(runtime,fixture,rom,rr,false,0,2)==0);
@@ -547,7 +611,7 @@ int main(int argc,char **argv)
 	assert(runtime_run(runtime,fixture,rom,rr,false,2,1)==0);
 	assert(runtime_run(runtime,fixture,rom,rr,false,0,4)!=0);
 	struct saves *rejected_resume=saves_open_with_options(rr,fixture,rom,"banana-retro-options-v1:");assert(rejected_resume);
-	char rejected_hash[65];assert(!saves_resume_available(rejected_resume,rejected_hash));
+	char rejected_hash[65];assert(saves_resume_probe(rejected_resume,rejected_hash)==SAVES_RESUME_NONE);
 	assert(saves_checkpoint_present(rejected_resume));uint32_t preserved_checkpoint=0;
 	assert(saves_load_checkpoint(rejected_resume,&preserved_checkpoint,sizeof(preserved_checkpoint)));
 	assert(saves_state_present(rejected_resume,0));uint32_t preserved_slot=0;
@@ -576,7 +640,7 @@ int main(int argc,char **argv)
 	assert(strstr(cli_output,"ok already-imported")!=NULL);
 	struct saves *imported=saves_open_with_options(cli_native,fixture,rom,"banana-retro-options-v1:");
 	assert(imported&&!saves_checkpoint_present(imported)&&!saves_state_present(imported,0));
-	assert(!saves_resume_available(imported,resume_hash));
+	assert(saves_resume_probe(imported,resume_hash)==SAVES_RESUME_NONE);
 	saves_close(imported);
 	assert(runtime_run(runtime,fixture,rom,cli_native,false,0,1)==0);
 	assert(runtime_run(runtime,fixture,rom,cli_native,false,0,2)==0);

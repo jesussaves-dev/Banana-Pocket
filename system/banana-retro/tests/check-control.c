@@ -859,7 +859,7 @@ static void test_runtime_operations(const char *core_path)
 	assert(audio_status.paused_frames == 1);
 	unsigned checkpoint_byte = memory[0];
 	memory[0] = 0x42;
-	assert(core_persistence_load(saves, -1) && memory[0] == checkpoint_byte);
+	assert(core_persistence_load(saves, -1) == CORE_LOAD_OK && memory[0] == checkpoint_byte);
 	packet_size = make_packet(request, BANANA_RETRO_CTL_RESUME, 3, session, hold, sizeof(hold));
 	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
 	assert(pause_owners(&runtime) == 2); /* UI release cannot release the sleep owner. */
@@ -911,7 +911,7 @@ static void test_runtime_operations(const char *core_path)
 	packet_size = make_packet(request, BANANA_RETRO_CTL_FLUSH_SRAM, 11, session, NULL, 0);
 	assert(exchange(control_fd, server, request, packet_size, reply, sizeof(reply)) == BANANA_RETRO_CTL_OK);
 	memory[0] = 0x11;
-	assert(core_persistence_load(saves, -1));
+	assert(core_persistence_load(saves, -1) == CORE_LOAD_OK);
 	assert(memory[0] == 0x39);
 
 	packet_size = make_packet(request, BANANA_RETRO_CTL_CHECKPOINT, 12, session, NULL, 0);
@@ -920,9 +920,9 @@ static void test_runtime_operations(const char *core_path)
 	memory[0] = 0x7e;
 	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_OK);
 	char checkpoint_hash[65];
-	assert(saves_resume_available(saves, checkpoint_hash) && !runtime.stopped && !pause_owners(&runtime));
+	assert(saves_resume_probe(saves, checkpoint_hash) == SAVES_RESUME_READY && !runtime.stopped && !pause_owners(&runtime));
 	memory[0] = 0;
-	assert(core_persistence_restore_checkpoint(saves, checkpoint_hash) && memory[0] == 0x7e);
+	assert(core_persistence_restore_checkpoint(saves, checkpoint_hash) == SAVES_RESUME_READY && memory[0] == 0x7e);
 	runtime.saves = NULL;
 	power.id = 8;
 	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_IO_ERROR);
@@ -933,7 +933,7 @@ static void test_runtime_operations(const char *core_path)
 	assert(sleep_peer_exchange(commands[1], events[0], server, power) == BANANA_RETRO_CTL_OK);
 	assert(runtime.stopped && runtime.committed);
 	memory[0] = 0x22;
-	assert(core_persistence_load(saves, 2));
+	assert(core_persistence_load(saves, 2) == CORE_LOAD_OK);
 	assert(memory[0] == 0x5a);
 	assert(core_release());
 	close(control_fd);
