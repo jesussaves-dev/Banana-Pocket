@@ -76,7 +76,7 @@ Each task is a separate Banana work item with the stated allowlist. Dependency I
 
 ## 11. Qualify three software pilot profiles on hardware
 
-- **Scope and files** — `system/banana-retro/config/defaults.conf`, `system/banana-retro/tests/check-profiles.sh`, `docs/plans/banana-retro-pilot-results.md`. Generate scratch artifacts outside the checkout.
+- **Scope and planned files** — `system/banana-retro/config/defaults.conf`. Add `check-profiles.sh` under [runtime tests](../../system/banana-retro/tests/). The pilot is not yet qualified; record the authorized hardware results in a new `banana-retro-pilot-results.md` alongside this roadmap. Generate scratch artifacts outside the checkout.
 - **Dependencies and interface** — 06 and 08–10. One externally authorized profile at a time for mGBA/GBA, Gambatte/GB+GBC, and FCEUmm/NES cartridges. A pilot requires matching core build, content, options and input policy.
 - **Sequence and completion** — Capture the comparable RetroArch baseline first. For each externally authorized pilot profile, explicitly select the experimental native profile on physical RPC and verify runtime startup/readiness, successful first-frame presentation, audio readiness and output, pause/resume, input ownership, crash recovery, and menu restoration. These transferred checks replace the original native end-to-end QEMU acceptance requirement, which was not performed and is not passed. Task 11 cannot receive approval until every transferred check passes on physical hardware. A specialized native QEMU environment is not required, and QEMU smoke or protocol evidence does not satisfy this physical gate. Then verify the exact packaged core, fullpath/memory behavior, options, frame/audio timing, save import and state, overlay, input, exit, suspend/wake, and both automatic and manual fallback cases. Compare candidate latency, frame pacing, CPU/memory and audio under sustained runs. Record failures and disable the affected profile. Report actual commands, inputs, board and measurements. Preserve the existing hardware qualification requirements and keep profiles opt-in and stock defaults unchanged.
 - **Complexity and rollback** — Medium implementation and substantial qualification. Keep opt-in profiles and stock defaults. Roll back per profile.
@@ -90,21 +90,21 @@ Each task is a separate Banana work item with the stated allowlist. Dependency I
 
 ## 13. Add one GL or GLES hardware profile
 
-- **Scope and files** — `system/banana-retro/src/{core.c,main.c,video_wayland.c,video_gl.c,video_gl.h}`, `system/banana-retro/Makefile`, `buildroot/package/banana-retro/{Config.in,banana-retro.mk}`, `system/banana-retro/config/defaults.conf`, `system/banana-retro/tests/check-gl.c`.
+- **Scope and planned files** — `system/banana-retro/src/{core.c,main.c,video_wayland.c,video_gl.c,video_gl.h}`, `system/banana-retro/Makefile`, `buildroot/package/banana-retro/{Config.in,banana-retro.mk}`, `system/banana-retro/config/defaults.conf`. Add `check-gl.c` under [runtime tests](../../system/banana-retro/tests/).
 - **Dependencies and interface** — 02, 06, 07, and 11. Versioned HW negotiation, proc lookup/FBO, Mesa EGL/Wayland and supported DMA-BUF output. Choose a verified GLES core or fixture first.
 - **Sequence and completion** — Exercise a fixture context reset/destroy and loss before enabling one packaged GLES profile. Verify direct and transformed import, producer fencing, nonblocking control, buffer release, overlays, suspend/wake, and display and audio pacing on RPC.
 - **Complexity and rollback** — Large. Reject unsupported APIs and keep per-profile RetroArch fallback. Treat desktop GL requirements as a separate profile qualification.
 
 ## 14. Add one Vulkan hardware profile
 
-- **Scope and files** — `system/banana-retro/src/{core.c,main.c,video_wayland.c,video_vulkan.c,video_vulkan.h}`, `system/banana-retro/Makefile`, `buildroot/package/banana-retro/{Config.in,banana-retro.mk}`, `system/banana-retro/config/defaults.conf`, `system/banana-retro/tests/check-vulkan.c`.
+- **Scope and planned files** — `system/banana-retro/src/{core.c,main.c,video_wayland.c,video_vulkan.c,video_vulkan.h}`, `system/banana-retro/Makefile`, `buildroot/package/banana-retro/{Config.in,banana-retro.mk}`, `system/banana-retro/config/defaults.conf`. Add `check-vulkan.c` under [runtime tests](../../system/banana-retro/tests/).
 - **Dependencies and interface** — 13's hardware lifecycle and 11's pilot infrastructure. Negotiation/render versions, queue and image ownership, WSI swapchain and device loss handling. Choose one of Flycast or SwanStation after tracing its packaged requests.
 - **Sequence and completion** — Validate the fixture contract, then the selected core with pinned options and measured WSI/rotation paths. Confirm imported format/modifier, completion before scanout, old-buffer lifetime, graceful context loss and suspend recovery. Measure a613/Turnip settings before enabling a tuning profile.
 - **Complexity and rollback** — Large. Gate each driver/core pair explicitly. Keep software and GLES profiles independent of Vulkan availability.
 
 ## 15. Decouple core packaging from RetroArch
 
-- **Scope and files** — `buildroot/Config.in`, `buildroot/package/retroarch/{Config.in,cores.in}`, new `buildroot/package/libretro-cores/Config.in`, `buildroot/configs/banana_retroid_pocket_classic_defconfig`, and `tools/check-systems.py`.
+- **Scope and planned files** — `buildroot/Config.in`, `buildroot/package/retroarch/{Config.in,cores.in}`, `buildroot/configs/banana_retroid_pocket_classic_defconfig`, and `tools/check-systems.py`. Add `libretro-cores/Config.in` under [Buildroot packages](../../buildroot/package/).
 - **Dependencies and interface** — 06 and 11. Core choice and installation survive independently of the RetroArch frontend symbol. Keep the configured stock frontend and core inventory available.
 - **Sequence and completion** — Compare core selection, target dependencies, license/source manifests and baseline image behavior with and without RetroArch in scratch configurations. Confirm the optional frontend-free image builds and keeps the selected cores.
 - **Complexity and rollback** — Medium. Restore the previous Kconfig ownership and stock image if core selection or dependencies drift.
