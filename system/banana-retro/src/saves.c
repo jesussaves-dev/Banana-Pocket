@@ -425,7 +425,7 @@ static int legacy_file(const char *directory,const char *stem,const char *suffix
 {
 	int n=snprintf(path,PATH_MAX,"%s/%s.%s",directory,stem,suffix);
 	if(n<=0||n>=PATH_MAX)return -1;
-	int fd=open(path,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
+	int fd=open(path,O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
 	if(fd<0)return errno==ENOENT?0:-1;
 	struct stat st;bool valid=fstat(fd,&st)==0&&S_ISREG(st.st_mode)&&st.st_size>=0&&
 		(uintmax_t)st.st_size==(uintmax_t)expected;
@@ -468,7 +468,7 @@ static bool stat_same_file(const struct stat *a,const struct stat *b)
 }
 static bool legacy_read(const char *path,unsigned char *out,size_t size,unsigned char hash[HASH_SIZE])
 {
-	int fd=open(path,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);if(fd<0)return false;
+	int fd=open(path,O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);if(fd<0)return false;
 	struct stat before,after;bool ok=fstat(fd,&before)==0&&S_ISREG(before.st_mode)&&before.st_size>=0&&
 		(uintmax_t)before.st_size==(uintmax_t)size;
 	size_t off=0;while(ok&&off<size){ssize_t n=read(fd,out+off,size-off);if(n>0)off+=(size_t)n;else if(n<0&&errno==EINTR)continue;else ok=false;}
@@ -709,7 +709,7 @@ bool saves_resume_record(struct saves *s)
 }
 static bool resume_marker_hash(struct saves *s,char out[65])
 {
-	int fd=openat(s->directory_fd,"RESUME",O_RDONLY|O_CLOEXEC|O_NOFOLLOW);if(fd<0)return false;
+	int fd=openat(s->directory_fd,"RESUME",O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);if(fd<0)return false;
 	char data[96];struct stat st;
 	if(fstat(fd,&st)<0||!S_ISREG(st.st_mode)||(st.st_size!=3&&st.st_size!=68)){close(fd);return false;}
 	size_t size=(size_t)st.st_size,off=0;while(off<size){ssize_t n=read(fd,data+off,size-off);if(n>0)off+=(size_t)n;else if(n<0&&errno==EINTR)continue;else{close(fd);return false;}}
@@ -720,13 +720,42 @@ static bool resume_marker_hash(struct saves *s,char out[65])
 		hex_digest(m.checkpoint_hash,out);return true;}
 	memcpy(out,data+3,64);out[64]=0;return true;
 }
+static bool resume_generation(struct saves *s,struct manifest *m,char checkpoint_hash[65])
+{
+	checkpoint_hash[0]=0;
+	if(!resume_marker_hash(s,checkpoint_hash)||!find_generation(s,m)||!m->checkpoint_size)
+		return false;
+	char current_hash[65];
+	hex_digest(m->checkpoint_hash,current_hash);
+	return memcmp(checkpoint_hash,current_hash,sizeof(current_hash))==0;
+}
 bool saves_resume_available(struct saves *s,char checkpoint_hash[65])
 {
 	if(!s||!checkpoint_hash||flock(s->directory_fd,LOCK_SH)<0)return false;
-	checkpoint_hash[0]=0;char marker_hash[65];bool ok=resume_marker_hash(s,marker_hash);
-	if(ok){memcpy(checkpoint_hash,marker_hash,sizeof(marker_hash));struct manifest m={0};
-		ok=find_generation(s,&m)&&m.checkpoint_size>0;
-		if(ok){char current_hash[65];hex_digest(m.checkpoint_hash,current_hash);ok=strcmp(marker_hash,current_hash)==0;}}
+	struct manifest m;
+	bool ok=resume_generation(s,&m,checkpoint_hash);
+	(void)flock(s->directory_fd,LOCK_UN);return ok;
+}
+bool saves_load_resume(struct saves *s,void *state,size_t size,
+		       void *sram,size_t ss,void *rtc,size_t rs)
+{
+	if(!s||!state||!size||size>MAX_STATE||(!sram&&ss)||(!rtc&&rs)||
+	   ss>MAX_MEMORY||rs>MAX_MEMORY-ss||flock(s->directory_fd,LOCK_SH)<0)
+		return false;
+	struct manifest m;
+	char checkpoint_hash[65];
+	unsigned char *checkpoint=NULL,*memory=NULL;
+	bool ok=resume_generation(s,&m,checkpoint_hash)&&m.checkpoint_size==size&&
+		m.sram_size==ss&&m.rtc_size==rs&&
+		load_candidate_payload(s,&m,"memory",ss+rs,m.memory_hash,&memory)&&
+		load_candidate_payload(s,&m,"checkpoint",size,m.checkpoint_hash,&checkpoint);
+	if(ok){
+		memcpy(state,checkpoint,size);
+		if(ss)memcpy(sram,memory,ss);
+		if(rs)memcpy(rtc,memory+ss,rs);
+	}
+	free(checkpoint);
+	free(memory);
 	(void)flock(s->directory_fd,LOCK_UN);return ok;
 }
 bool saves_resume_clear_if(struct saves *s,const char checkpoint_hash[65])

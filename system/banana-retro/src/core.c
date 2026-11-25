@@ -746,8 +746,7 @@ bool core_persistence_restore_checkpoint(struct saves *saves)
     if (!state_size || state_size > 256u * 1024u * 1024u) return false;
     void *state = malloc(state_size);
     if (!state) return false;
-    bool ok = saves_load_checkpoint(saves, state, state_size);
-    if (ok) ok = saves_load_memory(saves,
+    bool ok = saves_load_resume(saves, state, state_size,
         session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sram_size,
         session.api.retro_get_memory_data(RETRO_MEMORY_RTC), rtc_size);
     if (ok) ok = saves_state_restore(persistence_unserialize, &session.api, state, state_size);

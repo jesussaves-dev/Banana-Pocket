@@ -46,6 +46,9 @@ bool saves_commit_checkpoint(struct saves *saves, const void *sram, size_t sram_
 		const void *rtc, size_t rtc_size, const void *checkpoint, size_t checkpoint_size);
 bool saves_resume_record(struct saves *saves);
 bool saves_resume_available(struct saves *saves, char checkpoint_hash[65]);
+/* Load the marked checkpoint and memory from one verified generation. */
+bool saves_load_resume(struct saves *saves, void *state, size_t state_size,
+		void *sram, size_t sram_size, void *rtc, size_t rtc_size);
 bool saves_resume_clear(struct saves *saves);
 bool saves_resume_clear_if(struct saves *saves, const char checkpoint_hash[65]);
 bool saves_commit(struct saves *saves, const void *sram, size_t sram_size,
