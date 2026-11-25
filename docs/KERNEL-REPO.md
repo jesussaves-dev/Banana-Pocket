@@ -1,36 +1,35 @@
 # banana-linux: the kernel as a git branch (K3)
 
 The kernel Banana ships is mainline Linux plus a stack of Banana patches. Since K3 (kernel 0.4) that stack lives as
-commits in **banana-linux**, <https://github.com/jesussaves-dev/banana-linux>, a fork of torvalds/linux:
+commits in **banana-linux**, <https://github.com/jesussaves-dev/banana-linux>, a fork of torvalds/linux.
 
-| ref | what |
-|---|---|
-| `v7.2` | mainline, as Linus tagged it |
-| branch `banana-7.2` | `v7.2` + the Banana commits, each with its original author |
-| tag `banana-7.2-N` | a released state of that branch; `N` goes up each time the patch dir is regenerated |
+[`KERNEL_SOURCE`](../buildroot/board/retroid-pocket-classic/KERNEL_SOURCE) pins the mainline base and the exact
+Banana tag used to generate `linux-patches/`. The current line is `v7.3` / `banana-7.3`; the tag in `KERNEL_SOURCE`,
+not the branch tip, identifies the shipped patch stack. The [board defconfig](../buildroot/configs/banana_retroid_pocket_classic_defconfig)
+selects the matching mainline tarball and applies the generated patches via `BR2_LINUX_KERNEL_PATCH`.
+Don't edit a generated patch directly: change its commit in banana-linux and regenerate.
 
-`buildroot/board/retroid-pocket-classic/linux-patches/` is **generated** from that tag, so Buildroot keeps applying a
-patch dir on top of the 7.2 tarball as it always has (`BR2_LINUX_KERNEL_PATCH`). Which tag the dir comes from is
-written down in `buildroot/board/retroid-pocket-classic/KERNEL_SOURCE`. Don't edit a patch in the dir: change the
-commit in banana-linux and regenerate.
-
-`git log --format='%an' v7.2..banana-7.2 | sort | uniq -c` shows whose work the stack is: what is ours (Tom, Banana,
-Jorre) and what came from other ports (sunshineinabox, ROCKNIX, Batocera and others) and is still to be upstreamed or replaced.
+From the BananaOS root, source `KERNEL_SOURCE` as shown below. With both refs fetched in the approved kernel checkout,
+`git -C "$kernel_repo" log --format='%an' "$BANANA_LINUX_BASE..$BANANA_LINUX_TAG" | sort | uniq -c` counts authors
+of the patch stack actually pinned by the board.
 
 ## Changing a patch
 
-```sh
-git clone --depth 1 --branch banana-7.2 https://github.com/jesussaves-dev/banana-linux ~/banana-linux
-cd ~/banana-linux && git fetch --depth 1 origin tag v7.2     # the base, for v7.2..
-# edit, then either a new commit, or fix an old one:
-git commit --fixup=<commit> && git rebase -i --autosquash v7.2
-git tag -a banana-7.2-2 -m "banana-7.2-2: <what changed>"
-git push origin banana-7.2 banana-7.2-2                       # (--force-with-lease after a rebase)
+Kernel patch changes require evidence and explicit authorization; external Git changes also require authorization.
+Follow the [engineering rules](ENGINEERING-RULES.md). In an approved kernel checkout, work from the branch matching the pinned
+base (`banana-7.3` for `v7.3`). Fetch the base, make the change there, and create a new release tag on that line.
+Publish the tag only if authorized; CI needs to be able to fetch it.
 
-cd ~/banana-rpc
-tools/kernel-patches-gen.sh ~/banana-linux v7.2 banana-7.2-2  # rewrites linux-patches/
-# bump BANANA_LINUX_TAG in KERNEL_SOURCE, build (make retroid-pocket-classic), boot (tools/qemu-boot.sh), commit
+From the BananaOS checkout, update `BANANA_LINUX_TAG` in `KERNEL_SOURCE` to the new tag, then regenerate with
+both refs explicit. The generator's default base is still `v7.2`.
+
+```sh
+. buildroot/board/retroid-pocket-classic/KERNEL_SOURCE
+tools/kernel-patches-gen.sh "$kernel_repo" "$BANANA_LINUX_BASE" "$BANANA_LINUX_TAG"
 ```
+
+Here `kernel_repo` is the path to the approved checkout with both refs present. Build and verify only within
+authorized scope; QEMU must be explicitly required and physical testing needs separate approval.
 
 CI (`kernel` job) checks that `linux-patches/` is exactly what `KERNEL_SOURCE`'s tag generates. If you forget to push
 the tag or bump the file, the job fails.
@@ -69,6 +68,8 @@ matches the old dir's too. Authorship:
 
 ## Moving to a new mainline (rebase recipe)
 
+The commands below record the historical migration from `v7.2` to `v7.3`; they are not the current patch workflow.
+
 ```sh
 cd ~/banana-linux
 git fetch --depth 1 origin tag v7.3
@@ -102,9 +103,9 @@ The next rebase writes its own notes here. Keep a row until the patch is gone.
 
 ## CI
 
-The `kernel` job in `.github/workflows/ci.yml` runs on every push and pull request on the `kernel` branch. Elsewhere it
-runs when kernel inputs change (`linux-*`, `dts/`, `KERNEL_*`, the defconfigs, `tools/qemu-boot.sh`,
-`tools/kernel-*`). It:
+The `kernel` job in `.github/workflows/ci.yml` runs on manual dispatch and on pushes or pull requests targeting
+the `kernel` branch. Elsewhere it runs when kernel inputs or the workflow change, or when it cannot resolve the
+comparison base. It:
 
 1. fetches `KERNEL_SOURCE`'s base and tag (bare, `--depth 1` and `--depth <patches + 1>`), and checks the dir with
    `tools/kernel-patches-gen.sh --check`;
