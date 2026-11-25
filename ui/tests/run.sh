@@ -48,7 +48,7 @@ ${CXX:-c++} -O2 -std=c++17 -o "$OUT/rotation-test" "$HERE/tests/rotation-test.cp
 [ "$fail" = 1 ] || "$OUT/rotation-test" > "$OUT/rotation.log" 2>&1 || { echo "FAIL: rotation-test"; cat "$OUT/rotation.log"; fail=1; }
 
 # Native launch metadata must bind to the launch token, exact ROM, wall-clock attempt and PID start identity.
-${CXX:-c++} -O2 -std=c++17 -I"$HERE/src" -o "$OUT/native-control-session-test" \
+${CXX:-c++} -O2 -std=c++17 -I"$HERE/src" -I"$HERE/../system/bananad/include" -o "$OUT/native-control-session-test" \
     "$HERE/tests/native-control-session-test.cpp" "$HERE/src/native_control.cpp" 2> "$OUT/native-control-session-build.log" ||
     { echo "FAIL: can't build native-control-session-test (see $OUT/native-control-session-build.log)"; fail=1; }
 if [ "$fail" != 1 ]; then
@@ -57,10 +57,10 @@ if [ "$fail" != 1 ]; then
         { echo "FAIL: native-control-session-test"; cat "$OUT/native-control-session.log"; fail=1; }
 fi
 ${CC:-cc} -O2 -std=c11 -Wall -Wextra -Werror -I"$HERE/../system/banana-retro/src" \
-    -I"$HERE/../system/banana-retro/include" -c "$HERE/../system/banana-retro/src/control.c" \
+    -I"$HERE/../system/bananad/include" -c "$HERE/../system/banana-retro/src/control.c" \
     -o "$OUT/native-control-server.o" 2> "$OUT/native-control-server-build.log" ||
     { echo "FAIL: can't build native control server fixture (see $OUT/native-control-server-build.log)"; fail=1; }
-${CXX:-c++} -O2 -std=c++17 -pthread -I"$HERE/src" -I"$HERE/../system/banana-retro/include" -o "$OUT/native-control-protocol-test" \
+${CXX:-c++} -O2 -std=c++17 -pthread -I"$HERE/src" -I"$HERE/../system/bananad/include" -o "$OUT/native-control-protocol-test" \
     "$HERE/tests/native-control-protocol-test.cpp" "$HERE/src/native_control.cpp" "$OUT/native-control-server.o" \
     2> "$OUT/native-control-protocol-build.log" ||
     { echo "FAIL: can't build native-control-protocol-test (see $OUT/native-control-protocol-build.log)"; fail=1; }

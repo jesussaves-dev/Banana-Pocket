@@ -25,12 +25,13 @@ WAYLAND_SCANNER ?= $(shell command -v wayland-scanner 2>/dev/null || echo waylan
 WAYLAND_PROTOCOLS ?= $(shell d=$$($(PKG_CONFIG) --variable=pkgdatadir wayland-protocols 2>/dev/null); test -f "$$d/stable/xdg-shell/xdg-shell.xml" && echo "$$d" || echo /usr/share/wayland-protocols)
 WLDIR = build/wayland
 BANANA_RETRO_XML ?= ../system/banana-retro/protocol/banana-retro-v1.xml
-BANANA_RETRO_INCLUDE ?= $(dir $(BANANA_RETRO_XML))../include
+# the native-control wire header is bananad's (shared with banana-retro); Buildroot points this at the staged copy
+BANANA_CONTROL_INCLUDE ?= ../system/bananad/include
 WL_C = $(WLDIR)/xdg-shell-protocol.c $(WLDIR)/linux-dmabuf-unstable-v1-protocol.c $(WLDIR)/wayland-drm-protocol.c $(WLDIR)/viewporter-protocol.c $(WLDIR)/banana-retro-protocol.c
 WL_H = $(WLDIR)/xdg-shell-server-protocol.h $(WLDIR)/linux-dmabuf-unstable-v1-server-protocol.h $(WLDIR)/wayland-drm-server-protocol.h $(WLDIR)/viewporter-server-protocol.h $(WLDIR)/banana-retro-server-protocol.h
 WL_O = $(WL_C:.c=.o) $(WLDIR)/qrcodegen.o
 override CXXFLAGS += -I$(WLDIR) -Ithird_party
-override CXXFLAGS += -I$(BANANA_RETRO_INCLUDE)
+override CXXFLAGS += -I$(BANANA_CONTROL_INCLUDE)
 
 $(WLDIR)/xdg-shell-protocol.c: $(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml
 	@mkdir -p $(WLDIR)
