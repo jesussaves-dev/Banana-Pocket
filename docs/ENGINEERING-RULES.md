@@ -253,6 +253,19 @@ Full image builds are not mandatory for every source change.
 
 Capture verbose output without masking the actual command failure status.
 
+### Editor Language Server (clangd)
+
+```sh
+make compdb
+```
+
+- Regenerates `compile_commands.json` (ignored) for Banana UI, bananad and banana-retro, and the Wayland protocol code it includes under `.cache/banana-gen/` (ignored). It builds nothing.
+- Commands come from each package Makefile's `make -n -B`, so Makefile edits flow through. Sources and the IPC header `system/bananad/include` are this working tree's; Buildroot's rsynced build copies and the staged `banana-retro-control.h` go stale between image builds and are not used.
+- The compiler is Clang with `--target`, `--sysroot` and `--gcc-toolchain` for the existing Buildroot toolchain; clangd needs no `--query-driver`. `.clangd` removes `-Werror` and `-Wshadow=local`; the database keeps the Makefiles' other flags, including `-O2`.
+- The generator fails if the Buildroot output (`.config`, `host/bin`, sysroot), `clang`, a protocol XML, or any production translation unit is missing.
+- Rerun after a Makefile, Buildroot configuration or protocol XML change, or when a translation unit is added or renamed. Editing an existing source needs no rerun.
+- `make agent-map` and host-built tests are unaffected; a host compilation database is not provided.
+
 ### QEMU Verification
 
 When explicitly required by the task, use the generated image:

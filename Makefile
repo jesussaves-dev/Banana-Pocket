@@ -9,6 +9,8 @@
 #                                 handover); ARGS=--listen also plays the cue. BANANA_HOST says where it is
 #   make bench                    a host measurement baseline (scan/start-up/frame cost) at both canvas sizes
 #   make local-rebuild            rebuild the in-tree packages (banana-ui, bananad) before a board build
+#   make compdb                   compile_commands.json for clangd (banana-ui, bananad, banana-retro) from this tree's
+#                                 sources and the existing Buildroot toolchain, sysroot and build output; runs no build
 #   make menuconfig-retroid-pocket-classic / linux-menuconfig-retroid-pocket-classic ...   any Buildroot target
 #
 # The first image build downloads Buildroot (below) and everything it builds: expect an hour or more.
@@ -172,6 +174,11 @@ check-local-build:
 	if [ -n "$$newer" ]; then echo "stale image: $$newer is newer than the image's banana-ui -- run make retroid-pocket-classic"; exit 1; fi; \
 	echo "the image's banana-ui is newer than every source"
 
+# The editor's compilation database (tools/gen-compile-commands.py): reads the Makefiles' `make -n -B` commands for
+# this tree's sources, aimed at the Buildroot toolchain. The generated Wayland headers go to .cache/banana-gen.
+compdb:
+	python3 tools/gen-compile-commands.py --out-dir "$(OUT)"
+
 # Regenerate the Source Map block in AGENTS.md: file:line: symbol for the core files. Line numbers drift
 # after edits; paste the fresh ranges over the snapshot in AGENTS.md.
 agent-map:
@@ -184,4 +191,4 @@ clean:
 	rm -rf $(OUT)
 	$(MAKE) -C ui clean
 
-.PHONY: $(BOARDS) ui test check-kver probe sound-test bench local-rebuild check-local-build agent-map clean
+.PHONY: $(BOARDS) ui test check-kver probe sound-test bench local-rebuild check-local-build agent-map compdb clean

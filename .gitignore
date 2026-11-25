@@ -50,3 +50,7 @@ __pycache__/
 /system/banana-retro/*-protocol.h
 /system/banana-retro/fixture*
 /system/banana-retro/hide-*.map
+
+# clangd: the compilation database (make compdb), the generated Wayland headers it points at, and clangd's index
+/compile_commands.json
+/.cache/

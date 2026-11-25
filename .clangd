@@ -1,0 +1,7 @@
+# compile_commands.json (make compdb) holds the Makefiles' GCC command lines, aimed at Buildroot's toolchain with
+# Clang's --target/--sysroot/--gcc-toolchain. Only clangd reads this file; clang and clang-tidy do not, so a run of
+# either against the database sees the flags unchanged.
+#   -Werror          Clang warns where GCC does not; keep those as editor warnings, not errors
+#   -Wshadow=local   a GCC-only spelling that Clang does not recognise
+CompileFlags:
+  Remove: [-Werror, -Wshadow=local]
