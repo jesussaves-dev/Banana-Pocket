@@ -4,6 +4,20 @@
 
 #include <assert.h>
 #include <dlfcn.h>
+#include <sys/wait.h>
+
+static bool fail_resume_unlink;
+int __real_unlinkat(int dirfd, const char *path, int flags);
+
+int __wrap_unlinkat(int dirfd, const char *path, int flags)
+{
+    if (fail_resume_unlink && strcmp(path, "RESUME") == 0) {
+        fail_resume_unlink = false;
+        errno = EIO;
+        return -1;
+    }
+    return __real_unlinkat(dirfd, path, flags);
+}
 
 struct fixture {
     uint8_t *sram, *rtc;
@@ -96,7 +110,72 @@ static void check_options(struct native_runtime *runtime, const struct fixture *
     assert(fixture->serialize_calls() == serialized);
 }
 
-static void check_quit_and_sleep(struct native_runtime *runtime, const struct fixture *fixture)
+static void check_battery_startup(char **argv, const char *expected)
+{
+    pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        assert(setenv("BANANA_RETRO_NATIVE_DIR", argv[5], 1) == 0);
+        assert(setenv("BANANA_RETRO_TEST_PERSISTENCE", "1", 1) == 0);
+        assert(setenv("BANANA_RETRO_TEST_QUICK_RESUME", "1", 1) == 0);
+        assert(setenv("BANANA_RETRO_TEST_EXPECT_INITIAL_BATTERY", expected, 1) == 0);
+        execl(argv[0], argv[0], argv[3], argv[4], "--frames", "1", (char *)NULL);
+        _exit(127);
+    }
+    int status;
+    assert(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+           WEXITSTATUS(status) == EXIT_SUCCESS);
+}
+
+static void check_battery_only_shutdown(struct native_runtime *runtime, const struct fixture *fixture,
+                                        char **argv, bool interrupt)
+{
+    *fixture->sram = 0x11;
+    *fixture->rtc = 0x21;
+    assert(power_checkpoint(runtime));
+    char token[65];
+    assert(saves_resume_probe(runtime->saves, token) == SAVES_RESUME_READY);
+
+    *fixture->sram = 0x12;
+    *fixture->rtc = 0x22;
+    assert(setenv("BANANA_RETRO_TEST_REJECT_SERIALIZE", "1", 1) == 0);
+    /* Battery, manifest, then the resume cutoff. A failed cutoff fsync must
+     * leave the old checkpoint eligible and fail the shutdown. */
+    saves_test_fail_event(SAVES_TEST_FILE_FSYNC, 3);
+    assert(!control_shutdown(runtime) && !runtime->stopped && !runtime->committed);
+    assert_resume_token(runtime->saves, token);
+    if (interrupt) {
+        const enum saves_test_event boundaries[] = {
+            SAVES_TEST_AFTER_GENERATION_RENAME, SAVES_TEST_AFTER_CURRENT_RENAME,
+        };
+        for (unsigned i = 0; i < sizeof(boundaries) / sizeof(boundaries[0]); ++i) {
+            pid_t child = fork();
+            assert(child >= 0);
+            if (child == 0) {
+                saves_close(runtime->saves);
+                runtime->saves = open_saves_profile(argv[5], argv[3], argv[4]);
+                assert(runtime->saves);
+                saves_test_crash_event(boundaries[i]);
+                (void)control_shutdown(runtime);
+                _exit(2);
+            }
+            int status;
+            assert(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+                   WEXITSTATUS(status) == 86);
+            if (i == 0) assert_resume_token(runtime->saves, token);
+        }
+    } else {
+        fail_resume_unlink = true;
+        assert(control_shutdown(runtime) && runtime->stopped && runtime->committed);
+        assert(!fail_resume_unlink);
+    }
+    assert(saves_resume_probe(runtime->saves, token) == SAVES_RESUME_NONE);
+    assert(saves_checkpoint_present(runtime->saves));
+    check_battery_startup(argv, "12:22");
+}
+
+static void check_quit_and_sleep(struct native_runtime *runtime, const struct fixture *fixture,
+                                 char **argv)
 {
     uint8_t *sram = fixture->sram, *rtc = fixture->rtc;
     *sram = 0x33;
@@ -117,25 +196,29 @@ static void check_quit_and_sleep(struct native_runtime *runtime, const struct fi
     *rtc = 0x45;
     assert(setenv("BANANA_RETRO_TEST_REJECT_SERIALIZE", "1", 1) == 0);
     unsigned serialized = fixture->serialize_calls();
-    assert(!control_pause(runtime, BANANA_RETRO_CTL_OWNER_SLEEP, 1, true));
-    ++serialized;
-    assert(!runtime->sleep_paused && fixture->serialize_calls() == serialized);
-    assert_resume_token(runtime->saves, token);
-    *sram = 0;
-    *rtc = 0;
-    assert(core_persistence_load(runtime->saves, -1) == CORE_LOAD_OK);
-    assert(*sram == 0x35 && *rtc == 0x45);
-
-    *sram = 0x36;
-    *rtc = 0x46;
     saves_test_fail_event(SAVES_TEST_CURRENT_RENAME, 1);
     assert(!control_shutdown(runtime) && !runtime->stopped && !runtime->committed);
     assert_resume_token(runtime->saves, token);
-    assert(fixture->serialize_calls() == serialized);
-    assert(control_shutdown(runtime) && runtime->stopped && runtime->committed);
-    assert(fixture->serialize_calls() == serialized + 1);
+    assert(!control_pause(runtime, BANANA_RETRO_CTL_OWNER_SLEEP, 1, true));
+    assert(!runtime->sleep_paused && fixture->serialize_calls() == serialized + 2);
     assert(saves_resume_probe(runtime->saves, token) == SAVES_RESUME_NONE);
     assert(saves_checkpoint_present(runtime->saves));
+    check_battery_startup(argv, "35:45");
+}
+
+static void check_option_mutation_during_restore(struct native_runtime *runtime,
+                                                 const struct fixture *fixture)
+{
+    assert(control_save_state(runtime, 0));
+    unsigned restored = fixture->unserialize_calls();
+    assert(setenv("BANANA_RETRO_TEST_SET_OPTION_DURING_UNSERIALIZE", "1", 1) == 0);
+    assert(!control_load_state(runtime, 0));
+    assert(runtime->failed_load && runtime->stopped);
+    /* Another ready peer can request persistence in the same dispatch cycle. */
+    assert(!control_flush(runtime) && !power_checkpoint(runtime) && !control_shutdown(runtime));
+    assert(fixture->unserialize_calls() == restored + 1);
+    assert(fixture->effective_mode() == 1);
+    assert(strcmp(core_option_get("fixture_mode"), "first") == 0);
 }
 
 static void check_transient_resume(struct native_runtime *runtime, const struct fixture *fixture)
@@ -206,9 +289,10 @@ int main(int argc, char **argv)
         return banana_retro_main(argc, argv);
 
     const char *mode = argv[2];
+    bool late_option = strcmp(mode, "option-during-restore") == 0;
     bool options = strncmp(mode, "options-", 8) == 0;
     bool legacy = strncmp(mode, "legacy-", 7) == 0;
-    if (options || legacy)
+    if (options || legacy || late_option)
         assert(setenv("BANANA_RETRO_FIXTURE_MODE", "persistence-options", 1) == 0);
     assert(core_load(argv[3], argv[4], NULL));
     struct saves *saves = open_saves_profile(argv[5], argv[3], argv[4]);
@@ -233,28 +317,26 @@ int main(int argc, char **argv)
     const bool quit = strcmp(mode, "quit") == 0;
     const bool transient = strcmp(mode, "transient-resume") == 0;
     if (options) check_options(&runtime, &fixture, strcmp(mode, "options-core") == 0);
+    else if (late_option) check_option_mutation_during_restore(&runtime, &fixture);
     else if (legacy) check_legacy_slot(&runtime, &fixture, (unsigned)(mode[7] - '0'));
-    else if (quit) check_quit_and_sleep(&runtime, &fixture);
+    else if (quit) check_quit_and_sleep(&runtime, &fixture, argv);
+    else if (strcmp(mode, "battery-crash") == 0 || strcmp(mode, "battery-unlink") == 0)
+        check_battery_only_shutdown(&runtime, &fixture, argv, strcmp(mode, "battery-crash") == 0);
     else {
         assert(transient);
         check_transient_resume(&runtime, &fixture);
     }
 
     assert(core_release());
-    if (quit || options) {
+    if (options) {
         /* Reopen the store and load through the normal startup path. */
         saves_close(saves);
         assert(dlclose(library) == 0);
         assert(core_load(argv[3], argv[4], NULL));
         library = dlopen(argv[3], RTLD_NOW | RTLD_LOCAL);
         assert(library);
-        fixture_export(library, "retro_get_memory_data", &memory, sizeof(memory));
         saves = open_saves_profile(argv[5], argv[3], argv[4]);
-        assert(saves && load_persistence(saves, options ? 0 : -1, true));
-        if (quit) {
-            assert(*(uint8_t *)memory(RETRO_MEMORY_SAVE_RAM) == 0x36);
-            assert(*(uint8_t *)memory(RETRO_MEMORY_RTC) == 0x46);
-        }
+        assert(saves && load_persistence(saves, 0, true));
         assert(core_release());
     }
     assert(dlclose(library) == 0);

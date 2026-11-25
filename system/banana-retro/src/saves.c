@@ -44,7 +44,6 @@ static bool test_event(enum saves_test_event event)
 
 struct saves {
 	int directory_fd;
-	uint64_t last_commit_generation;
 	unsigned char core[HASH_SIZE], content[HASH_SIZE], path[HASH_SIZE], options[HASH_SIZE];
 	unsigned char state_options[HASH_SIZE];
 	char core_file[NAME_MAX + 1], core_name[NAME_MAX + 1], content_file[NAME_MAX + 1];
@@ -262,14 +261,50 @@ static bool open_generation(int rootfd,uint64_t g,int *generation_fd)
 	*generation_fd=openat(rootfd,name,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
 	return *generation_fd>=0;
 }
+static enum file_result current_generation_status(int rootfd,uint64_t *generation,bool *has_floor)
+{
+	char buf[32];
+	int fd=openat(rootfd,"CURRENT",O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
+	if(fd<0)return missing_or_io_error();
+	struct stat st;
+	enum file_result result=FILE_ERROR;
+	if(fstat(fd,&st)==0)
+		result=S_ISREG(st.st_mode)&&st.st_size>0&&st.st_size<(off_t)sizeof(buf) ?
+			read_bytes(fd,buf,(size_t)st.st_size) : FILE_INVALID;
+	if(close(fd)<0)return FILE_ERROR;
+	if(result!=FILE_OK)return result;
+	size_t size=(size_t)st.st_size;
+	buf[size]=0;
+	char *end;errno=0;unsigned long long v=strtoull(buf,&end,10);
+	if(errno||!v||end==buf||end!=buf+size-1||*end!='\n')return FILE_INVALID;
+	*generation=(uint64_t)v;
+	if(has_floor)*has_floor=buf[0]=='+';
+	return FILE_OK;
+}
+
 static bool current_generation(int rootfd,uint64_t *generation)
 {
-	char buf[32];int fd=openat(rootfd,"CURRENT",O_RDONLY|O_CLOEXEC|O_NOFOLLOW);if(fd<0)return false;
-	struct stat st;if(fstat(fd,&st)<0||!S_ISREG(st.st_mode)||st.st_size<1||st.st_size>= (off_t)sizeof(buf)){close(fd);return false;}
-	size_t size=(size_t)st.st_size,off=0;while(off<size){ssize_t n=read(fd,buf+off,size-off);if(n>0)off+=(size_t)n;else if(n<0&&errno==EINTR)continue;else{close(fd);return false;}}
-	if(close(fd)<0)return false;
-	buf[size]=0;
-	char *end;errno=0;unsigned long long v=strtoull(buf,&end,10);if(errno||end==buf||*end!='\n'||end[1]!='\0')return false;*generation=(uint64_t)v;return true;
+	return current_generation_status(rootfd,generation,NULL)==FILE_OK;
+}
+
+/* A leading '+' tells newer readers to require the cutoff file. Older readers
+ * still parse the same generation number and use the usual battery and slot files. */
+static enum file_result read_resume_floor(struct saves *s,uint64_t *floor)
+{
+	uint64_t generation;
+	bool has_floor;
+	*floor=0;
+	enum file_result result=current_generation_status(s->directory_fd,&generation,&has_floor);
+	if(result!=FILE_OK||!has_floor)return result;
+	int gfd;
+	if(!open_generation(s->directory_fd,generation,&gfd))return missing_or_io_error();
+	unsigned char data[8+HASH_SIZE],hash[HASH_SIZE];
+	result=read_exact_status(gfd,"resume-floor",data,sizeof(data));
+	if(close(gfd)<0)return FILE_ERROR;
+	if(result!=FILE_OK)return result;
+	digest_bytes(data,8,hash);
+	*floor=get64(data);
+	return *floor&&*floor<=generation&&memcmp(hash,data+8,HASH_SIZE)==0 ? FILE_OK : FILE_INVALID;
 }
 static DIR *directory_stream(int rootfd)
 {
@@ -754,7 +789,8 @@ static bool legacy_receipt(struct saves *s,const char *root,size_t ss,size_t rs,
 }
 static bool saves_commit_internal(struct saves *s,const void *sram,size_t ss,const void *rtc,size_t rs,
 				  int slot,const void *state,size_t state_size,
-				  const void *checkpoint,size_t checkpoint_size,struct manifest *published);
+				  const void *checkpoint,size_t checkpoint_size,bool battery_only,
+				  struct manifest *published);
 static enum saves_legacy_result legacy_prepare(struct saves *s,const char *root,size_t ss,size_t rs,
 					       const char *expected_receipt,char receipt[65],
 					       unsigned char **memory_out)
@@ -787,7 +823,7 @@ enum saves_legacy_result saves_legacy_import(struct saves *s,const char *root,si
 	unsigned char *memory=NULL;char generated[65];
 	enum saves_legacy_result result=legacy_prepare(s,root,ss,rs,receipt,generated,&memory);
 	if(result==SAVES_LEGACY_READY){
-		bool committed=saves_commit_internal(s,memory,ss,memory+ss,rs,-1,NULL,0,NULL,0,NULL);
+		bool committed=saves_commit_internal(s,memory,ss,memory+ss,rs,-1,NULL,0,NULL,0,false,NULL);
 		result=committed?SAVES_LEGACY_READY:SAVES_LEGACY_INVALID;
 	}
 	free(memory);(void)flock(s->directory_fd,LOCK_UN);return result;
@@ -816,12 +852,21 @@ bool saves_load_state(struct saves *s,unsigned slot,void *data,size_t size)
 }
 static bool saves_commit_internal(struct saves *s,const void *sram,size_t ss,const void *rtc,size_t rs,
 				  int slot,const void *state,size_t state_size,
-				  const void *checkpoint,size_t checkpoint_size,struct manifest *published)
+				  const void *checkpoint,size_t checkpoint_size,bool battery_only,
+				  struct manifest *published)
 {
 	if(!s||(!sram&&ss)||(!rtc&&rs)||ss>MAX_MEMORY||rs>MAX_MEMORY||ss+rs>MAX_MEMORY||slot>=(int)SAVES_STATE_SLOTS||slot< -1||(!state&&state_size)||state_size>MAX_STATE||(slot<0&&state_size)||(slot>=0&&state_size==0)||(!checkpoint&&checkpoint_size)||checkpoint_size>MAX_STATE)return false;
 	struct manifest prev={0};bool have=find_generation(s,&prev);
 	if (!have && !saves_has_no_generation(s)) return false;
 	uint64_t highest=highest_generation(s->directory_fd);uint64_t generation=highest> (have?prev.generation:0)?highest+1:(have?prev.generation+1:1);if(generation==0)return false;
+	uint64_t floor=0;
+	if(battery_only)floor=generation;
+	else if(have){
+		enum file_result result=read_resume_floor(s,&floor);
+		if(result==FILE_ERROR)return false;
+		/* Recovery from a damaged CURRENT starts from the validated battery data. */
+		if(result==FILE_INVALID)floor=generation-1;
+	}
 	struct manifest m={.generation=generation,.sram_size=ss,.rtc_size=rs,.checkpoint_size=checkpoint_size};memcpy(m.core,s->core,HASH_SIZE);memcpy(m.content,s->content,HASH_SIZE);memcpy(m.path,s->path,HASH_SIZE);memcpy(m.options,s->options,HASH_SIZE);
 	char temp[64],final[32];int n=-1,tdfd=-1;bool made=false;
 	for(unsigned i=0;i<100;i++){n=snprintf(temp,sizeof(temp),".tmp-%ld-%016" PRIx64 "-%u",(long)getpid(),generation,i);if(n<0||(size_t)n>=sizeof(temp))return false;if(mkdirat(s->directory_fd,temp,0700)==0){made=true;break;}if(errno!=EEXIST)return false;}
@@ -844,6 +889,12 @@ static bool saves_commit_internal(struct saves *s,const void *sram,size_t ss,con
 #ifdef SAVES_TESTING
 	if(ok)test_event(SAVES_TEST_AFTER_MANIFEST_WRITE);
 #endif
+	if(ok&&floor){
+		unsigned char data[8+HASH_SIZE];
+		put64(data,floor);
+		digest_bytes(data,8,data+8);
+		ok=write_file_at(tdfd,"resume-floor",data,sizeof(data));
+	}
 #ifdef SAVES_TESTING
 	if(ok&&test_event(SAVES_TEST_TEMP_DIR_FSYNC))ok=false;
 #endif
@@ -859,7 +910,7 @@ static bool saves_commit_internal(struct saves *s,const void *sram,size_t ss,con
 	if(ok&&test_event(SAVES_TEST_PARENT_DIR_FSYNC))ok=false;
 #endif
 	if(ok&&fsync(s->directory_fd)<0)ok=false;
-	char current_temp[64],text[32];int tn=snprintf(text,sizeof(text),"%" PRIu64 "\n",generation);int cn=snprintf(current_temp,sizeof(current_temp),".CURRENT-%ld-%016" PRIx64,(long)getpid(),generation);
+	char current_temp[64],text[32];int tn=snprintf(text,sizeof(text),"%s%" PRIu64 "\n",floor?"+":"",generation);int cn=snprintf(current_temp,sizeof(current_temp),".CURRENT-%ld-%016" PRIx64,(long)getpid(),generation);
 	if(ok)ok=tn>0&&(size_t)tn<sizeof(text)&&cn>0&&(size_t)cn<sizeof(current_temp)&&write_file_at(s->directory_fd,current_temp,text,(size_t)tn);
 #ifdef SAVES_TESTING
 	if(ok&&test_event(SAVES_TEST_CURRENT_RENAME))ok=false;
@@ -883,9 +934,18 @@ static bool saves_commit_internal(struct saves *s,const void *sram,size_t ss,con
 bool saves_commit(struct saves *s,const void *sram,size_t ss,const void *rtc,size_t rs,int slot,const void *state,size_t state_size)
 {
 	if(!s||flock(s->directory_fd,LOCK_EX)<0)return false;
-	struct manifest m;
-	bool ok=saves_commit_internal(s,sram,ss,rtc,rs,slot,state,state_size,NULL,0,&m);
-	s->last_commit_generation=ok ? m.generation : 0;
+	bool ok=saves_commit_internal(s,sram,ss,rtc,rs,slot,state,state_size,NULL,0,false,NULL);
+	(void)flock(s->directory_fd,LOCK_UN);
+	return ok;
+}
+static bool retire_resume_marker(struct saves *s);
+
+bool saves_commit_battery_only(struct saves *s,const void *sram,size_t ss,const void *rtc,size_t rs)
+{
+	if(!s||flock(s->directory_fd,LOCK_EX)<0)return false;
+	bool ok=saves_commit_internal(s,sram,ss,rtc,rs,-1,NULL,0,NULL,0,true,NULL);
+	/* CURRENT already excludes the old resume. Removing it also helps older readers. */
+	if(ok)(void)retire_resume_marker(s);
 	(void)flock(s->directory_fd,LOCK_UN);
 	return ok;
 }
@@ -915,7 +975,7 @@ bool saves_commit_checkpoint(struct saves *s,const void *sram,size_t ss,const vo
 	if(!s||!checkpoint_size||!saves_checkpoint_options_match(s)||
 	   flock(s->directory_fd,LOCK_EX)<0)return false;
 	struct manifest m;
-	bool ok=saves_commit_internal(s,sram,ss,rtc,rs,-1,NULL,0,checkpoint,checkpoint_size,&m)&&
+	bool ok=saves_commit_internal(s,sram,ss,rtc,rs,-1,NULL,0,checkpoint,checkpoint_size,false,&m)&&
 		publish_resume(s,&m);
 	(void)flock(s->directory_fd,LOCK_UN);
 	return ok;
@@ -951,7 +1011,11 @@ static enum saves_resume_result resume_generation(struct saves *s,struct manifes
 	 * snapshots and their markers for recovery without automatically loading them. */
 	if(marker.version!=RESUME_VERIFIED_OPTIONS||!saves_checkpoint_options_match(s))
 		return SAVES_RESUME_NONE;
-	enum file_result result=load_manifest_status(s,marker.generation,m);
+	uint64_t floor;
+	enum file_result result=read_resume_floor(s,&floor);
+	if(result==FILE_ERROR)return SAVES_RESUME_RETRY;
+	if(result==FILE_INVALID||marker.generation<=floor)return SAVES_RESUME_NONE;
+	result=load_manifest_status(s,marker.generation,m);
 	memcpy(token,marker.hash,sizeof(marker.hash));
 	if(result!=FILE_OK)return resume_file_result(result);
 	char hash[65];
@@ -1024,16 +1088,6 @@ bool saves_resume_clear_if(struct saves *s,const char token[65])
 	bool ok=read_resume_marker(s,&marker);
 	if(ok&&marker.version==RESUME_VERIFIED_OPTIONS&&strcmp(marker.hash,token)==0)
 		ok=retire_resume_marker(s);
-	(void)flock(s->directory_fd,LOCK_UN);
-	return ok;
-}
-
-bool saves_resume_retire(struct saves *s)
-{
-	if(!s||flock(s->directory_fd,LOCK_EX)<0)return false;
-	uint64_t current;
-	bool ok=s->last_commit_generation&&current_generation(s->directory_fd,&current)&&
-		current==s->last_commit_generation&&retire_resume_marker(s);
 	(void)flock(s->directory_fd,LOCK_UN);
 	return ok;
 }

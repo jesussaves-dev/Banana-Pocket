@@ -30,6 +30,7 @@ enum core_load_result {
 /* These wrappers run only between core frames, while the core is quiescent. */
 enum core_load_result core_persistence_load(struct saves *saves, int state_slot);
 bool core_persistence_commit(struct saves *saves, int state_slot);
+bool core_persistence_flush(struct saves *saves, bool battery_only);
 
 enum core_checkpoint_result {
     CORE_CHECKPOINT_OK,

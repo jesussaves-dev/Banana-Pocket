@@ -65,8 +65,9 @@ enum saves_resume_result saves_load_resume(struct saves *saves, const char *toke
 		void *state, size_t state_size,
 		void *sram, size_t sram_size, void *rtc, size_t rtc_size);
 bool saves_resume_clear_if(struct saves *saves, const char token[65]);
-/* Retire resume after this handle's battery commit, if it still owns CURRENT. */
-bool saves_resume_retire(struct saves *saves);
+/* Publish battery memory and supersede all older automatic resume markers. */
+bool saves_commit_battery_only(struct saves *saves, const void *sram, size_t sram_size,
+		const void *rtc, size_t rtc_size);
 bool saves_commit(struct saves *saves, const void *sram, size_t sram_size,
 		  const void *rtc, size_t rtc_size, int state_slot,
 		  const void *state, size_t state_size);

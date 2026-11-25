@@ -136,18 +136,30 @@ static int runtime_run(const char *runtime,const char *core,const char *rom,
 		assert(setenv("BANANA_RETRO_TEST_PERSISTENCE","1",1)==0);
 		if(quick_resume)assert(setenv("BANANA_RETRO_TEST_QUICK_RESUME","1",1)==0);
 		else unsetenv("BANANA_RETRO_TEST_QUICK_RESUME");
-		if(quick_resume==4)assert(setenv("BANANA_RETRO_TEST_REJECT_UNSERIALIZE","1",1)==0);
-		else unsetenv("BANANA_RETRO_TEST_REJECT_UNSERIALIZE");
+		if(quick_resume==4||quick_resume==5)assert(setenv("BANANA_RETRO_TEST_UNSERIALIZE_OOM","1",1)==0);
 		if(signal_exit)assert(setenv("BANANA_RETRO_TEST_WAIT_FOR_SIGNAL","1",1)==0);
 		else unsetenv("BANANA_RETRO_TEST_WAIT_FOR_SIGNAL");
 		char *args[10];int n=0;args[n++]=(char*)runtime;args[n++]=(char*)core;args[n++]=(char*)rom;args[n++]="--frames";args[n++]=signal_exit?"10000":"2";
-		if(state_operation){args[n++]=state_operation==1?"--load-state":"--save-state";args[n++]="0";}args[n]=NULL;
+		if(state_operation){args[n++]=state_operation==1?"--load-state":"--save-state";args[n++]="0";}
+		if(quick_resume==5)args[n++]="--load-battery";
+		args[n]=NULL;
 		execv(runtime,args);_exit(127);
 	}
 	close(pipes[1]);bool saw_run=false;char line[256];size_t used=0;char c;
-	while(read(pipes[0],&c,1)==1){if(c=='\n'){line[used]=0;if(strstr(line,quick_resume==2?"fixture run 3":"fixture run 1")){saw_run=true;break;}used=0;}else if(used+1<sizeof(line))line[used++]=c;}
+	bool expect_no_run=quick_resume==4||quick_resume==6;
+	while(read(pipes[0],&c,1)==1){
+		if(c!='\n'){if(used+1<sizeof(line))line[used++]=c;continue;}
+		line[used]=0;
+		if(!strncmp(line,"fixture run ",12)){
+			if(quick_resume&&!expect_no_run)
+				assert(!strcmp(line,quick_resume==2?"fixture run 3":"fixture run 1"));
+			saw_run=true;
+			break;
+		}
+		used=0;
+	}
 	if(signal_exit){assert(saw_run);assert(kill(pid,SIGTERM)==0);}
-	if(quick_resume==4||quick_resume==6)assert(!saw_run);
+	if(expect_no_run)assert(!saw_run);
 	else if(quick_resume)assert(saw_run);
 	while(read(pipes[0],&c,1)==1){}
 	close(pipes[0]);int status;assert(waitpid(pid,&status,0)==pid);assert(WIFEXITED(status));	return WEXITSTATUS(status);
@@ -248,21 +260,40 @@ static void check_resume_publication(const char *root,const char *core,const cha
 	assert_resume_snapshot(s,replacement,'r','p','q');
 	assert(access(old_generation,F_OK)<0&&errno==ENOENT);
 
-	/* A battery-only shutdown cannot retire another writer's newly published resume. */
-	assert(saves_commit(s,"s",1,"t",1,-1,NULL,0));
-	struct saves *other=saves_open(root,core,content);assert(other);
-	assert(saves_commit_checkpoint(other,"u",1,"v",1,"w",1));
-	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_READY);
-	assert(!saves_resume_retire(s));
-	assert_resume_snapshot(s,replacement,'w','u','v');
-	saves_close(other);
-	assert(saves_commit(s,"x",1,"y",1,-1,NULL,0));
-	saves_test_fail_event(SAVES_TEST_PARENT_DIR_FSYNC,1);
-	assert(!saves_resume_retire(s));
-	assert(saves_resume_retire(s));
+	/* An older marker may remain on disk after CURRENT switches to battery-only. */
+	child=fork();assert(child>=0);
+	if(child==0){
+		struct saves *writer=saves_open(root,core,content);
+		if(!writer)_exit(1);
+		saves_test_crash_event(SAVES_TEST_AFTER_CURRENT_RENAME);
+		(void)saves_commit_battery_only(writer,"s",1,"t",1);
+		_exit(2);
+	}
+	assert(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==86);
+	char marker[4096];
+	assert(snprintf(marker,sizeof(marker),"%s/RESUME",identity)>0&&access(marker,F_OK)==0);
 	assert(saves_resume_probe(s,replacement)==SAVES_RESUME_NONE);
+
+	/* Ordinary writes and failed marker replacement must carry the cutoff forward. */
+	struct saves *other=saves_open(root,core,content);assert(other);
+	assert(saves_commit(other,"x",1,"y",1,-1,NULL,0));
+	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_NONE);
+	saves_test_fail_event(SAVES_TEST_RESUME_RENAME,1);
+	assert(!saves_commit_checkpoint(other,"x",1,"y",1,"z",1));
+	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_NONE);
 	assert(saves_load_memory(s,&ordinary_sram,1,&ordinary_rtc,1));
 	assert(ordinary_sram=='x'&&ordinary_rtc=='y');
+	char cutoff[4096];
+	assert(snprintf(cutoff,sizeof(cutoff),"%s/g%016llx/resume-floor",identity,
+		(unsigned long long)current(identity))>0&&unlink(cutoff)==0);
+	assert(saves_resume_probe(s,replacement)==SAVES_RESUME_NONE&&access(marker,F_OK)==0);
+	assert(saves_load_memory(s,&ordinary_sram,1,&ordinary_rtc,1));
+	assert(ordinary_sram=='x'&&ordinary_rtc=='y');
+	assert(saves_commit_checkpoint(other,"u",1,"v",1,"w",1));
+	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_READY);
+	assert(saves_commit(s,"x",1,"y",1,-1,NULL,0));
+	assert_resume_snapshot(s,replacement,'w','u','v');
+	saves_close(other);
 	saves_close(s);
 }
 
@@ -570,7 +601,8 @@ int main(int argc,char **argv)
 	assert(runtime_has_save(rr,argv[3],rom));
 	assert(snprintf(rr,sizeof(rr),"%s/runtime-quit-callbacks",base)>0);
 	run_persistence_callbacks(runtime,"quit",fixture,rom,rr);
-	const char *regressions[]={"options-ui","options-core","transient-resume","legacy-1","legacy-2","legacy-3"};
+	const char *regressions[]={"battery-crash","battery-unlink","option-during-restore",
+		"options-ui","options-core","transient-resume","legacy-1","legacy-2","legacy-3"};
 	for(size_t i=0;i<sizeof(regressions)/sizeof(regressions[0]);i++){
 		assert(snprintf(rr,sizeof(rr),"%s/runtime-%s",base,regressions[i])>0);
 		run_persistence_callbacks(runtime,regressions[i],fixture,rom,rr);
@@ -609,16 +641,32 @@ int main(int argc,char **argv)
 	assert(runtime_run(runtime,fixture,rom,rr,false,0,6)!=0);
 	assert(snprintf(rr,sizeof(rr),"%s/runtime-rejected-resume",base)>0);
 	assert(runtime_run(runtime,fixture,rom,rr,false,2,1)==0);
-	assert(runtime_run(runtime,fixture,rom,rr,false,0,4)!=0);
 	struct saves *rejected_resume=saves_open_with_options(rr,fixture,rom,"banana-retro-options-v1:");assert(rejected_resume);
-	char rejected_hash[65];assert(saves_resume_probe(rejected_resume,rejected_hash)==SAVES_RESUME_NONE);
+	char rejected_hash[65],after_rejection[65];
+	only_entry(rr,resume_ident,sizeof(resume_ident));
+	resume_generation=current(resume_ident);
+	assert(saves_resume_probe(rejected_resume,rejected_hash)==SAVES_RESUME_READY);
+	assert(runtime_run(runtime,fixture,rom,rr,false,0,4)!=0);
+	assert(current(resume_ident)==resume_generation);
+	assert(saves_resume_probe(rejected_resume,after_rejection)==SAVES_RESUME_READY&&
+		strcmp(rejected_hash,after_rejection)==0);
 	assert(saves_checkpoint_present(rejected_resume));uint32_t preserved_checkpoint=0;
 	assert(saves_load_checkpoint(rejected_resume,&preserved_checkpoint,sizeof(preserved_checkpoint)));
 	assert(saves_state_present(rejected_resume,0));uint32_t preserved_slot=0;
 	assert(saves_load_state(rejected_resume,0,&preserved_slot,sizeof(preserved_slot)));
+	assert(runtime_run(runtime,fixture,rom,rr,false,0,2)==0);
+	const uint8_t recent_sram[4]={0x56},recent_rtc[2]={0x78};
+	assert(saves_commit(rejected_resume,recent_sram,sizeof(recent_sram),recent_rtc,sizeof(recent_rtc),-1,NULL,0));
+	resume_generation=current(resume_ident);
+	assert(saves_resume_probe(rejected_resume,rejected_hash)==SAVES_RESUME_READY);
+	assert(runtime_run(runtime,fixture,rom,rr,false,0,4)!=0);
+	assert(current(resume_ident)==resume_generation);
+	assert(saves_resume_probe(rejected_resume,after_rejection)==SAVES_RESUME_READY&&
+		strcmp(rejected_hash,after_rejection)==0);
 	saves_close(rejected_resume);
-	assert(runtime_has_save(rr,fixture,rom));
+	assert(setenv("BANANA_RETRO_TEST_EXPECT_INITIAL_BATTERY","56:78",1)==0);
 	assert(runtime_run(runtime,fixture,rom,rr,false,0,5)==0);
+	assert(unsetenv("BANANA_RETRO_TEST_EXPECT_INITIAL_BATTERY")==0);
 	char cli_legacy[4096],cli_native[4096],cli_sram[4096],cli_rtc[4096],cli_state[4096],cli_output[256];
 	assert(snprintf(cli_legacy,sizeof(cli_legacy),"%s/cli-legacy",base)>0&&mkdir(cli_legacy,0700)==0);
 	assert(snprintf(cli_native,sizeof(cli_native),"%s/cli-native",base)>0);

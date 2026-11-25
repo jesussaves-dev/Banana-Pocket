@@ -27,7 +27,6 @@ const char *core_option_get(const char *key);
 bool core_option_set(const char *key, const char *value);
 size_t core_option_count(void);
 const struct core_option *core_option_at(size_t index);
-bool core_persistence_flush(struct saves *saves);
 bool core_save_memory_sizes(size_t *sram_size, size_t *rtc_size);
 
 enum { MAX_FRAMES = 10000 };
@@ -195,8 +194,7 @@ static uint32_t pause_owners(const struct native_runtime *runtime)
     return (runtime->ui_paused ? 1u : 0u) | (runtime->sleep_paused ? 2u : 0u);
 }
 
-static bool save_battery(struct native_runtime *runtime);
-static bool power_checkpoint(void *data);
+static enum core_checkpoint_result persist_session(struct native_runtime *runtime, bool quick_resume);
 
 static void control_status(void *data, struct control_status *status)
 {
@@ -224,7 +222,7 @@ static bool control_pause(void *data, unsigned owner, uint64_t epoch, bool acqui
         if (acquire) {
             if (!epoch || (runtime->sleep_paused && epoch != runtime->sleep_epoch) ||
                 (!runtime->sleep_paused && epoch <= runtime->sleep_epoch)) return false;
-            if (!save_battery(runtime) || !power_checkpoint(runtime) ||
+            if (persist_session(runtime, true) != CORE_CHECKPOINT_OK ||
                 (runtime->audio && !audio_alsa_sleep(runtime->audio, true))) return false;
             runtime->sleep_epoch = epoch;
             runtime->sleep_paused = true;
@@ -246,7 +244,7 @@ static bool control_pause(void *data, unsigned owner, uint64_t epoch, bool acqui
 
 static bool begin_save(struct native_runtime *runtime)
 {
-    if (!runtime->started || !runtime->saves) return false;
+    if (!runtime->started || !runtime->saves || runtime->failed_load) return false;
     if (!runtime->commit_intent_marked)
         runtime->commit_intent_marked = mark_commit_intent();
     return runtime->commit_intent_marked;
@@ -255,7 +253,7 @@ static bool begin_save(struct native_runtime *runtime)
 static bool control_flush(void *data)
 {
     struct native_runtime *runtime = data;
-    return begin_save(runtime) && core_persistence_flush(runtime->saves);
+    return begin_save(runtime) && core_persistence_flush(runtime->saves, false);
 }
 
 static bool control_save_state(void *data, unsigned slot)
@@ -267,6 +265,7 @@ static bool control_save_state(void *data, unsigned slot)
 static bool control_load_state(void *data, unsigned slot)
 {
     struct native_runtime *runtime = data;
+    if (runtime->failed_load) return false;
     enum core_load_result result = core_persistence_load(runtime->saves, (int)slot);
     if (result == CORE_LOAD_FAILED) {
         runtime->failed_load = true;
@@ -325,9 +324,9 @@ static bool control_reset(void *data)
     return true;
 }
 
-static bool save_battery(struct native_runtime *runtime)
+static bool save_battery(struct native_runtime *runtime, bool battery_only)
 {
-    if (control_flush(runtime)) return true;
+    if (core_persistence_flush(runtime->saves, battery_only)) return true;
     fputs("Native battery save failed\n", stderr);
     return false;
 }
@@ -350,18 +349,20 @@ static enum core_checkpoint_result publish_checkpoint(struct native_runtime *run
     return result;
 }
 
-static bool finish_persistence(struct native_runtime *runtime, bool quick_resume)
+static enum core_checkpoint_result persist_session(struct native_runtime *runtime, bool quick_resume)
 {
-    if (!save_battery(runtime)) return false;
-    bool slot_saved = save_requested_slot(runtime);
+    if (!begin_save(runtime)) return CORE_CHECKPOINT_ERROR;
     enum core_checkpoint_result result = quick_resume ?
         publish_checkpoint(runtime) : CORE_CHECKPOINT_UNAVAILABLE;
-    if (result == CORE_CHECKPOINT_ERROR) return false;
-    if (result == CORE_CHECKPOINT_UNAVAILABLE && !saves_resume_retire(runtime->saves)) {
-        fputs("Native resume marker retirement failed\n", stderr);
-        return false;
-    }
-    return slot_saved;
+    if (result != CORE_CHECKPOINT_OK &&
+        !save_battery(runtime, result == CORE_CHECKPOINT_UNAVAILABLE))
+        return CORE_CHECKPOINT_ERROR;
+    return save_requested_slot(runtime) ? result : CORE_CHECKPOINT_ERROR;
+}
+
+static bool finish_persistence(struct native_runtime *runtime, bool quick_resume)
+{
+    return persist_session(runtime, quick_resume) != CORE_CHECKPOINT_ERROR;
 }
 
 static bool control_quit(void *data)
@@ -396,7 +397,7 @@ static bool load_persistence(struct saves *saves, int state_slot, bool quick_res
         if (restore) result = core_persistence_restore_checkpoint(saves, token);
         if (result == SAVES_RESUME_READY) return true;
         if (result == SAVES_RESUME_RETRY) {
-            fputs("Native resume checkpoint temporarily unavailable\n", stderr);
+            fputs("Native resume checkpoint could not be loaded. Retry or use --load-battery.\n", stderr);
             return false;
         }
         if (result == SAVES_RESUME_INVALID) {
@@ -551,6 +552,7 @@ int main(int argc, char **argv)
     bool forever = argc >= 4 && strcmp(argv[3], "--wayland") == 0;
     bool native = forever;
     int load_state_slot = -1, save_state_slot = -1;
+    bool load_battery = false;
     bool skip_save_commit = false;
     bool stopped = false, ran = false, ok;
     bool readiness_reached = false;
@@ -574,8 +576,8 @@ int main(int argc, char **argv)
 #endif
 
     if (!forever && (argc < 5 || strcmp(argv[3], "--frames") != 0)) {
-        fprintf(stderr, "Usage: %s CORE CONTENT --frames COUNT [--wayland] [--load-state N] [--save-state N]\n", argv[0]);
-        fprintf(stderr, "       %s CORE CONTENT --wayland [--load-state N] [--save-state N]\n", argv[0]);
+        fprintf(stderr, "Usage: %s CORE CONTENT --frames COUNT [--wayland] [--load-state N | --load-battery] [--save-state N]\n", argv[0]);
+        fprintf(stderr, "       %s CORE CONTENT --wayland [--load-state N | --load-battery] [--save-state N]\n", argv[0]);
         return 2;
     }
     if (!forever) {
@@ -590,6 +592,8 @@ int main(int argc, char **argv)
     for (int i = forever ? 4 : 5; i < argc; ++i) {
         if (strcmp(argv[i], "--wayland") == 0) {
             native = true;
+        } else if (strcmp(argv[i], "--load-battery") == 0) {
+            load_battery = true;
         } else if ((strcmp(argv[i], "--state-slot") == 0 ||
                     strcmp(argv[i], "--load-state") == 0 ||
                     strcmp(argv[i], "--save-state") == 0) && i + 1 < argc) {
@@ -609,6 +613,14 @@ int main(int argc, char **argv)
             fprintf(stderr, "Unknown runtime option: %s\n", argv[i]);
             return 2;
         }
+    }
+    if (load_battery && load_state_slot >= 0) {
+        fputs("--load-battery cannot be combined with --load-state or --state-slot\n", stderr);
+        return 2;
+    }
+    if (load_battery && !native && !test_persistence) {
+        fputs("--load-battery requires --wayland\n", stderr);
+        return 2;
     }
     if ((load_state_slot >= 0 || save_state_slot >= 0) && !native && !test_persistence) {
         fputs("State slots require --wayland\n", stderr);
@@ -662,7 +674,7 @@ int main(int argc, char **argv)
             fputs("Native save storage unavailable\n", stderr);
             skip_save_commit = load_state_slot >= 0;
             ok = false;
-        } else if (!load_persistence(runtime.saves, load_state_slot, quick_resume)) {
+        } else if (!load_persistence(runtime.saves, load_state_slot, quick_resume && !load_battery)) {
             startup_error_code = "persistence-load";
             fputs("Native save or requested state slot could not be loaded\n", stderr);
             skip_save_commit = true;

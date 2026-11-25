@@ -67,7 +67,7 @@ $(OUT)/fixture-runtime: tests/check-runtime-persistence.c src/main.c src/core.c 
 		$(CONTROL_HEADER) src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
 	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(CFLAGS) $(strict_cflags) -DSAVES_TESTING $(LDFLAGS) -o $@ \
 		$< src/core.c src/control.c src/options.c src/input_evdev.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
-		-Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(ALSA_LIBS) -pthread $(LDLIBS)
+		-Wl,--wrap=wl_display_connect -Wl,--wrap=unlinkat -ldl $(VIDEO_LIBS) $(ALSA_LIBS) -pthread $(LDLIBS)
 
 $(OUT)/fixture-no-serialize.so: tests/fixture_core.c include/libretro.h
 	@printf '%s\n' '{ global: *; local: retro_serialize_size; retro_serialize; retro_unserialize; };' > $(OUT)/hide-serialize.map

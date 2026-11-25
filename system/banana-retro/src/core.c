@@ -703,12 +703,13 @@ enum core_load_result core_persistence_load(struct saves *saves, int state_slot)
         return CORE_LOAD_REJECTED;
     }
     bool restored = state_slot < 0 ||
-                    saves_state_restore(persistence_unserialize, &session.api, state, size);
+                    (saves_state_restore(persistence_unserialize, &session.api, state, size) &&
+                     !session.state_options_uncertain);
     free(state);
     return restored ? CORE_LOAD_OK : CORE_LOAD_FAILED;
 }
 
-bool core_persistence_commit(struct saves *saves, int state_slot)
+static bool commit_persistence(struct saves *saves, int state_slot, bool battery_only)
 {
     if (!saves || !session.loaded || !session.api.retro_get_memory_data ||
         !session.api.retro_get_memory_size)
@@ -733,16 +734,22 @@ bool core_persistence_commit(struct saves *saves, int state_slot)
     if (ok) {
         void *sram = session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
         void *rtc = session.api.retro_get_memory_data(RETRO_MEMORY_RTC);
-        ok = (state_slot < 0 || sync_state_options(saves)) &&
+        ok = battery_only ? saves_commit_battery_only(saves, sram, sram_size, rtc, rtc_size) :
+            (state_slot < 0 || sync_state_options(saves)) &&
             saves_commit(saves, sram, sram_size, rtc, rtc_size, state_slot, state, state_size);
     }
     free(state);
     return ok;
 }
 
-bool core_persistence_flush(struct saves *saves)
+bool core_persistence_commit(struct saves *saves, int state_slot)
 {
-    return core_persistence_commit(saves, -1);
+    return commit_persistence(saves, state_slot, false);
+}
+
+bool core_persistence_flush(struct saves *saves, bool battery_only)
+{
+    return commit_persistence(saves, -1, battery_only);
 }
 
 bool core_save_memory_sizes(size_t *sram_size, size_t *rtc_size)
@@ -827,11 +834,12 @@ enum saves_resume_result core_persistence_restore_checkpoint(struct saves *saves
         result = restore_checkpoint_memory(memory, sram_size, rtc_size);
     if (result == SAVES_RESUME_READY) {
         bool restored = saves_state_restore(persistence_unserialize, &session.api, state, state_size);
-        if (session.state_options_uncertain) result = SAVES_RESUME_RETRY;
-        else if (restored)
+        /* The Libretro callback gives no reason for a failure. Keep the marker
+         * and let startup discard the session, which may have been mutated. */
+        if (!restored || session.state_options_uncertain) result = SAVES_RESUME_RETRY;
+        else
             /* Unserializing can replace the memory regions or their contents. */
             result = restore_checkpoint_memory(memory, sram_size, rtc_size);
-        else result = SAVES_RESUME_INVALID;
     }
     free(memory);
     free(state);

@@ -1,5 +1,6 @@
 #include "libretro.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,7 @@ static retro_audio_sample_batch_t batch;
 static retro_input_poll_t poll_input;
 static retro_input_state_t read_input;
 static unsigned frame, effective_mode, serialize_calls, unserialize_calls;
+static bool initial_battery_checked;
 enum { FIXTURE_MODE_SHIFT = 24 };
 static uint8_t save_ram[4], save_rtc[2];
 static const char *content_bytes;
@@ -100,6 +102,7 @@ void retro_set_input_state(retro_input_state_t cb)
 void retro_init(void)
 {
     advance(INPUT_SET, INITIALIZED, "init");
+    initial_battery_checked = false;
     if (mode_is("persistence-options")) {
         const struct retro_variable vars[] = {
             {"fixture_mode", "Test mode; first|second|third"}, {NULL, NULL}
@@ -179,6 +182,15 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
 void retro_run(void)
 {
     require(stage == CONTROLLER_SET, "run order");
+    const char *expected_battery = getenv("BANANA_RETRO_TEST_EXPECT_INITIAL_BATTERY");
+    if (expected_battery && !initial_battery_checked) {
+        unsigned sram, rtc;
+        require(sscanf(expected_battery, "%x:%x", &sram, &rtc) == 2, "battery expectation");
+        require(frame == 0 && save_ram[0] == sram && save_rtc[0] == rtc,
+                "battery-only startup memory");
+        require(unserialize_calls == 0, "battery-only startup did not unserialize");
+        initial_battery_checked = true;
+    }
     ++frame;
     fprintf(stderr, "fixture run %u\n", frame);
     if (mode_is("persistence-options") && frame == 2) {
@@ -251,8 +263,6 @@ bool retro_serialize(void *data, size_t len)
 bool retro_unserialize(const void *data, size_t len)
 {
     ++unserialize_calls;
-    const char *reject = getenv("BANANA_RETRO_TEST_REJECT_UNSERIALIZE");
-    if (reject != NULL && strcmp(reject, "1") == 0) return false;
     if (data == NULL || len != sizeof(frame)) return false;
     unsigned state;
     memcpy(&state, data, sizeof(state));
@@ -262,6 +272,22 @@ bool retro_unserialize(const void *data, size_t len)
         memset(save_ram, 0, sizeof(save_ram));
         memset(save_rtc, 0, sizeof(save_rtc));
         frame &= (1u << FIXTURE_MODE_SHIFT) - 1u;
+        if (getenv("BANANA_RETRO_TEST_SET_OPTION_DURING_UNSERIALIZE")) {
+            struct retro_variable option = {"fixture_mode", "second"};
+            require(environment(RETRO_ENVIRONMENT_SET_VARIABLE, &option), "set option in restore");
+            require(environment(RETRO_ENVIRONMENT_GET_VARIABLE, &option) && option.value &&
+                    strcmp(option.value, "second") == 0, "read changed option in restore");
+            effective_mode = 1;
+            option.value = "first";
+            require(environment(RETRO_ENVIRONMENT_SET_VARIABLE, &option), "revert option in restore");
+        }
+    }
+    if (getenv("BANANA_RETRO_TEST_UNSERIALIZE_OOM")) {
+        /* A core is allowed to mutate runtime memory before an opaque failure. */
+        save_ram[0] = 0xff;
+        save_rtc[0] = 0xff;
+        errno = ENOMEM;
+        return false;
     }
     return true;
 }
