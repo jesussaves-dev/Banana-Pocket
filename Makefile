@@ -31,9 +31,9 @@ LOCAL_SRC = $(shell find ui/src ui/third_party system/bananad app/bananatube -ty
 SRC_banana-ui = $(shell find ui/src ui/third_party -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' -o -name '*.xml' \) 2>/dev/null) $(shell find ui/assets -type f 2>/dev/null) ui/Makefile system/banana-retro/protocol/banana-retro-v1.xml
 SRC_bananad = $(shell find system/bananad -type f \( -name '*.c' -o -name '*.h' -o -name 'Makefile' \) 2>/dev/null)
 SRC_banana-tube = $(shell find app/bananatube -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' -o -name 'Makefile' \) 2>/dev/null)
-SRC_banana-retro = $(shell find system/banana-retro -type f \( -name '*.c' -o -name '*.h' -o -name '*.xml' -o -name '*.conf' -o -name 'Makefile' \) 2>/dev/null) LICENSE buildroot/package/banana-retro/banana-retro.mk
+SRC_banana-retro = $(shell find system/banana-retro -type f \( -name '*.c' -o -name '*.h' -o -name '*.xml' -o -name '*.conf' -o -name 'Makefile' \) 2>/dev/null) system/bananad/include/banana-retro-control.h LICENSE buildroot/package/banana-retro/banana-retro.mk
 LOCAL_BIN_banana-ui = target/usr/bin/banana-ui
-LOCAL_BIN_bananad = target/usr/bin/bananad
+LOCAL_BIN_bananad = target/usr/sbin/bananad
 LOCAL_BIN_banana-tube = target/usr/bin/banana-tube
 LOCAL_BIN_banana-retro = target/usr/bin/banana-retro
 

@@ -6,7 +6,7 @@ set -e
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT INT TERM
-cc -O2 -Wall -Wextra -o "$W/bananad" "$HERE/bananad.c" -lasound -lm
+cc -O2 -Wall -Wextra -I"$HERE/include" -o "$W/bananad" "$HERE/bananad.c" -lasound -lm
 
 out=$("$W/bananad" --selftest hud)
 printf '%s\n' "$out"

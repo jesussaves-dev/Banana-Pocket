@@ -48,7 +48,7 @@ Each task is a separate Banana work item with the stated allowlist. Dependency I
 
 ## 07. Add authenticated native game controls
 
-- **Scope and files** — `system/banana-retro/include/banana-retro-control.h`, `system/banana-retro/src/{main.c,control.c,control.h,options.c,options.h,core.c}`, `system/banana-retro/tests/check-control.c`, `system/banana-retro/Makefile`.
+- **Scope and files** — `system/bananad/include/banana-retro-control.h`, `system/banana-retro/src/{main.c,control.c,control.h,options.c,options.h,core.c}`, `system/banana-retro/tests/check-control.c`, `system/banana-retro/Makefile`.
 - **Dependencies and interface** — 01, 03–05. Versioned seqpacket control, status, owner-specific holds, memory/state operations, options/reset and graceful quit.
 - **Sequence and completion** — Validate packet bounds and identities, then execute one mutation at a safe point. Verify duplicate/stale request behavior, independent pause holds, options v0/v1/v2 and restart cases, save while paused, malformed packets, disconnect/reconnect, timeout reconciliation and clean exit. Confirm Wayland dispatch and buffer release continue during pause.
 - **Complexity and rollback** — Medium. Keep native control unavailable on a failed handshake. Keep existing session negotiation available to later UI and power adapters.
@@ -62,7 +62,7 @@ Each task is a separate Banana work item with the stated allowlist. Dependency I
 
 ## 09. Connect bananad power and shutdown to native sessions
 
-- **Scope and files** — `system/bananad/bananad.c`, `system/bananad/Makefile`, `system/rootfs/etc/init.d/rcK`, `system/banana-retro/src/{main.c,control.c}`, `system/banana-retro/include/banana-retro-control.h`, `system/bananad/tests/retro-lifecycle-test.sh`.
+- **Scope and files** — `system/bananad/{bananad.c,Makefile,include/banana-retro-control.h}`, `system/rootfs/etc/init.d/rcK`, `system/banana-retro/src/{main.c,control.c}`, `system/bananad/tests/retro-lifecycle-test.sh`.
 - **Dependencies and interface** — 07 and 08. Power epochs, prepare/abort/wake, bounded checkpoint/PCM and exit reporting, tracked-child shutdown and resume marker.
 - **Sequence and completion** — Keep existing platform calls and introduce backend-specific requests at the current boundaries. Verify suspend request during overlay, aborted suspend, late ack, renderer/service loss, stopped and stale child, valid/failed checkpoint, direct shutdown and crash reaping via mocked power operations. Hardware suspend, battery interlocks and audio restore are a separate approval and qualification gate.
 - **Complexity and rollback** — Large. Disable native power integration and native profiles together on a failed gate. Preserve generic process-group and RetroArch paths and existing init sequence.

@@ -19,6 +19,9 @@ WL_CODE = $(OUT)/xdg-shell-protocol.c $(OUT)/banana-retro-protocol.c
 VIDEO = src/video_wayland.c src/video_wayland.h include/libretro.h $(WL_HEADERS) $(WL_CODE)
 INPUT = src/input_evdev.c src/input_evdev.h
 VIDEO_CFLAGS = -Iinclude -I$(OUT) $(shell $(PKG_CONFIG) --cflags wayland-client)
+CONTROL_HEADER ?= ../bananad/include/banana-retro-control.h
+CONTROL_CFLAGS ?= -I../bananad/include
+VIDEO_CFLAGS += $(CONTROL_CFLAGS)
 VIDEO_LIBS = $(shell $(PKG_CONFIG) --libs wayland-client)
 ALSA_CFLAGS = $(shell $(PKG_CONFIG) --cflags alsa)
 ALSA_LIBS = $(shell $(PKG_CONFIG) --libs alsa)
@@ -37,7 +40,7 @@ install: $(OUT)/banana-retro
 	$(INSTALL) -D -m 0644 config/defaults.conf $(DESTDIR)$(SYSCONFDIR)/banana/retro/defaults.conf
 
 $(OUT)/banana-retro: src/main.c src/core.c src/core.h src/control.c src/control.h src/options.c src/options.h \
-		include/banana-retro-control.h src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
+		$(CONTROL_HEADER) src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
 	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(CFLAGS) $(strict_cflags) $(LDFLAGS) -o $@ \
 		src/main.c src/core.c src/control.c src/options.c src/input_evdev.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
 		-Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(ALSA_LIBS) -pthread $(LDLIBS)
@@ -61,7 +64,7 @@ $(OUT)/fixture-missing-export.so: tests/fixture_core.c include/libretro.h
 	$(CC) $(CPPFLAGS) -Iinclude $(CFLAGS) $(strict_cflags) -DFIXTURE_MISSING_EXPORT -shared -fPIC $(LDFLAGS) -o $@ $< $(LDLIBS)
 
 $(OUT)/fixture-runtime: src/main.c src/core.c src/core.h src/control.c src/control.h src/options.c src/options.h \
-		include/banana-retro-control.h src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
+		$(CONTROL_HEADER) src/audio_alsa.c src/audio_alsa.h src/saves.c src/saves.h $(INPUT) $(VIDEO)
 	$(CC) $(CPPFLAGS) $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(CFLAGS) $(strict_cflags) -DSAVES_TESTING $(LDFLAGS) -o $@ \
 		src/main.c src/core.c src/control.c src/options.c src/input_evdev.c src/audio_alsa.c src/saves.c src/video_wayland.c $(WL_CODE) \
 		-Wl,--wrap=wl_display_connect -ldl $(VIDEO_LIBS) $(ALSA_LIBS) -pthread $(LDLIBS)
@@ -131,7 +134,7 @@ $(OUT)/fixture-runtime-core.so: tests/check-control.c include/libretro.h
 
 $(OUT)/fixture-check-control: tests/check-control.c src/main.c src/control.c src/control.h src/options.c src/options.h \
 		src/input_evdev.c src/input_evdev.h src/core.c src/core.h src/audio_alsa.c src/audio_alsa.h \
-		src/saves.c src/saves.h src/video_wayland.c src/video_wayland.h include/banana-retro-control.h $(VIDEO) \
+		src/saves.c src/saves.h src/video_wayland.c src/video_wayland.h $(CONTROL_HEADER) $(VIDEO) \
 		$(OUT)/fixture-runtime-core.so
 	$(CC) $(CPPFLAGS) -Isrc $(VIDEO_CFLAGS) $(ALSA_CFLAGS) $(shell $(PKG_CONFIG) --cflags wayland-server) \
 		$(CFLAGS) $(strict_cflags) -DBANANA_RETRO_TESTING -ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections \

@@ -46,7 +46,7 @@
 #include <unistd.h>
 #include <sys/un.h>
 
-#include "../banana-retro/include/banana-retro-control.h"
+#include "banana-retro-control.h"
 
 #define MAXDEV 32
 

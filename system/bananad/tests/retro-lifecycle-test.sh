@@ -8,7 +8,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
 ${CC:-cc} ${CFLAGS:--O2} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter \
-	-o "$WORK/bananad" "$HERE/bananad.c" -lasound -lm
+	-I"$HERE/include" -o "$WORK/bananad" "$HERE/bananad.c" -lasound -lm
 "$WORK/bananad" --selftest retro-lifecycle
 sh -n "$ROOT/system/rootfs/etc/init.d/rcK"
 sh -n "$HELPER"
