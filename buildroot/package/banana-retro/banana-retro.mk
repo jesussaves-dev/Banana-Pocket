@@ -16,6 +16,14 @@ define BANANA_RETRO_COPY_LICENSE
 endef
 BANANA_RETRO_POST_RSYNC_HOOKS += BANANA_RETRO_COPY_LICENSE
 
+# the local rsync also copies wayland-scanner output left by a host `make` in system/banana-retro; remove it (and any
+# copy left in the build directory by an earlier rsync) so the protocol code always comes from Buildroot's own
+# host-wayland scanner and the staged wayland-protocols XML
+define BANANA_RETRO_REMOVE_GENERATED
+	rm -f $(@D)/*-protocol.c $(@D)/*-protocol.h
+endef
+BANANA_RETRO_PRE_BUILD_HOOKS += BANANA_RETRO_REMOVE_GENERATED
+
 define BANANA_RETRO_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) -B -C $(@D) \
 		CC="$(TARGET_CC)" PKG_CONFIG="$(PKG_CONFIG_HOST_BINARY)" \

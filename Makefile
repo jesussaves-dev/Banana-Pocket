@@ -21,17 +21,25 @@ BUILDROOT_VERSION = 2026.02.3
 BUILDROOT_DIR ?= $(CURDIR)/.buildroot
 OUT ?= $(CURDIR)/output
 BOARDS = retroid-pocket-classic
-LOCAL_NAMES = banana-ui bananad banana-tube banana-retro
-LOCAL_PKGS = banana-ui-rebuild bananad-rebuild banana-tube-rebuild
+# bananad first: it stages the shared native-control header (banana-retro-control.h) that banana-ui and banana-retro
+# compile against, so its stamp must finish before theirs. Each stamp below takes every earlier name as an order-only
+# prerequisite, which keeps that order under `make -j` and serializes the rebuilds (they share one Buildroot output
+# directory). Order-only prerequisites never trigger a rebuild: a consumer rebuilds only when its own sources change,
+# and the shared header is one of them.
+LOCAL_NAMES = bananad banana-ui banana-tube banana-retro
+local_before = $(if $(filter $(1),$(firstword $(2))),,$(firstword $(2)) $(call local_before,$(1),$(wordlist 2,$(words $(2)),$(2))))
+LOCAL_PKGS = bananad-rebuild banana-ui-rebuild banana-tube-rebuild
 # the in-tree packages' sources: the board target compares these against the built binaries to decide whether to
 # rebuild. `find` is run once, at parse time, so the list is current. app/bananatube is banana-tube's site.
 # (the protocol XML the compositor's headers are generated from, third_party's C, and the packages' own Makefiles also
 # change the binaries: leaving them out shipped a stale banana-ui after such an edit)
 LOCAL_SRC = $(shell find ui/src ui/third_party system/bananad app/bananatube -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' -o -name '*.xml' -o -name 'Makefile' \) 2>/dev/null) $(shell find ui/assets -type f 2>/dev/null) ui/Makefile system/banana-retro/protocol/banana-retro-v1.xml
 SRC_banana-ui = $(shell find ui/src ui/third_party -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' -o -name '*.xml' \) 2>/dev/null) $(shell find ui/assets -type f 2>/dev/null) ui/Makefile system/banana-retro/protocol/banana-retro-v1.xml system/bananad/include/banana-retro-control.h buildroot/package/banana-ui/banana-ui.mk
-SRC_bananad = $(shell find system/bananad -type f \( -name '*.c' -o -name '*.h' -o -name 'Makefile' \) 2>/dev/null)
+SRC_bananad = $(shell find system/bananad -type f \( -name '*.c' -o -name '*.h' -o -name 'Makefile' \) 2>/dev/null) buildroot/package/bananad/bananad.mk
 SRC_banana-tube = $(shell find app/bananatube -type f \( -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.hpp' -o -name 'Makefile' \) 2>/dev/null)
-SRC_banana-retro = $(shell find system/banana-retro -type f \( -name '*.c' -o -name '*.h' -o -name '*.xml' -o -name '*.conf' -o -name 'Makefile' \) 2>/dev/null) system/bananad/include/banana-retro-control.h LICENSE buildroot/package/banana-retro/banana-retro.mk
+# (the wayland-scanner output a host `make` leaves in system/banana-retro is generated, not a source: the package
+# regenerates it, so it is kept out of the freshness inputs)
+SRC_banana-retro = $(shell find system/banana-retro -type f \( -name '*.c' -o -name '*.h' -o -name '*.xml' -o -name '*.conf' -o -name 'Makefile' \) ! -name '*-protocol.c' ! -name '*-protocol.h' 2>/dev/null) system/bananad/include/banana-retro-control.h LICENSE buildroot/package/banana-retro/banana-retro.mk
 LOCAL_BIN_banana-ui = target/usr/bin/banana-ui
 LOCAL_BIN_bananad = target/usr/sbin/bananad
 LOCAL_BIN_banana-tube = target/usr/bin/banana-tube
@@ -69,7 +77,7 @@ $(OUT)/$(1)/.config: $(BUILDROOT_DIR)/.banana-patched buildroot/configs/banana_$
 # tree where a package has not been built yet its binary does not exist and the board target builds it for the first
 # time (the recipe runs regardless, since the stamp has no prerequisites there).
 # one stamp per package, so an edit rebuilds only the package whose sources changed
-$(foreach p,$(LOCAL_NAMES),$(eval $(OUT)/$(1)/.local-stamp-$(p): $(if $(wildcard $(OUT)/$(1)/$(LOCAL_BIN_$(p))),$(SRC_$(p)))
+$(foreach p,$(LOCAL_NAMES),$(eval $(OUT)/$(1)/.local-stamp-$(p): $(if $(wildcard $(OUT)/$(1)/$(LOCAL_BIN_$(p))),$(SRC_$(p))) | $(foreach q,$(call local_before,$(p),$(LOCAL_NAMES)),$(OUT)/$(1)/.local-stamp-$(q))
 	$(if $(wildcard $(OUT)/$(1)/$(LOCAL_BIN_$(p))),$$(MAKE) -C $(OUT)/$(1) $(p)-rebuild,@mkdir -p $(OUT)/$(1)/)
 	@touch $$@))
 

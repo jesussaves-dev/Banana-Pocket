@@ -11,6 +11,13 @@ BANANA_UI_LICENSE = MIT
 BANANA_UI_LICENSE_FILES = ../LICENSE
 BANANA_UI_DEPENDENCIES = freetype libdrm alsa-lib zlib bananad host-pkgconf host-wayland wayland wayland-protocols libxkbcommon libegl libgles libgbm
 
+# the local rsync also copies the protocol code a host `make` generated under build/ in ui; remove it so the build
+# regenerates it with Buildroot's own host-wayland scanner and the staged wayland-protocols XML
+define BANANA_UI_REMOVE_GENERATED
+	rm -rf $(@D)/build/wayland
+endef
+BANANA_UI_PRE_BUILD_HOOKS += BANANA_UI_REMOVE_GENERATED
+
 define BANANA_UI_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) -B -C $(@D) CXX="$(TARGET_CXX)" PKG_CONFIG="$(PKG_CONFIG_HOST_BINARY)" \
 		BANANA_RETRO_XML="$(BR2_EXTERNAL_BANANA_PATH)/../system/banana-retro/protocol/banana-retro-v1.xml" \

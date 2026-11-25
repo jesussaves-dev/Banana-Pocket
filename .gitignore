@@ -43,3 +43,10 @@ __pycache__/
 
 # Local research material, not part of the repo
 /linuxresearch/
+
+# banana-retro host build and fixture outputs (`make -C system/banana-retro` with the default OUT=.)
+/system/banana-retro/banana-retro
+/system/banana-retro/*-protocol.c
+/system/banana-retro/*-protocol.h
+/system/banana-retro/fixture*
+/system/banana-retro/hide-*.map
