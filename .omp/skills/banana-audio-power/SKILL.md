@@ -1,0 +1,11 @@
+---
+name: banana-audio-power
+description: Use for Retroid Pocket Classic suspend/wake, USB-C plug not waking, bananad/UCSI wake policy, or AudioReach sound faults. Not for post-wake black frames or native session holds.
+---
+
+# BananaOS audio and power
+
+1. **Find the first failure.** Start with captured logs. Follow [sound diagnostics](../../../docs/SOUND-TEST.md): ALSA default → PipeWire → WirePlumber sink/jack policy → q6apm PCM state/owner → AW88166 gain. A live sink does not prove DSP routing; saved mute is not a missing control. For probe failures trace ASoC card/DAIs, codec and firmware via the [audio DTSI](../../../buildroot/board/retroid-pocket-classic/dts/qcom/sm4450-retroid-pocket-classic-audio.dtsi).
+2. **Keep ownership.** Clients use `/run/banana/asound.conf` and PipeWire default PCM/control, not mixer writes or FE/BE handoffs. Shared switches belong in UCM `SectionVerb` `EnableSequence`. Preserve [verb reapply](../../../buildroot/patches/pipewire/0002-alsa-pcm-reapply-the-UCM-verb-before-snd_pcm_open.patch) with FE closed, just before open. Keep sink idle timeout zero and periods/headroom in `monitor.alsa.rules`. [bananad](../../../system/bananad/bananad.c) owns mono AW88166 gain (0–511) and `/data/banana/volume` persistence; RetroArch gain stays at unity.
+3. **Trace suspend/resume.** Align `sleep-state`, `sleep.log`, kernel PM and `/run/banana/sound-state`: close ack, sleep entry, wake, reopen and jack re-read. Wake counts do not identify the source. [Wake evidence](../../../docs/ARCHITECTURE.md#wake-sources): daemon allows USB-C; the pinned kernel's recorded wake is Power-key-only. No RTC alarm or lid switch. Preserve wake-key swallowing, `/run/banana/screen-off`, [menu audio blanking](../../../ui/src/sound.cpp) and battery/charging/thermal protections.
+4. **Check only within scope.** Authorized [audio](../../../system/tests/sound-config-test.sh) and [sleep](../../../system/bananad/tests/sleep-test.sh) host fixtures do not prove audibility or physical wake. [Rules](../../../docs/ENGINEERING-RULES.md): hardware/SSH, suspend/power and deploy need separate approval; QEMU only if explicitly required. Kernel/upstream patches need evidence userspace/config is insufficient and explicit approval.
