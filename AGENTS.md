@@ -26,6 +26,7 @@ Read matching `skill://<name>` before subsystem work; load others only for disti
 | Buildroot, stale binaries, kernel/DT | `banana-board-integration` |
 | Wayland/KMS, scanout, black frames | `banana-display-triage` |
 | Native lifecycle, pause, checkpoints, saves | `banana-retro-lifecycle` |
+| Lifecycle state machines, invariants, fault injection, regression traces | `banana-lifecycle-modeling` |
 | IPC authorization, input, updates, archives, services | `banana-trust-boundaries` |
 
 ## System Invariants
