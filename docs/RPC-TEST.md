@@ -123,6 +123,27 @@ How the pair is judged, and what the numbers mean:
 - `Audio status:` is unchanged without telemetry (`accepted= overflow= underrun= xrun= reopens= queue= delay=`). With
   `BANANA_RETRO_TELEMETRY=1` the line is printed once, with `input_rate=` and `output_rate=` first, after the frame line
 - Known limits, accepted at review (host-qualified only; none is a measured accuracy):
+  - **Power source (`RPC_POWER_SRC`).** The unset default is the legacy rule: `power_now` when positive, else voltage
+    x current. `RPC_POWER_SRC=vi` always uses voltage x current (a derived estimate); `RPC_POWER_SRC=gauge` always
+    uses `power_now` and never falls back (`missing-p`, `zero-power`, `range-p`, `bad-reading` reject the sample).
+    Any other value, including empty, exits 2. Every sample records `req=` and `src=`, and the header and summary
+    record `power_src_requested=` and `power_src=` (`gauge`, `vi`, `mixed` or `none`). The default can mix sources
+    within a run; use an explicit mode for a comparison. All validity thresholds are unchanged in every mode
+  - **Why.** In the first G2 run (`~/task11-preserve/g2/power-g2-ra-mgba-1.out`, invalid) the SM4450 `power_now` stayed
+    at 126433 mW (~127 W, `range-p`) while voltage x current was about 1.1-1.7 W (4247 mV x 399 mA). Treat the gauge
+    as unreliable on this unit until shown otherwise, and use `vi` for such a run
+  - `vi` is an estimate, not a measurement: the units are never detected and its accuracy is unqualified. Cross-check
+    `avg_mW` against a known load (an external meter) once per unit before trusting absolute figures
+  - `warn=gauge-disagree` (and `gauge_disagreement_samples=` in the summary) flags a sample whose readable gauge,
+    including zero, differs from voltage x current by more than 20% of voltage x current. It is a diagnostic only,
+    never a validity reason. When either reading is unavailable the sample is not comparable (`warn=n/a`)
+  - `counter_energy_mWh` / `counter_vs_energy_pct` compare `|charge_counter delta| x average mV` with the integrated
+    energy. Signed 32-bit counter readings are accepted; malformed or out-of-range readings are ignored. This is
+    supporting evidence only, without a threshold: the counter is coarse (uAh steps, slow update)
+  - Both join modes validate the measurement samples, window, counts, energy and consistent source metadata; missing,
+    duplicate, malformed or contradictory evidence is rejected. The bench log states no power source. Never compare
+    energy across sources: `sh tools/rpc-run-join.sh --compare-power a.log b.log` exits 3 unless both logs are valid
+    and used the same source. Logs written before source metadata was added are unsupported and rejected
   - The power sampler does not check the gap from its start to its first sample; the join's `RPC_JOIN_TOL` and
     `RPC_JOIN_MAX_EXTRA` bound that window edge. The bench does check it
   - The power sampler accepts `RPC_INTERVAL` larger than `<secs>` (one sample held for the whole interval, with

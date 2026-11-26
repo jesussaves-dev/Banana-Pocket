@@ -34,9 +34,31 @@
 #   RPC_RUN_ID=<id>        1-64 of [A-Za-z0-9._-]: the identifier shared with rpc-emu-bench.sh (and the native
 #                          BANANA_RETRO_RUN_ID) so tools/rpc-run-join.sh can pair this log with that run. Recorded
 #                          in the log with the measurement window (start, end, epoch seconds); "none" if unset.
+#   RPC_POWER_SRC=<mode>   which reading is THE power: unset (default, legacy: the gauge's power_now when it reads
+#                          positive, else voltage x current, chosen per sample); `vi` (always voltage x current;
+#                          power_now never feeds the figure or the verdict); `gauge` (always power_now; never a
+#                          fallback, so a missing, non-numeric, zero or implausible power_now is flagged missing-p,
+#                          bad-reading, zero-power or range-p). Any other value, including empty, exits 2. The
+#                          requested mode and the source actually used are recorded in every sample (req=, src=),
+#                          the header and the summary. A run whose samples used both sources reports power_src=mixed,
+#                          and tools/rpc-run-join.sh refuses it.
+#                          The gauge and voltage x current are compared in every mode, as a diagnostic only: a sample
+#                          where power_now differs from voltage x current by more than 20% of the latter carries
+#                          warn=gauge-disagree and the summary counts them. It is never a validity failure.
+#                          The signed 32-bit charge counter is retained only when it is an integer in
+#                          -2147483648..2147483647; other readings print as '-' and are ignored. Its energy
+#                          (magnitude of endpoint delta x average voltage) is supporting evidence only, with no
+#                          threshold because the counter's sign and unit are driver specific.
 #   RPC_CLOCK=<script>     the host test's deterministic clock: `sh script` prints the epoch, `sh script sleep N`
 #                          advances it. Never set on the unit.
 SYS=${RPC_SYS:-/sys}
+MODE=default
+if [ "${RPC_POWER_SRC+set}" = set ]; then
+	case "$RPC_POWER_SRC" in
+	vi|gauge) MODE=$RPC_POWER_SRC ;;
+	*) echo "rpc-power-sample: RPC_POWER_SRC must be vi or gauge (or unset), got '$RPC_POWER_SRC'" >&2; exit 2 ;;
+	esac
+fi
 secs=${1:-300}
 step=${RPC_INTERVAL:-1}
 PS=$SYS/class/power_supply
@@ -91,8 +113,8 @@ online_sources() {
 	done
 }
 
-emit "# run id=$RUN_ID secs=$secs interval=$step"
-emit '# epoch status=<state> cap=<%> v_mV=<mV> i_mA=<mA magnitude|-> p_mW=<mW|-> counter_uAh=<uAh> online=<supplies|none> flags=<...>'
+emit "# run id=$RUN_ID secs=$secs interval=$step power_src_requested=$MODE"
+emit '# epoch status=<state> cap=<%> v_mV=<mV> i_mA=<mA magnitude|-> p_mW=<mW|-> counter_uAh=<uAh> online=<supplies|none> flags=<...> req=<mode> src=<gauge|vi|-> gauge_mW=<mW|-> warn=<none|gauge-disagree|n/a>'
 samples=
 start=$(clock)
 end=$((start + secs))
@@ -102,30 +124,50 @@ while :; do
 	st=$(rd "$BAT/status"); cap=$(rd "$BAT/capacity"); uv=$(rd "$BAT/voltage_now")
 	ua=$(rd "$BAT/current_now"); uw=$(rd "$BAT/power_now"); cc=$(rd "$BAT/charge_counter")
 	on=$(online_sources); on=${on%,}
-	line=$(awk -v now="$now" -v st="${st:-unknown}" -v cap="${cap:--}" -v uv="$uv" -v ua="$ua" \
+	line=$(awk -v now="$now" -v st="${st:-unknown}" -v cap="${cap:--}" -v uv="$uv" -v ua="$ua" -v mode="$MODE" \
 		-v uw="$uw" -v cc="${cc:--}" -v on="${on:-none}" 'BEGIN {
+		counter_ok = (cc ~ /^-?[0-9]+$/)
+		if (counter_ok) { cc += 0; if (cc < -2147483648 || cc > 2147483647) counter_ok = 0 }
+		if (counter_ok) cc = sprintf("%.0f", cc); else cc = "-"
 		isint = "^-?[0-9]+$"
 		flags = ""
 		hv = (uv ~ isint); hi = (ua ~ isint); hp = (uw ~ isint)
 		if (!hv) flags = flags (uv == "" ? "missing-v," : "bad-reading,")
-		if (ua == "" && uw == "") flags = flags "missing-i,"
-		else if ((ua != "" && !hi) || (uw != "" && !hp)) flags = flags "bad-reading,"
+		if (mode == "vi") {
+			if (ua == "") flags = flags "missing-i,"
+			else if (!hi) flags = flags "bad-reading,"
+		} else if (mode == "gauge") {
+			if (uw == "") flags = flags "missing-p,"
+			else if (!hp) flags = flags "bad-reading,"
+		} else {
+			if (ua == "" && uw == "") flags = flags "missing-i,"
+			else if ((ua != "" && !hi) || (uw != "" && !hp)) flags = flags "bad-reading,"
+		}
 		if (hv) { uv += 0; if (uv < 2500000 || uv > 5000000) flags = flags "range-v," }
 		if (hi) { ua += 0; if (ua < 0) ua = -ua; if (ua > 10000000) flags = flags "range-i," }
 		if (hp) { uw += 0; if (uw < 0) uw = -uw }
-		# power: the gauge power when it reads positive, else voltage x current
-		have = 0; p = 0
-		if (hp && uw > 0) { p = uw / 1000; have = 1 }
-		else if (hv && hi) { p = (uv / 1000) * (ua / 1000) / 1000; have = 1 }
+		vip = (hv && hi) ? (uv / 1000) * (ua / 1000) / 1000 : -1
+		# power: by mode. default: the gauge power when it reads positive, else voltage x current
+		have = 0; p = 0; src = "-"
+		if (mode == "vi") { if (vip >= 0) { p = vip; have = 1; src = "vi" } }
+		else if (mode == "gauge") { if (hp) { p = uw / 1000; have = 1; src = "gauge" } }
+		else if (hp && uw > 0) { p = uw / 1000; have = 1; src = "gauge" }
+		else if (vip >= 0) { p = vip; have = 1; src = "vi" }
 		if (have && p <= 0) flags = flags "zero-power,"
 		if (have && p > 20000) flags = flags "range-p,"
-		if (!have && (hi || hp)) flags = flags "zero-power,"
+		if (!have && mode == "default" && (hi || hp)) flags = flags "zero-power,"
+		# diagnostic only, never a flag: the gauge against voltage x current
+		warn = "n/a"
+		if (hp && vip >= 0) {
+			d = uw / 1000 - vip; if (d < 0) d = -d
+			warn = (d * 5 > vip ? "gauge-disagree" : "none")
+		}
 		if (st != "Discharging") flags = flags "not-discharging,"
 		if (on != "none") flags = flags "charger,"
 		if (flags == "") flags = "ok"; else sub(/,$/, "", flags)
-		printf "%s status=%s cap=%s v_mV=%s i_mA=%s p_mW=%s counter_uAh=%s online=%s flags=%s", \
+		printf "%s status=%s cap=%s v_mV=%s i_mA=%s p_mW=%s counter_uAh=%s online=%s flags=%s req=%s src=%s gauge_mW=%s warn=%s", \
 			now, st, cap, (hv ? sprintf("%.0f", uv / 1000) : "-"), (hi ? sprintf("%.0f", ua / 1000) : "-"), \
-			(have ? sprintf("%.0f", p) : "-"), cc, on, flags }')
+			(have ? sprintf("%.0f", p) : "-"), cc, on, flags, mode, src, (hp ? sprintf("%.0f", uw / 1000) : "-"), warn }')
 	emit "$line"
 	samples="$samples$line
 "
@@ -133,14 +175,22 @@ while :; do
 done
 stop=$(clock)
 
-summary=$(printf '%s' "$samples" | awk -v start="$start" -v stop="$stop" -v secs="$secs" -v step="$step" -v run_id="$RUN_ID" '
+summary=$(printf '%s' "$samples" | awk -v start="$start" -v stop="$stop" -v secs="$secs" -v step="$step" -v run_id="$RUN_ID" -v mode="$MODE" '
 $1 ~ /^[0-9]+$/ {
 	n++; t[n] = $1 + 0
 	split("", f)
 	for (i = 2; i <= NF; i++) { split($i, a, "="); f[a[1]] = a[2] }
 	isok[n] = (f["flags"] == "ok"); p[n] = f["p_mW"] + 0; v[n] = f["v_mV"] + 0
-	if (f["counter_uAh"] ~ /^[0-9]+$/) { if (c0 == "") c0 = f["counter_uAh"]; c1 = f["counter_uAh"] }
+	if (f["counter_uAh"] ~ /^-?[0-9]+$/) {
+		cv = f["counter_uAh"] + 0
+		if (cv >= -2147483648 && cv <= 2147483647) {
+			if (!have_counter) { c0 = cv; have_counter = 1 }
+			c1 = cv
+		}
+	}
 	cap1 = f["cap"]; if (cap0 == "") cap0 = f["cap"]
+	if (f["src"] == "gauge") sg++; else if (f["src"] == "vi") sv++
+	if (f["warn"] == "gauge-disagree") { wn++; wc++ } else if (f["warn"] == "none") wc++
 }
 END {
 	for (i = 1; i <= n; i++) {
@@ -158,10 +208,20 @@ END {
 	if (backwards) reasons = reasons "clock-backwards,"
 	if (maxdt > 2 * step + 2) reasons = reasons "sample-gap,"
 	if (reasons == "") reasons = "none"; else sub(/,$/, "", reasons)
+	src = (sg > 0 && sv > 0 ? "mixed" : (sg > 0 ? "gauge" : (sv > 0 ? "vi" : "none")))
 	printf "# SUMMARY  samples=%d valid_samples=%d invalid_samples=%d elapsed_s=%d requested_s=%d\n", n, ok, bad, elapsed, secs
 	printf "#   avg_mW=%.0f peak_mW=%.0f avg_mV=%.0f time_weighted_avg_mW=%.0f\n", (ok ? ps / ok : 0), pk, (ok ? vs / ok : 0), (wt ? ws / wt : 0)
 	printf "#   energy_mWh=%.2f over %d s of valid samples\n", ws / 3600, wt
-	if (c0 != "") printf "#   charge_counter_delta_uAh=%d\n", c1 - c0
+	if (have_counter) {
+		# Signed 32-bit endpoints bound subtraction to 4294967295; awk doubles represent this exactly.
+		cd = c1 - c0
+		printf "#   charge_counter_delta_uAh=%.0f\n", cd
+		if (cd < 0) cd = -cd
+		# Supporting evidence only: bounded delta x average voltage stays within exact awk integer range.
+		if (ok && ws > 0) printf "#   counter_energy_mWh=%.2f counter_vs_energy_pct=%.0f (supporting evidence only)\n", cd * (vs / ok) / 1000000, 100 * (cd * (vs / ok) / 1000000) / (ws / 3600)
+	}
+	printf "#   power_src_requested=%s power_src=%s\n", mode, src
+	printf "#   gauge_disagreement_samples=%d of %d comparable (diagnostic: gauge differs from voltage x current by more than 20%%; not a validity reason)\n", wn, wc
 	printf "#   capacity_start=%s capacity_end=%s\n", cap0, cap1
 	printf "#   run_id=%s window_start=%d window_end=%d\n", run_id, start, stop
 	printf "#   invalid_reasons=%s\n", reasons

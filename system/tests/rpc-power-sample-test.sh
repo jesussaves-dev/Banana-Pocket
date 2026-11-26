@@ -111,6 +111,138 @@ run 3 "zero power"
 case "$out" in *"zero-power"*"valid=no"*) ;; *) fail "zero power: $out" ;; esac
 rm "$PS/battery/power_now"; echo -500000 > "$PS/battery/current_now"
 
+# ---- RPC_POWER_SRC: the power measurement source ----
+# The frozen gauge of the G2 evidence (task11-preserve/g2): power_now stuck at 126433 mW (~106x) while voltage x current
+# is 4250 mV x 280 mA = 1190 mW. Legacy default and gauge mode reject it; vi mode measures from voltage x current.
+echo 4250000 > "$PS/battery/voltage_now"; echo -280000 > "$PS/battery/current_now"; echo 126433000 > "$PS/battery/power_now"
+run 3 "default, frozen gauge"
+case "$out" in *"flags=range-p req=default src=gauge gauge_mW=126433 warn=gauge-disagree"*"power_src_requested=default power_src=gauge"*"valid=no"*) ;; *) fail "default frozen gauge: $out" ;; esac
+run 3 "gauge, frozen gauge" 1 RPC_POWER_SRC=gauge
+case "$out" in *"flags=range-p req=gauge src=gauge"*"power_src_requested=gauge power_src=gauge"*"valid=no"*) ;; *) fail "gauge frozen: $out" ;; esac
+run 0 "vi, frozen gauge" 1 RPC_POWER_SRC=vi
+case "$out" in *"p_mW=1190 counter_uAh=1500000 online=none flags=ok req=vi src=vi gauge_mW=126433 warn=gauge-disagree"*) ;; *) fail "vi frozen sample: $out" ;; esac
+case "$out" in *"avg_mW=1190 "*"power_src_requested=vi power_src=vi"*"gauge_disagreement_samples=1 of 1 comparable"*"valid=yes"*) ;; *) fail "vi frozen summary: $out" ;; esac
+grep -q '^# run id=none secs=1 interval=1 power_src_requested=vi$' "$W/p.log" || fail "log lacks requested mode: $(head -n1 "$W/p.log")"
+grep -q '^#   power_src_requested=vi power_src=vi$' "$W/p.log" || fail "log lacks source summary"
+# vi never reads the gauge for the verdict: a missing, empty or garbage power_now changes nothing
+rm "$PS/battery/power_now"
+run 0 "vi, no gauge" 1 RPC_POWER_SRC=vi
+case "$out" in *"p_mW=1190 "*"req=vi src=vi gauge_mW=- warn=n/a"*"valid=yes"*) ;; *) fail "vi without gauge: $out" ;; esac
+echo abc > "$PS/battery/power_now"
+run 0 "vi, garbage gauge" 1 RPC_POWER_SRC=vi
+case "$out" in *"p_mW=1190 "*"src=vi gauge_mW=- warn=n/a"*"valid=yes"*) ;; *) fail "vi garbage gauge: $out" ;; esac
+# the 20% disagreement is a diagnostic: exactly 20% (1428 vs 1190 would be 20%) is not over, one more mW is, and
+# neither fails the run
+echo 1428000 > "$PS/battery/power_now"
+run 0 "vi, gauge at 20%" 1 RPC_POWER_SRC=vi
+case "$out" in *"gauge_mW=1428 warn=none"*"gauge_disagreement_samples=0 of 1 comparable"*) ;; *) fail "20% boundary: $out" ;; esac
+echo 1429000 > "$PS/battery/power_now"
+run 0 "vi, gauge over 20%" 1 RPC_POWER_SRC=vi
+case "$out" in *"gauge_mW=1429 warn=gauge-disagree"*"gauge_disagreement_samples=1 of 1 comparable"*"valid=yes"*) ;; *) fail "over 20%: $out" ;; esac
+# A readable zero gauge is comparable and disagrees with a positive VI reading.
+echo 0 > "$PS/battery/power_now"
+run 0 "vi, zero gauge diagnostic" 1 RPC_POWER_SRC=vi
+case "$out" in *"gauge_mW=0 warn=gauge-disagree"*"gauge_disagreement_samples=1 of 1 comparable"*"valid=yes"*) ;; *) fail "zero gauge diagnostic: $out" ;; esac
+# gauge mode: a plausible power_now is used as is (and recorded as the source)
+echo 1234000 > "$PS/battery/power_now"
+run 0 "gauge, valid gauge" 1 RPC_POWER_SRC=gauge
+case "$out" in *"p_mW=1234 "*"req=gauge src=gauge gauge_mW=1234 warn=none"*"power_src_requested=gauge power_src=gauge"*"valid=yes"*) ;; *) fail "gauge valid: $out" ;; esac
+# gauge mode never falls back: valid voltage and current are present in all of these
+rm "$PS/battery/power_now"
+run 3 "gauge, missing gauge" 1 RPC_POWER_SRC=gauge
+case "$out" in *"p_mW=- "*"flags=missing-p req=gauge src=- gauge_mW=- "*"power_src=none"*"valid=no"*) ;; *) fail "gauge missing: $out" ;; esac
+echo 0 > "$PS/battery/power_now"
+run 3 "gauge, zero gauge" 1 RPC_POWER_SRC=gauge
+case "$out" in *"p_mW=0 "*"flags=zero-power req=gauge src=gauge"*"valid=no"*) ;; *) fail "gauge zero: $out" ;; esac
+echo abc > "$PS/battery/power_now"
+run 3 "gauge, garbage gauge" 1 RPC_POWER_SRC=gauge
+case "$out" in *"flags=bad-reading req=gauge src=-"*"valid=no"*) ;; *) fail "gauge garbage: $out" ;; esac
+echo 1234000 > "$PS/battery/power_now"
+echo 4000 > "$PS/battery/voltage_now"
+run 3 "gauge, bad voltage" 1 RPC_POWER_SRC=gauge
+case "$out" in *"range-v"*"valid=no"*) ;; *) fail "gauge voltage range: $out" ;; esac
+# the legacy default is unchanged: a positive gauge wins, a zero or missing one falls back to voltage x current
+echo 4250000 > "$PS/battery/voltage_now"
+run 0 "default, positive gauge"
+case "$out" in *"p_mW=1234 "*"req=default src=gauge "*"power_src_requested=default power_src=gauge"*"valid=yes"*) ;; *) fail "default gauge: $out" ;; esac
+echo 0 > "$PS/battery/power_now"
+run 0 "default, zero gauge"
+case "$out" in *"p_mW=1190 "*"req=default src=vi "*"power_src=vi"*"valid=yes"*) ;; *) fail "default zero-gauge fallback: $out" ;; esac
+rm "$PS/battery/power_now"
+run 0 "default, no gauge"
+case "$out" in *"p_mW=1190 "*"req=default src=vi gauge_mW=- warn=n/a"*"valid=yes"*) ;; *) fail "default no gauge: $out" ;; esac
+# vi mode: invalid voltage or current is rejected exactly as before, and never replaced by the gauge
+echo 1234000 > "$PS/battery/power_now"
+echo 4000 > "$PS/battery/voltage_now"
+run 3 "vi, bad voltage" 1 RPC_POWER_SRC=vi
+case "$out" in *"range-v"*"valid=no"*) ;; *) fail "vi voltage range: $out" ;; esac
+echo 4250000 > "$PS/battery/voltage_now"; echo -50000000 > "$PS/battery/current_now"
+run 3 "vi, huge current" 1 RPC_POWER_SRC=vi
+case "$out" in *"range-i"*"valid=no"*) ;; *) fail "vi current range: $out" ;; esac
+echo 0 > "$PS/battery/current_now"
+run 3 "vi, zero current" 1 RPC_POWER_SRC=vi
+case "$out" in *"p_mW=0 "*"zero-power"*"src=vi gauge_mW=1234"*"valid=no"*) ;; *) fail "vi zero current: $out" ;; esac
+echo abc > "$PS/battery/current_now"
+run 3 "vi, garbage current" 1 RPC_POWER_SRC=vi
+case "$out" in *"bad-reading"*"src=-"*"valid=no"*) ;; *) fail "vi garbage current: $out" ;; esac
+rm "$PS/battery/current_now"
+run 3 "vi, missing current" 1 RPC_POWER_SRC=vi
+case "$out" in *"p_mW=- "*"missing-i"*"src=-"*"valid=no"*) ;; *) fail "vi missing current (gauge present): $out" ;; esac
+echo -500000 > "$PS/battery/current_now"; echo 4000000 > "$PS/battery/voltage_now"; rm "$PS/battery/power_now"
+# the other protections hold in both explicit modes: a charger, a charging battery
+echo 1234000 > "$PS/battery/power_now"
+for m in vi gauge; do
+	echo 1 > "$PS/usb/online"
+	run 3 "$m, charger" 1 RPC_POWER_SRC=$m
+	case "$out" in *"charger"*"valid=no"*) ;; *) fail "$m charger: $out" ;; esac
+	echo 0 > "$PS/usb/online"; echo Charging > "$PS/battery/status"
+	run 3 "$m, charging" 1 RPC_POWER_SRC=$m
+	case "$out" in *"not-discharging"*"valid=no"*) ;; *) fail "$m charging: $out" ;; esac
+	echo Discharging > "$PS/battery/status"
+done
+# output failures still end a vi or gauge run: stdout on /dev/full, and a device as the log
+for m in vi gauge; do
+	echo "$T0" > "$CLKF"; rm -f "$CLKF.used"
+	env RPC_SYS=$S RPC_OUT=$W/so-$m.log RPC_CLOCK=$CLK CLKF=$CLKF RPC_POWER_SRC=$m sh "$PWR" 3 > /dev/full 2>/dev/null; rc=$?
+	[ $rc -eq 3 ] || fail "$m stdout failure rc=$rc"
+	grep -q '^#   valid=yes$' "$W/so-$m.log" && fail "$m stdout failure: log says valid=yes"
+	grep -q 'output-error' "$W/so-$m.log" || fail "$m stdout failure: log lacks output-error"
+	out=$(RPC_SYS=$S RPC_OUT=/dev/full RPC_POWER_SRC=$m sh "$PWR" 1 2>/dev/null); rc=$?
+	[ $rc -eq 2 ] || fail "$m RPC_OUT=/dev/full rc=$rc"
+done
+rm "$PS/battery/power_now"
+# unknown (and empty, and wrongly cased) modes are a usage error before anything is sampled
+for bad in foo VI Gauge auto default ""; do
+	out=$(RPC_SYS=$S RPC_POWER_SRC=$bad timeout 5 sh "$PWR" 1 2>&1); rc=$?
+	[ $rc -eq 2 ] || fail "RPC_POWER_SRC='$bad' rc=$rc: $out"
+	case "$out" in *"epoch status"*|*"valid="*) fail "RPC_POWER_SRC='$bad' sampled: $out" ;; esac
+done
+# the charge counter is supporting evidence: 1389 uAh x 4000 mV = 5.56 mWh against the 5.56 mWh integrated, reported
+# with no verdict of its own; a counter that does not move does not invalidate the run either
+printf '[ "$1" -ge %d ] && echo 1498611 > %s/battery/charge_counter\n' $((T0 + 5)) "$PS" > "$CLKF.hook"
+run 0 "counter agreement" 10 RPC_POWER_SRC=vi
+rm -f "$CLKF.hook"; echo 1500000 > "$PS/battery/charge_counter"
+case "$out" in *"charge_counter_delta_uAh=-1389"*"counter_energy_mWh=5.56 counter_vs_energy_pct=100 (supporting evidence only)"*"valid=yes"*) ;; *) fail "counter agreement: $out" ;; esac
+run 0 "counter flat" 10 RPC_POWER_SRC=vi
+case "$out" in *"counter_energy_mWh=0.00 counter_vs_energy_pct=0 "*"valid=yes"*) ;; *) fail "counter flat: $out" ;; esac
+# Signed endpoints must be differenced before taking the magnitude, including across zero.
+echo -1500000 > "$PS/battery/charge_counter"
+printf '[ "$1" -ge %d ] && echo -1501389 > %s/battery/charge_counter\n' $((T0 + 5)) "$PS" > "$CLKF.hook"
+run 0 "negative counter" 10 RPC_POWER_SRC=vi
+case "$out" in *"charge_counter_delta_uAh=-1389"*"counter_energy_mWh=5.56 counter_vs_energy_pct=100 "*) ;; *) fail "negative counter: $out" ;; esac
+echo -1000 > "$PS/battery/charge_counter"
+printf '[ "$1" -ge %d ] && echo 389 > %s/battery/charge_counter\n' $((T0 + 5)) "$PS" > "$CLKF.hook"
+run 0 "counter crossing zero" 10 RPC_POWER_SRC=vi
+case "$out" in *"charge_counter_delta_uAh=1389"*"counter_energy_mWh=5.56 counter_vs_energy_pct=100 "*) ;; *) fail "counter crossing zero: $out" ;; esac
+echo -2147483648 > "$PS/battery/charge_counter"
+printf '[ "$1" -ge %d ] && echo 2147483647 > %s/battery/charge_counter\n' $((T0 + 5)) "$PS" > "$CLKF.hook"
+run 0 "counter signed limits" 10 RPC_POWER_SRC=vi
+case "$out" in *"charge_counter_delta_uAh=4294967295"*"counter_energy_mWh=17179869.18 "*) ;; *) fail "counter signed limits: $out" ;; esac
+rm -f "$CLKF.hook"; echo 2147483648 > "$PS/battery/charge_counter"
+run 0 "counter out of range" 2 RPC_POWER_SRC=vi
+case "$out" in *"counter_energy_mWh="*) fail "out-of-range counter used: $out" ;; esac
+rm -f "$CLKF.hook"; echo 1500000 > "$PS/battery/charge_counter"
+
 # a charger feeding the unit invalidates the run
 echo 1 > "$PS/usb/online"
 run 3 "charger"
@@ -418,4 +550,73 @@ RPC_JOIN_TOL=x sh "$JOIN" "$W/ok/b.log" "$W/p-ok.log" >/dev/null 2>&1; [ $? -eq 
 # a power log that recorded an output failure is never accepted, whatever else it says
 { cat "$W/p-ok.log"; echo '# valid=no reasons=output-error'; } > "$W/p-oe.log"
 join "$W/ok/b.log" "$W/p-oe.log" 3; case "$out" in *"power-output-error"*) ;; *) fail "join output error: $out" ;; esac
+# measurement source: the power log carries it into the join, which accepts only one consistent source; the bench log
+# (the emulator collector) states none and is not asked to
+join "$W/ok/b.log" "$W/p-ok.log" 0; case "$out" in *"power_src=vi valid=yes"*"power_src_requested=default"*) ;; *) fail "join reports source: $out" ;; esac
+INIT=$((bs - 1)); run 0 "power, vi" $((be - bs + 4)) RPC_RUN_ID=run-ok RPC_POWER_SRC=vi; cp "$W/p.log" "$W/p-vi.log"
+echo 1234000 > "$PS/battery/power_now"
+INIT=$((bs - 1)); run 0 "power, gauge" $((be - bs + 4)) RPC_RUN_ID=run-ok RPC_POWER_SRC=gauge; cp "$W/p.log" "$W/p-gauge.log"
+rm "$PS/battery/power_now"
+# a default run whose source changes mid-run (the gauge appears at +1): mixed, valid for the sampler, never joined
+printf '[ "$1" -ge %d ] && echo 1234000 > %s/battery/power_now\n' $((bs + 1)) "$PS" > "$CLKF.hook"
+INIT=$((bs - 1)); run 0 "power, mixed" $((be - bs + 4)) RPC_RUN_ID=run-ok; cp "$W/p.log" "$W/p-mixed.log"
+rm -f "$CLKF.hook" "$PS/battery/power_now"
+grep -q '^#   power_src_requested=default power_src=mixed$' "$W/p-mixed.log" || fail "mixed run summary: $(grep power_src "$W/p-mixed.log")"
+join "$W/ok/b.log" "$W/p-vi.log" 0;    case "$out" in *"power_src=vi valid=yes"*"power_src_requested=vi"*) ;; *) fail "join vi: $out" ;; esac
+join "$W/ok/b.log" "$W/p-gauge.log" 0; case "$out" in *"power_src=gauge valid=yes"*"power_src_requested=gauge"*) ;; *) fail "join gauge: $out" ;; esac
+join "$W/ok/b.log" "$W/p-mixed.log" 3; case "$out" in *"power-src-unusable"*) ;; *) fail "join mixed: $out" ;; esac
+# a log without the source record (an old log), and records that contradict each other
+grep -v '^#   power_src_requested=' "$W/p-vi.log" > "$W/p-nosrc.log"
+join "$W/ok/b.log" "$W/p-nosrc.log" 3; case "$out" in *"power-src-missing"*) ;; *) fail "join no source: $out" ;; esac
+sed 's/^#   power_src_requested=vi power_src=vi$/#   power_src_requested=vi power_src=gauge/' "$W/p-vi.log" > "$W/p-t1.log"
+join "$W/ok/b.log" "$W/p-t1.log" 3; case "$out" in *"power-src-inconsistent"*) ;; *) fail "join summary vs request: $out" ;; esac
+sed 's/^#   power_src_requested=vi power_src=vi$/#   power_src_requested=gauge power_src=vi/' "$W/p-vi.log" > "$W/p-t2.log"
+join "$W/ok/b.log" "$W/p-t2.log" 3; case "$out" in *"power-src-inconsistent"*) ;; *) fail "join request vs source: $out" ;; esac
+sed '0,/ src=vi /s// src=gauge /' "$W/p-vi.log" > "$W/p-t3.log"
+join "$W/ok/b.log" "$W/p-t3.log" 3; case "$out" in *"power-src-inconsistent"*) ;; *) fail "join sample vs summary: $out" ;; esac
+sed '0,/ req=vi /s// req=gauge /' "$W/p-vi.log" > "$W/p-t4.log"
+join "$W/ok/b.log" "$W/p-t4.log" 3; case "$out" in *"power-src-inconsistent"*) ;; *) fail "join sample request: $out" ;; esac
+# matched comparison of two power logs: the same source only
+cmp_() { out=$(sh "$JOIN" --compare-power "$1" "$2" 2>&1); rc=$?; [ $rc -eq "$3" ] || fail "compare $1 $2 rc=$rc: $out"; }
+cmp_ "$W/p-vi.log" "$W/p-ok.log" 0;    case "$out" in *"power_src=vi valid=yes"*) ;; *) fail "compare vi/default-vi: $out" ;; esac
+cmp_ "$W/p-gauge.log" "$W/p-gauge.log" 0; case "$out" in *"power_src=gauge valid=yes"*) ;; *) fail "compare gauge/gauge: $out" ;; esac
+cmp_ "$W/p-vi.log" "$W/p-gauge.log" 3; case "$out" in *"power-src-mismatch"*) ;; *) fail "compare vi/gauge: $out" ;; esac
+cmp_ "$W/p-gauge.log" "$W/p-vi.log" 3; case "$out" in *"power-src-mismatch"*) ;; *) fail "compare gauge/vi: $out" ;; esac
+cmp_ "$W/p-vi.log" "$W/p-mixed.log" 3; case "$out" in *"b-power-src-unusable"*) ;; *) fail "compare mixed: $out" ;; esac
+cmp_ "$W/p-vi.log" "$W/p-nosrc.log" 3; case "$out" in *"b-power-src-missing"*) ;; *) fail "compare no source: $out" ;; esac
+cmp_ "$W/p-vi.log" "$W/p-bad.log" 3; case "$out" in *"b-power-invalid"*) ;; *) fail "compare invalid: $out" ;; esac
+cmp_ "$W/p-vi.log" "$W/p-oe.log" 3; case "$out" in *"b-power-output-error"*) ;; *) fail "compare output error: $out" ;; esac
+# Both entry points must validate the evidence, not just the verdict and source summary.
+reject_evidence() {
+	join "$W/ok/b.log" "$1" 3
+	cmp_ "$W/p-vi.log" "$1" 3
+}
+printf '#   power_src_requested=vi power_src=vi\n#   valid=yes\n' > "$W/p-summary-only.log"
+reject_evidence "$W/p-summary-only.log"
+grep -v '^[0-9]' "$W/p-vi.log" > "$W/p-no-samples.log"
+reject_evidence "$W/p-no-samples.log"
+sed '0,/ src=vi /s// src=- /' "$W/p-vi.log" > "$W/p-unknown-src.log"
+reject_evidence "$W/p-unknown-src.log"
+sed '1s/power_src_requested=vi/power_src_requested=gauge/' "$W/p-vi.log" > "$W/p-header-mismatch.log"
+reject_evidence "$W/p-header-mismatch.log"
+sed '1s/$/ power_src_requested=vi/' "$W/p-vi.log" > "$W/p-header-duplicate.log"
+reject_evidence "$W/p-header-duplicate.log"
+sed '0,/ req=vi /s// req=vi req=vi /' "$W/p-vi.log" > "$W/p-sample-duplicate.log"
+reject_evidence "$W/p-sample-duplicate.log"
+sed '0,/ flags=ok /s// flags=charger /' "$W/p-vi.log" > "$W/p-sample-invalid.log"
+reject_evidence "$W/p-sample-invalid.log"
+sed 's/samples=6 valid_samples=6/samples=7 valid_samples=7/' "$W/p-vi.log" > "$W/p-count.log"
+reject_evidence "$W/p-count.log"
+sed '/^#   energy_mWh=/d' "$W/p-vi.log" > "$W/p-no-energy.log"
+reject_evidence "$W/p-no-energy.log"
+sed 's/^#   energy_mWh=[^ ]*/#   energy_mWh=999.99/' "$W/p-vi.log" > "$W/p-energy.log"
+reject_evidence "$W/p-energy.log"
+sed '/^#   run_id=.* window_start=/d' "$W/p-vi.log" > "$W/p-no-window.log"
+reject_evidence "$W/p-no-window.log"
+sed '/^#   run_id=.* window_start=/p' "$W/p-vi.log" > "$W/p-duplicate-window.log"
+reject_evidence "$W/p-duplicate-window.log"
+sed '/^#   power_src_requested=/p' "$W/p-vi.log" > "$W/p-duplicate-summary.log"
+reject_evidence "$W/p-duplicate-summary.log"
+sh "$JOIN" --compare-power "$W/p-vi.log" 2>/dev/null; [ $? -eq 2 ] || fail "compare usage"
+sh "$JOIN" --compare-power "$W/p-vi.log" "$W/absent" 2>/dev/null; [ $? -eq 2 ] || fail "compare unreadable"
 echo "rpc-power-sample: ok"
