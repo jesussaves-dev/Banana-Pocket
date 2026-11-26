@@ -397,6 +397,135 @@ static void test_directory_appearance(void)
 	assert(rmdir(parent) == 0);
 }
 
+static void test_frame_telemetry(void)
+{
+	struct fake_paced_runtime fake = { .now = 1000000000ull, .fps = 100.0, .wait_result = 1 };
+	struct retro_paced_ops ops = fake_ops(&fake);
+	struct retro_paced_runner runner;
+	unsigned frame = 1;
+	char line[RETRO_FRAME_STATS_LINE_MAX];
+	assert(retro_paced_start(&runner, fake.fps, fake.now));
+	/* Disabled by default: no statistics are gathered. */
+	assert(!runner.telemetry);
+	for (; frame <= 3; ++frame)
+		assert(retro_paced_run_one(&runner, &ops, frame) == RETRO_PACED_FRAME);
+	assert(runner.stats.frames == 0 && runner.stats.intervals == 0);
+
+	assert(retro_paced_start(&runner, fake.fps, fake.now));
+	runner.telemetry = true;
+	for (frame = 4; frame <= 6; ++frame)
+		assert(retro_paced_run_one(&runner, &ops, frame) == RETRO_PACED_FRAME);
+	fake.cost_ns = 25000000ull; /* one 25 ms frame at a 10 ms period */
+	assert(retro_paced_run_one(&runner, &ops, 7) == RETRO_PACED_FRAME);
+	for (frame = 8; frame <= 9; ++frame)
+		assert(retro_paced_run_one(&runner, &ops, frame) == RETRO_PACED_FRAME);
+	assert(runner.stats.frames == 6 && runner.stats.intervals == 5);
+	assert(runner.stats.restarts == 0 && runner.stats.rate_changes == 0 && runner.stats.stalls == 0);
+	assert(runner.stats.interval_min_ns == 0 && runner.stats.interval_max_ns == 25000000ull);
+	assert(runner.stats.interval_sum_ns == 55000000ull);
+	assert(runner.stats.jitter[0] == 3 && runner.stats.jitter[5] == 0 && runner.stats.jitter[6] == 2);
+	assert(runner.stats.late_frames == 2 && runner.stats.late_max_ns == 15000000ull);
+	assert(runner.stats.late_n >= runner.stats.late_frames && runner.stats.late_n < runner.stats.frames);
+	assert(runner.clock.overruns == 2);
+	uint64_t overruns_before = runner.clock.overruns, rebases_before = runner.clock.rebases;
+
+	/* A failed restart changes nothing. */
+	assert(!retro_paced_restart(&runner, 0.0, fake.now));
+	assert(runner.telemetry && runner.stats.frames == 6 && runner.stats.restarts == 0 &&
+	       runner.clock.overruns == overruns_before && runner.clock.rebases == rebases_before);
+
+	/* A restart (resume) keeps the totals, including the cumulative deadline and rebase counters, and discards
+	 * only the interval across the discontinuity. */
+	fake.now += 3000000000ull;
+	assert(retro_paced_restart(&runner, fake.fps, fake.now));
+	assert(runner.telemetry && runner.stats.frames == 6 && runner.stats.restarts == 1);
+	assert(runner.clock.overruns == overruns_before && runner.clock.rebases == rebases_before);
+	assert(retro_paced_run_one(&runner, &ops, 10) == RETRO_PACED_FRAME);
+	assert(runner.stats.frames == 7 && runner.stats.intervals == 5);
+	/* A long stall without a discontinuity is genuine pacing evidence: it stays in the interval statistics and
+	 * the jitter histogram, and is also counted as a stall. */
+	fake.cost_ns = 1000000000ull;
+	assert(retro_paced_run_one(&runner, &ops, 11) == RETRO_PACED_FRAME);
+	assert(retro_paced_run_one(&runner, &ops, 12) == RETRO_PACED_FRAME);
+	assert(runner.stats.stalls == 1 && runner.stats.intervals == 7);
+	assert(runner.stats.interval_max_ns == 1000000000ull);
+	assert(runner.stats.interval_sum_ns >= 55000000ull + 1000000000ull);
+	assert(runner.stats.jitter[7] == 1);
+	assert(runner.clock.overruns > overruns_before);
+
+	/* A rate change is an explicit discontinuity: counted, and its interval is not recorded. */
+	fake.change_fps = 50.0;
+	assert(retro_paced_run_one(&runner, &ops, 13) == RETRO_PACED_FRAME);
+	uint64_t intervals = runner.stats.intervals;
+	assert(runner.stats.rate_changes == 1);
+	assert(retro_paced_run_one(&runner, &ops, 14) == RETRO_PACED_FRAME);
+	assert(runner.stats.intervals == intervals);
+	assert(retro_paced_run_one(&runner, &ops, 15) == RETRO_PACED_FRAME);
+	assert(runner.stats.intervals == intervals + 1);
+
+	assert(retro_frame_stats_format(&runner, line, sizeof(line)) > 0);
+	assert(strstr(line, "Frame telemetry: frames=9 ") == NULL);
+	assert(strstr(line, "frames=12 ") && strstr(line, "restarts=1 rate_changes=1 stalls_gt8p=1 period_ns=20000000 "));
+	assert(strstr(line, "interval_max_ns=1000000000 "));
+	assert(!strstr(line, "gaps="));
+	assert(retro_frame_stats_format(&runner, line, 32) < 0);
+
+	/* late_mean_ns averages the frames that started after their deadline, not every frame. */
+	struct retro_paced_runner lateness;
+	assert(retro_paced_start(&lateness, 100.0, 1000000000ull));
+	lateness.telemetry = true;
+	retro_frame_stats_record(&lateness.stats, 1000000000ull, 1000000000ull, 10000000ull); /* on time */
+	retro_frame_stats_record(&lateness.stats, 1010000100ull, 1010000000ull, 10000000ull); /* 100 ns late */
+	retro_frame_stats_record(&lateness.stats, 1020000300ull, 1020000000ull, 10000000ull); /* 300 ns late */
+	retro_frame_stats_record(&lateness.stats, 1030000000ull, 1030000000ull, 10000000ull); /* on time */
+	assert(lateness.stats.frames == 4 && lateness.stats.late_n == 2 && lateness.stats.late_sum_ns == 400);
+	assert(retro_frame_stats_format(&lateness, line, sizeof(line)) > 0);
+	assert(strstr(line, "late_frames=0 late_started=2 late_mean_ns=200 late_max_ns=300 "));
+
+	/* With telemetry off a restart is exactly the original start: the deadline counters are zeroed again. */
+	struct fake_paced_runtime off = { .now = 1000000000ull, .fps = 100.0, .wait_result = 1, .cost_ns = 25000000ull };
+	struct retro_paced_ops off_ops = fake_ops(&off);
+	struct retro_paced_runner plain;
+	assert(retro_paced_start(&plain, off.fps, off.now));
+	for (unsigned f = 1; f <= 3; ++f) {
+		off.cost_ns = 25000000ull;
+		assert(retro_paced_run_one(&plain, &off_ops, f) == RETRO_PACED_FRAME);
+	}
+	assert(plain.clock.overruns > 0 && !plain.telemetry);
+	assert(retro_paced_restart(&plain, off.fps, off.now));
+	assert(plain.clock.overruns == 0 && plain.clock.rebases == 0 && !plain.telemetry);
+	assert(plain.stats.frames == 0 && plain.stats.restarts == 0);
+
+	/* Odd inputs: no timestamp, a clock that steps back, no period, exact thresholds. */
+	struct retro_frame_stats e;
+	const uint64_t P = 10000000ull;
+	memset(&e, 0, sizeof(e));
+	retro_frame_stats_record(NULL, 5, 5, P);
+	retro_frame_stats_record(&e, 0, 5, P); /* start_ns == 0: unreadable clock, not a frame */
+	assert(e.frames == 0 && e.last_start_ns == 0 && e.intervals == 0);
+	retro_frame_stats_record(&e, 2000000000ull, 2000000000ull, P); /* first frame: no interval, not late */
+	assert(e.frames == 1 && e.intervals == 0 && e.late_n == 0);
+	retro_frame_stats_record(&e, 1990000000ull, 2010000000ull, P); /* start < last_start: counted, no interval */
+	assert(e.frames == 2 && e.intervals == 0 && e.last_start_ns == 1990000000ull && e.stalls == 0);
+	uint64_t t = 2000000000ull;
+	retro_frame_stats_record(&e, t, t, P);                  /* exactly one period after the backwards frame */
+	t += P + 250000ull; retro_frame_stats_record(&e, t, t, P);   /* jitter exactly 250 us: second bucket */
+	t += P + 249999ull; retro_frame_stats_record(&e, t, t, P);   /* one ns under it: first bucket */
+	t += 8 * P;         retro_frame_stats_record(&e, t, t, P);   /* exactly 8 periods: not a stall */
+	assert(e.intervals == 4 && e.stalls == 0 && e.jitter[0] == 2 && e.jitter[1] == 1 && e.jitter[7] == 1);
+	t += 8 * P + 1;     retro_frame_stats_record(&e, t, t, P);   /* one ns over: a stall, still pacing evidence */
+	assert(e.intervals == 5 && e.stalls == 1 && e.jitter[7] == 2);
+	assert(e.interval_min_ns == P && e.interval_max_ns == 8 * P + 1);
+	retro_frame_stats_record(&e, t + 5, t, 0); /* period_ns == 0: late is counted, but never a late frame or a stall */
+	assert(e.late_n == 1 && e.late_max_ns == 5 && e.late_frames == 0 && e.stalls == 1 && e.intervals == 6);
+	assert(e.jitter[0] == 3 && e.jitter[7] == 2 && e.interval_min_ns == 5); /* jitter is the raw 5 ns interval */
+	/* The line buffer constant fits every field at its maximum. */
+	struct retro_paced_runner worst;
+	memset(&worst, 0xff, sizeof(worst));
+	int worst_len = retro_frame_stats_format(&worst, line, sizeof(line));
+	assert(worst_len > 0 && (size_t)worst_len < sizeof(line));
+}
+
 int main(void)
 {
 	test_profiles_and_pad();
@@ -407,6 +536,7 @@ int main(void)
 	test_clock_rate(60.0);
 	test_overrun_and_rate_change();
 	test_paced_wait_results();
+	test_frame_telemetry();
 	test_empty_source_blocks();
 	test_hotplug_lifecycle();
 	test_directory_appearance();

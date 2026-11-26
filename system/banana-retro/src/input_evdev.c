@@ -504,10 +504,87 @@ uint64_t retro_frame_clock_advance(struct retro_frame_clock *c, uint64_t now)
 	return c->deadline_ns;
 }
 
+void retro_frame_stats_record(struct retro_frame_stats *s, uint64_t start_ns,
+			      uint64_t deadline_ns, uint64_t period_ns)
+{
+	static const uint64_t edges[RETRO_FRAME_JITTER_BUCKETS - 1] = {
+		250000ull, 500000ull, 1000000ull, 2000000ull, 4000000ull, 8000000ull, 16000000ull };
+	if (!s || !start_ns) return;
+	++s->frames;
+	if (start_ns > deadline_ns) {
+		uint64_t late = start_ns - deadline_ns;
+		s->late_sum_ns += late;
+		++s->late_n;
+		if (late > s->late_max_ns) s->late_max_ns = late;
+		if (period_ns && late > period_ns / 4) ++s->late_frames;
+	}
+	if (s->last_start_ns && start_ns >= s->last_start_ns) {
+		/* Every interval since the last explicit discontinuity (restart, rate change) is pacing evidence, a long
+		 * stall included; only the stall count is kept apart so a hitch stays visible next to the jitter. */
+		uint64_t interval = start_ns - s->last_start_ns;
+		uint64_t jitter = interval > period_ns ? interval - period_ns : period_ns - interval;
+		unsigned bucket = 0;
+		while (bucket < RETRO_FRAME_JITTER_BUCKETS - 1 && jitter >= edges[bucket]) ++bucket;
+		++s->jitter[bucket];
+		if (period_ns && interval > RETRO_FRAME_STALL_PERIODS * period_ns) ++s->stalls;
+		if (!s->intervals || interval < s->interval_min_ns) s->interval_min_ns = interval;
+		if (interval > s->interval_max_ns) s->interval_max_ns = interval;
+		s->interval_sum_ns += interval;
+		++s->intervals;
+	}
+	s->last_start_ns = start_ns;
+}
+
+int retro_frame_stats_format(const struct retro_paced_runner *r, char *buffer, size_t size)
+{
+	if (!r || !buffer || !size) return -1;
+	const struct retro_frame_stats *s = &r->stats;
+	unsigned long long mean = s->intervals ? s->interval_sum_ns / s->intervals : 0;
+	unsigned long long late_mean = s->late_n ? s->late_sum_ns / s->late_n : 0;
+	int n = snprintf(buffer, size,
+		"Frame telemetry: frames=%llu intervals=%llu restarts=%llu rate_changes=%llu stalls_gt8p=%llu "
+		"period_ns=%llu interval_min_ns=%llu interval_mean_ns=%llu interval_max_ns=%llu "
+		"late_frames=%llu late_started=%llu late_mean_ns=%llu late_max_ns=%llu "
+		"missed_deadlines=%llu rebases=%llu "
+		"jitter_lt250us=%llu jitter_lt500us=%llu jitter_lt1ms=%llu jitter_lt2ms=%llu "
+		"jitter_lt4ms=%llu jitter_lt8ms=%llu jitter_lt16ms=%llu jitter_ge16ms=%llu",
+		(unsigned long long)s->frames, (unsigned long long)s->intervals,
+		(unsigned long long)s->restarts, (unsigned long long)s->rate_changes,
+		(unsigned long long)s->stalls, (unsigned long long)r->clock.period_ns,
+		(unsigned long long)s->interval_min_ns, mean, (unsigned long long)s->interval_max_ns,
+		(unsigned long long)s->late_frames, (unsigned long long)s->late_n, late_mean, (unsigned long long)s->late_max_ns,
+		(unsigned long long)r->clock.overruns, (unsigned long long)r->clock.rebases,
+		(unsigned long long)s->jitter[0], (unsigned long long)s->jitter[1],
+		(unsigned long long)s->jitter[2], (unsigned long long)s->jitter[3],
+		(unsigned long long)s->jitter[4], (unsigned long long)s->jitter[5],
+		(unsigned long long)s->jitter[6], (unsigned long long)s->jitter[7]);
+	return n < 0 || (size_t)n >= size ? -1 : n;
+}
+
 bool retro_paced_start(struct retro_paced_runner *runner, double fps, uint64_t now)
 {
 	if (!runner || !retro_frame_clock_start(&runner->clock, fps, now)) return false;
 	runner->fps = fps;
+	runner->telemetry = false;
+	runner->stats = (struct retro_frame_stats){ 0 };
+	return true;
+}
+
+bool retro_paced_restart(struct retro_paced_runner *runner, double fps, uint64_t now)
+{
+	if (!runner) return false;
+	/* Telemetry off: the resume is exactly the original start, counters and all. */
+	if (!runner->telemetry) return retro_paced_start(runner, fps, now);
+	struct retro_frame_stats stats = runner->stats;
+	uint64_t overruns = runner->clock.overruns, rebases = runner->clock.rebases;
+	if (!retro_paced_start(runner, fps, now)) return false;
+	/* The deadline and rebase counters are cumulative for the run, like the frame totals beside them. */
+	runner->clock.overruns = overruns;
+	runner->clock.rebases = rebases;
+	stats.last_start_ns = 0;
+	++stats.restarts;
+	runner->stats = stats;
+	runner->telemetry = true;
 	return true;
 }
 
@@ -520,7 +597,11 @@ enum retro_paced_result retro_paced_run_one(struct retro_paced_runner *runner,
 		return RETRO_PACED_FAILED;
 	int waited = ops->wait_until(ops->data, runner->clock.deadline_ns);
 	if (waited == 0) return RETRO_PACED_STOPPED;
-	if (waited < 0 || !ops->run_frame(ops->data, frame)) return RETRO_PACED_FAILED;
+	if (waited < 0) return RETRO_PACED_FAILED;
+	if (runner->telemetry)
+		retro_frame_stats_record(&runner->stats, ops->now_ns(ops->data),
+					 runner->clock.deadline_ns, runner->clock.period_ns);
+	if (!ops->run_frame(ops->data, frame)) return RETRO_PACED_FAILED;
 	uint64_t now = ops->now_ns(ops->data);
 	if (!now) return RETRO_PACED_FAILED;
 	double fps = ops->refresh_rate(ops->data);
@@ -531,6 +612,8 @@ enum retro_paced_result retro_paced_run_one(struct retro_paced_runner *runner,
 		runner->clock.overruns = overruns;
 		runner->clock.rebases = rebases;
 		runner->fps = fps;
+		runner->stats.last_start_ns = 0;
+		if (runner->telemetry) ++runner->stats.rate_changes;
 	} else {
 		(void)retro_frame_clock_advance(&runner->clock, now);
 	}

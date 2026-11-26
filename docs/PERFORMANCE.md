@@ -74,6 +74,32 @@ device, not here.
 > build against another, build both with `CXXFLAGS="-O2 -ffp-contract=off"`; then the same screens come out
 > identical. (`make test` does not compare against golden images, so this only matters when verifying a change.)
 
+## Native and RetroArch runs on the unit
+
+The menu numbers above come from `make bench` on a host. A game's pacing, heat and energy on the handheld are
+collected with the matched-run tools in [RPC-TEST.md](RPC-TEST.md#matched-benchmark-runs) and are **not yet
+measured**: there are no native-versus-RetroArch figures in this repository, and a host run cannot produce them.
+
+What a run records, and how to read it:
+
+| source | records | read it as |
+|---|---|---|
+| `tools/rpc-emu-bench.sh` | thermals, fan, per-policy and devfreq clocks, load, memory, emulator CPU share | context for a pacing difference (a throttled cluster explains a slow run); not a score |
+| native `Telemetry run:` / frame line (`BANANA_RETRO_TELEMETRY=1`) | frame statistics of one process, bound by pid, start time and run id | pacing of the native runtime only; RetroArch has no such line |
+| `tools/rpc-power-sample.sh` | battery `avg_mW`, `energy_mWh`, per-sample flags | discharge power while `Discharging` and no charger; plausibility-checked, units not detected |
+| `tools/rpc-run-join.sh` | the pair's windows | whether the two logs are one valid run |
+
+Compare only runs of the same game, core, ROM, settings, brightness, volume and starting battery and temperature,
+with the same window length, and repeat each configuration (heat and charge state drift between runs). The bench
+header records the core and ROM sha256 and the process's executable sha256 so a comparison can show it used the same
+files. Report the range of the repeats, never a single run, and say that the power figure is a whole-device battery
+draw, not the emulator's share.
+
+The pair's windows are integer seconds, so a boundary is known to +-1 s, and the join bounds how much longer the power
+window may be than the bench's (`RPC_JOIN_TOL`, `RPC_JOIN_MAX_EXTRA`; see RPC-TEST.md). The native frame line covers the
+process lifetime, not the bench window, so it is comparable only between native runs of equal play time. `energy_mWh`
+belongs to the power window, and is not corrected for the margins.
+
 ## Re-baselining
 
 Re-run `make bench` after a change that touches `soft.cpp`, `kms.cpp` or `library.cpp`, and update this table when

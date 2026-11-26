@@ -270,7 +270,7 @@ static bool pause_owner(struct native_runtime *runtime, unsigned owner, uint64_t
     if (was_paused && !paused && runtime->input && !input_evdev_resume(runtime->input))
         return false;
     if (was_paused && !paused && runtime->runner) {
-        return retro_paced_start(runtime->runner, core_refresh_rate(), monotonic_ns());
+        return retro_paced_restart(runtime->runner, core_refresh_rate(), monotonic_ns());
     }
     return true;
 }
@@ -380,7 +380,7 @@ static bool control_reset(void *data)
     if (runtime->audio) audio_alsa_rebase(runtime->audio);
     if (runtime->input && !input_evdev_poll(runtime->input)) return false;
     if (runtime->runner)
-        return retro_paced_start(runtime->runner, core_refresh_rate(), monotonic_ns());
+        return retro_paced_restart(runtime->runner, core_refresh_rate(), monotonic_ns());
     return true;
 }
 
@@ -627,6 +627,90 @@ static double refresh_rate(void *data)
     return core_refresh_rate();
 }
 
+/* Audio counters: accepted/overflow count input-rate frames (what the core produced), underrun counts output-rate
+ * frames (what the device was owed). The legacy line (no rates) is what every run printed before telemetry existed;
+ * with telemetry the two rates are added in front of the same counters. Returns -1 when the line does not fit. */
+static int format_audio_status(const struct audio_alsa_status *status, bool rates, char *buffer, size_t size)
+{
+    char prefix[48] = "";
+    if (rates) snprintf(prefix, sizeof(prefix), "input_rate=%u output_rate=%u ", status->input_rate, status->output_rate);
+    int n = snprintf(buffer, size, "Audio status: %saccepted=%llu overflow=%llu underrun=%llu xrun=%llu "
+                     "reopens=%llu queue=%u delay=%lld", prefix,
+                     (unsigned long long)status->accepted_frames,
+                     (unsigned long long)status->overflow_frames,
+                     (unsigned long long)status->underrun_frames,
+                     (unsigned long long)status->xrun_recoveries,
+                     (unsigned long long)status->reopen_successes, status->queued_frames,
+                     (long long)status->delay_frames);
+    return n < 0 || (size_t)n >= size ? -1 : n;
+}
+
+static void report_audio_status(FILE *out, const struct audio_alsa *audio, bool rates)
+{
+    char line[RETRO_FRAME_STATS_LINE_MAX];
+    struct audio_alsa_status status;
+    audio_alsa_get_status(audio, &status);
+    if (format_audio_status(&status, rates, line, sizeof(line)) > 0) fprintf(out, "%s\n", line);
+    else fputs("Audio status unavailable: line did not fit\n", out);
+}
+
+/* Field 22 of /proc/self/stat (clock ticks since boot at process start): with the pid it names this process even
+ * after the pid is reused. "unknown" when it cannot be read, which a collector rejects. */
+static void self_starttime(char *out, size_t size)
+{
+    char buf[1024];
+    snprintf(out, size, "unknown");
+    FILE *f = fopen("/proc/self/stat", "r");
+    if (!f) return;
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    char *p = strrchr(buf, ')');
+    if (!p) return;
+    ++p;
+    for (int field = 1; field < 20; ++field) {
+        while (*p == ' ') ++p;
+        while (*p && *p != ' ') ++p;
+    }
+    while (*p == ' ') ++p;
+    size_t len = 0;
+    while (p[len] >= '0' && p[len] <= '9') ++len;
+    if (len && len < size) {
+        memcpy(out, p, len);
+        out[len] = '\0';
+    }
+}
+
+/* The collector's run identifier, BANANA_RETRO_RUN_ID: 1-64 of [A-Za-z0-9._-], else "none" (never accepted). */
+static const char *telemetry_run_id(void)
+{
+    const char *id = getenv("BANANA_RETRO_RUN_ID");
+    size_t len = id ? strlen(id) : 0;
+    if (!len || len > 64) return "none";
+    for (size_t i = 0; i < len; ++i) {
+        char c = id[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+              c == '.' || c == '_' || c == '-'))
+            return "none";
+    }
+    return id;
+}
+
+/* Opt-in run telemetry, written once from a snapshot taken when playback ends. A line that cannot be formatted is
+ * reported, never dropped silently. The pid, process start time and run identifier tie the lines to the one process
+ * and run that produced them. Returns false only when telemetry was requested and the report could not be written. */
+static bool report_run_telemetry(FILE *out, const struct retro_paced_runner *runner, bool video,
+                                 const struct audio_alsa *audio, const char *starttime, const char *run_id)
+{
+    char line[RETRO_FRAME_STATS_LINE_MAX];
+    if (!(video && runner->telemetry)) return true;
+    fprintf(out, "Telemetry run: pid=%ld starttime=%s run_id=%s\n", (long)getpid(), starttime, run_id);
+    if (retro_frame_stats_format(runner, line, sizeof(line)) > 0) fprintf(out, "%s\n", line);
+    else fputs("Frame telemetry unavailable: line did not fit\n", out);
+    if (audio) report_audio_status(out, audio, true);
+    return fflush(out) == 0 && !ferror(out);
+}
+
 int main(int argc, char **argv)
 {
     int legacy_result = legacy_command(argc, argv);
@@ -646,7 +730,7 @@ int main(int argc, char **argv)
     const char *startup_error_code = "runtime-start";
     struct wayland_video *video = NULL;
     struct input_evdev *input = NULL;
-    struct retro_paced_runner runner;
+    struct retro_paced_runner runner = { .fps = 0.0 };
     struct native_runtime runtime = {0};
     struct core_video sink = { .submit = wayland_video_submit };
     int signal_fd = -1;
@@ -841,6 +925,10 @@ int main(int argc, char **argv)
         }
     }
     if (ok && video) ok = retro_paced_start(&runner, core_refresh_rate(), monotonic_ns());
+    /* Opt-in aggregate telemetry (BANANA_RETRO_TELEMETRY=1); off by default. */
+    const char *telemetry_env = getenv("BANANA_RETRO_TELEMETRY");
+    if (ok && video && telemetry_env && *telemetry_env && strcmp(telemetry_env, "0") != 0)
+        runner.telemetry = true;
     struct retro_paced_ops paced_ops = {
         .data = &runtime,
         .now_ns = paced_now,
@@ -894,6 +982,16 @@ int main(int argc, char **argv)
 #endif
         }
     }
+    /* Opt-in telemetry is frozen before saves and the core are released: teardown is not playback, and the audio
+     * worker keeps counting idle chunks as underruns while it runs without input. With telemetry off nothing is
+     * printed here; the legacy audio line keeps its original place below. */
+    const bool run_reported = video != NULL && runner.telemetry;
+    if (run_reported) {
+        char starttime[32];
+        self_starttime(starttime, sizeof(starttime));
+        if (!report_run_telemetry(stderr, &runner, true, runtime.audio, starttime, telemetry_run_id()))
+            ok = false;
+    }
     if (runtime.failed_load) ok = false;
     if (ok && video && !stopped) ok = wayland_video_wait(video);
     if (ok && video && ran && !wayland_video_presented(video)) {
@@ -910,17 +1008,9 @@ int main(int argc, char **argv)
     if (!core_release()) ok = false;
     saves_close(runtime.saves);
     core_set_audio_output(NULL);
+    /* Telemetry off: the legacy "Audio status:" line, in its original place after saves and the core are released. */
     if (runtime.audio) {
-        struct audio_alsa_status status;
-        audio_alsa_get_status(runtime.audio, &status);
-        fprintf(stderr, "Audio status: accepted=%llu overflow=%llu underrun=%llu xrun=%llu "
-                "reopens=%llu queue=%u delay=%lld\n",
-                (unsigned long long)status.accepted_frames,
-                (unsigned long long)status.overflow_frames,
-                (unsigned long long)status.underrun_frames,
-                (unsigned long long)status.xrun_recoveries,
-                (unsigned long long)status.reopen_successes, status.queued_frames,
-                (long long)status.delay_frames);
+        if (!run_reported) report_audio_status(stderr, runtime.audio, false);
         audio_alsa_close(runtime.audio);
     }
     wayland_video_close(video);

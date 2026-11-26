@@ -73,6 +73,74 @@ log back (a line a second: every thermal zone, the fan's duty and tachometer, th
 The curve itself is in the rev Q DTS (`.../sm4450-retroid-pocket-classic-revq.dts`): off below 60 C, then 60/120/180/255
 of the fan's range at 60/70/80/88 C, `step_wise`. Tune the trips there and rebuild.
 
+## Matched benchmark runs
+
+To compare a game under RetroArch and under the native `banana-retro` runtime (or a build, a setting, the stock
+Android) on this SoC, collect pacing, heat and battery power for the *same* run. Three tools, one run id:
+
+- `tools/rpc-emu-bench.sh <secs>`: thermals, fan, clocks, load, memory and the emulator's CPU share, a line a second.
+- `tools/rpc-power-sample.sh <secs>`: battery voltage/current/power from `/sys/class/power_supply`, and the energy.
+- `tools/rpc-run-join.sh bench.log power.log`: accepts the pair only when it is one valid run.
+
+Choose a run id (1-64 of `A-Za-z0-9._-`) and give it to all of them. Unplug the USB gadget cable and use a network link
+for ssh: a cable makes the usb supply `online=1`, and the power run is rejected on purpose (`charger`).
+
+    ID=mgba-native-1
+    # on the unit, one shell each; start the sampler first, then the game, then the bench once the game runs
+    RPC_RUN_ID=$ID RPC_OUT=/data/power.log sh /data/rpc-power-sample.sh 120
+    BANANA_RETRO_TELEMETRY=1 BANANA_RETRO_RUN_ID=$ID <the native launch> 2> /data/telemetry.log
+    RPC_RUN_ID=$ID RPC_EMU=banana-retro RPC_TELEMETRY_LOG=/data/telemetry.log RPC_OUT=/data/bench.log \
+        sh /data/rpc-emu-bench.sh 60
+    # after the bench's window closes, quit the game; then, on the computer
+    sh tools/rpc-run-join.sh bench.log power.log
+
+- [ ] The bench's last line is `# valid=yes`. Rejected runs exit 3 and name why: no process at the start, an exit,
+      a replacement or an extra match inside the window, a process still alive after `RPC_COLLECT_SECS`, a missing,
+      stale, duplicated or foreign telemetry report, an output error. Stop the game *after* the window: the native
+      process writes its `Telemetry run:` line and frame statistics only as playback ends
+- [ ] The power log says `valid=yes`: status `Discharging`, plausible readings, the whole window covered. Its units
+      are checked for plausibility only (a current in milliamps where microamps are expected is not detectable), so
+      cross-check `avg_mW` against a known load once per unit. Use `avg_mW`/`energy_mWh`, not the coarse capacity
+- [ ] The join says `valid=yes`: same real run id, one window each, and the power window covers the bench's. The
+      energy is for the *power* window, so start it just before and stop it just after the bench for a per-run figure
+- [ ] A RetroArch run for the baseline uses the same ids and the same bench; only the telemetry log is native-only
+
+How the pair is judged, and what the numbers mean:
+
+- Every instant is an integer second (`date +%s`, truncated), so each window boundary is known to within 1 s. The join
+  accepts a power window that covers the bench's within `RPC_JOIN_TOL` s (default 2: `window-not-covered`), that begins
+  at most `RPC_JOIN_MAX_EXTRA` s (default 10) before the bench's (`power-start-too-early`), ends at most that long after
+  it (`power-end-too-late`) and is at most twice that longer overall (`power-window-too-long`). The energy is for the
+  power window, so its error against the bench window is up to the extra time on both sides plus the truncation; keep
+  the margins small and compare runs with the same margins. These limits are policy, not a measured accuracy
+- The bench needs sampling coverage: no gap between samples above `RPC_MAX_GAP` s (default 3: `sample-gap`), at least
+  half as many samples as seconds (`sparse-samples`), a window of at least the requested length (`short-window`) and a
+  clock that does not go backwards (`clock-backwards`). Its window line ends with `samples=` and `max_gap=`
+- Native frame statistics cover the native *process lifetime*, from the start of paced playback to its end, not the
+  bench window: the process prints them once as it exits. A longer game than the window therefore has more frames than
+  the bench saw. Compare frame statistics only between native runs of equal play time; RetroArch prints no such line
+- A zombie (state `Z`/`X`) counts as an exited process, never as a match; identity (start time) is still checked
+- `Audio status:` is unchanged without telemetry (`accepted= overflow= underrun= xrun= reopens= queue= delay=`). With
+  `BANANA_RETRO_TELEMETRY=1` the line is printed once, with `input_rate=` and `output_rate=` first, after the frame line
+- Known limits, accepted at review (host-qualified only; none is a measured accuracy):
+  - The power sampler does not check the gap from its start to its first sample; the join's `RPC_JOIN_TOL` and
+    `RPC_JOIN_MAX_EXTRA` bound that window edge. The bench does check it
+  - The power sampler accepts `RPC_INTERVAL` larger than `<secs>` (one sample held for the whole interval, with
+    `elapsed_s` showing the real length). Use an interval well under `<secs>`; only a paired join bounds the length
+  - If the sampler's stdout fails after its log summary was written, the log relies on a trailing
+    `# valid=no reasons=output-error` line; if that append also fails (full disk) the log still reads `valid=yes`
+    while the exit status is 3. A qualifying run needs both exit statuses below
+  - The sampler test's cleanup (`pkill -P`) misses `timeout` children inside a pipeline subshell; they are bounded by
+    their own timeout, so this is test hygiene only
+- Hardware qualification requires exit status 0 from `rpc-power-sample.sh` and from `rpc-emu-bench.sh` (record both,
+  e.g. `echo $?`), as well as `valid=yes` in their logs: a nonzero status (3 = rejected or output error) voids the run
+  whatever the log says
+
+Nothing here is a hardware result until a person runs it on the unit: the host tests (`make test`,
+`system/tests/rpc-power-sample-test.sh`) use a mock `/sys` and clock and qualify the scripts' bookkeeping, not any
+reading. The log is a regular file: `RPC_OUT` pointing at a device (`/dev/full`, `/dev/null`) is reported as an
+error rather than read back.
+
 ## Card and data
 
 - [ ] Games on the card's `banana-data` partition show in the library

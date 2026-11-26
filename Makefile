@@ -132,6 +132,7 @@ test: ui bananad probe check-kver
 	system/tests/run-libretro-test.sh
 	system/banana-retro/tests/check-profiles.sh
 	system/tests/rpc-thermals-test.sh
+	system/tests/rpc-power-sample-test.sh
 	system/tests/run-banana-tube-test.sh
 	system/tests/run-backup-test.sh
 	system/tests/sound-config-test.sh

@@ -1166,10 +1166,95 @@ static void test_runtime_operations(const char *core_path)
 	assert(rmdir(base) == 0);
 }
 
+static void test_run_telemetry_report(void)
+{
+	struct fake_pcm pcm = {0};
+	struct audio_alsa *audio = new_audio(&pcm, 48000); assert(audio);
+	open_fake(audio, &pcm);
+	int16_t samples[512 * 2] = {0};
+	assert(audio_alsa_write(audio, samples, 512) == 512);
+	struct retro_paced_runner runner;
+	assert(retro_paced_start(&runner, 60.0, 1000000000ull));
+	FILE *out = tmpfile(); assert(out);
+	/* Telemetry off: nothing at all from the run report; the audio line stays the legacy one, printed by the caller. */
+	assert(report_run_telemetry(out, &runner, true, audio, "4242", "run-1"));
+	assert(ftell(out) == 0);
+	runner.telemetry = true;
+	assert(report_run_telemetry(out, &runner, true, audio, "4242", "run-1"));
+	FILE *legacy = tmpfile(); assert(legacy);
+	report_audio_status(legacy, audio, false);
+	audio_alsa_close(audio);
+	rewind(out);
+	char text[4096] = {0};
+	size_t got = fread(text, 1, sizeof(text) - 1, out);
+	fclose(out);
+	assert(got > 0);
+	char expected[96];
+	assert(snprintf(expected, sizeof(expected), "Telemetry run: pid=%ld starttime=4242 run_id=run-1\n",
+			(long)getpid()) > 0);
+	assert(strstr(text, expected) && strstr(text, "Frame telemetry: frames=0 "));
+	assert(strstr(strstr(text, expected) + 1, expected) == NULL);
+	char *rate_audio = strstr(text, "Audio status: input_rate=48000 output_rate=48000 accepted=512 ");
+	assert(rate_audio && rate_audio > strstr(text, "Frame telemetry: "));
+	assert(strstr(rate_audio, "underrun=") && strstr(rate_audio, "reopens="));
+	/* The legacy line: the original fields in the original order, no rates. */
+	rewind(legacy);
+	char old[512] = {0};
+	assert(fgets(old, sizeof(old), legacy));
+	fclose(legacy);
+	assert(strncmp(old, "Audio status: accepted=512 overflow=", 36) == 0 && !strstr(old, "_rate="));
+	assert(strstr(old, " underrun=0 xrun=0 reopens=1 queue=512 delay=0"));
+
+	/* Truncation: a line is -1 unless it fits with its terminator; the longest possible one fits the report buffer. */
+	struct audio_alsa_status st;
+	memset(&st, 0, sizeof(st));
+	st.input_rate = 32768; st.output_rate = 48000; st.accepted_frames = 7;
+	for (int rates = 0; rates < 2; ++rates) {
+		char full[RETRO_FRAME_STATS_LINE_MAX];
+		int need = format_audio_status(&st, rates, full, sizeof(full));
+		assert(need > 0 && (size_t)need < sizeof(full) && strlen(full) == (size_t)need);
+		char tight[RETRO_FRAME_STATS_LINE_MAX];
+		assert(format_audio_status(&st, rates, tight, (size_t)need + 1) == need && strcmp(tight, full) == 0);
+		assert(format_audio_status(&st, rates, tight, (size_t)need) == -1);
+		assert(format_audio_status(&st, rates, tight, 1) == -1);
+		assert(format_audio_status(&st, rates, NULL, 0) == -1);
+		memset(&st, 0xff, sizeof(st));
+		int worst = format_audio_status(&st, rates, full, sizeof(full));
+		assert(worst > 0 && (size_t)worst < sizeof(full));
+		memset(&st, 0, sizeof(st));
+		st.input_rate = 32768; st.output_rate = 48000; st.accepted_frames = 7;
+	}
+
+	/* A requested report that cannot be written is a failure; an unrequested one is never one. */
+	FILE *ro = fopen("/dev/full", "w");
+	if (ro) {
+		assert(!report_run_telemetry(ro, &runner, true, NULL, "1", "run-1"));
+		runner.telemetry = false;
+		assert(report_run_telemetry(ro, &runner, true, NULL, "1", "run-1"));
+		fclose(ro);
+		runner.telemetry = true;
+	}
+
+	/* The process start time is a bare field-22 number for this process; the run id is validated. */
+	char start[32];
+	self_starttime(start, sizeof(start));
+	assert(strcmp(start, "unknown") != 0);
+	for (const char *c = start; *c; ++c) assert(*c >= '0' && *c <= '9');
+	assert(setenv("BANANA_RETRO_RUN_ID", "bench-2026.11_a", 1) == 0);
+	assert(strcmp(telemetry_run_id(), "bench-2026.11_a") == 0);
+	assert(setenv("BANANA_RETRO_RUN_ID", "bad id", 1) == 0);
+	assert(strcmp(telemetry_run_id(), "none") == 0);
+	assert(setenv("BANANA_RETRO_RUN_ID", "", 1) == 0);
+	assert(strcmp(telemetry_run_id(), "none") == 0);
+	assert(unsetenv("BANANA_RETRO_RUN_ID") == 0);
+	assert(strcmp(telemetry_run_id(), "none") == 0);
+}
+
 int main(int argc, char **argv)
 {
 	assert(argc == 2);
 	test_option_environment();
+	test_run_telemetry_report();
 	/* Synthetic environment calls above leave per-core option observations. */
 	assert(core_release());
 	test_runtime_operations(argv[1]);
