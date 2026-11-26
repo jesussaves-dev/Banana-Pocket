@@ -41,12 +41,13 @@ banana_resolve_core() {
 # configured default core; for example: runtime.gba.mgba = banana-retro.
 banana_native_eligible() {
     system_id=$1 core_name=$2 rom_path=$3
-    case "$system_id:$core_name" in
-        gba:mgba|gb:gambatte|gbc:gambatte|nes:fceumm) ;;
-        *) return 1 ;;
-    esac
-    case $rom_path in
-        *.gba|*.GBA|*.gb|*.GB|*.gbc|*.GBC|*.nes|*.NES) ;;
+    case "$system_id$core_name" in *:*) return 1 ;; esac
+    # Extensions follow systems.conf: a GBC system also lists .gb; no archives.
+    case "$system_id:$core_name:$rom_path" in
+        gba:mgba:*.gba|gba:mgba:*.GBA) ;;
+        gb:gambatte:*.gb|gb:gambatte:*.GB) ;;
+        gbc:gambatte:*.gbc|gbc:gambatte:*.GBC|gbc:gambatte:*.gb|gbc:gambatte:*.GB) ;;
+        nes:fceumm:*.nes|nes:fceumm:*.NES) ;;
         *) return 1 ;;
     esac
     [ -f "$rom_path" ] || return 1

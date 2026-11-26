@@ -32,7 +32,7 @@ CHECK_VIDEO_OBJS = $(OUT)/video_wayland.o $(WL_CODE:.c=.o)
 
 strict_cflags = -std=c99 -Wall -Wextra -Werror -pedantic
 
-.PHONY: all install check check-binaries check-video check-input check-audio check-saves check-control
+.PHONY: all install check check-binaries check-video check-input check-audio check-saves check-control check-profiles
 all: $(OUT)/banana-retro
 
 install: $(OUT)/banana-retro
@@ -146,6 +146,9 @@ $(OUT)/fixture-check-control: tests/check-control.c src/main.c src/control.c src
 check-control: $(OUT)/fixture-check-control $(OUT)/fixture-runtime-core.so
 	$(OUT)/fixture-check-control $(OUT)/fixture-runtime-core.so
 
+check-profiles:
+	sh tests/check-profiles.sh
+
 check:
 	@set -eu; \
 	work=$$(mktemp -d "$${TMPDIR:-/tmp}/banana-retro-check.XXXXXX"); \
@@ -157,4 +160,5 @@ check:
 	$(MAKE) -s OUT="$$work" check-input; \
 	$(MAKE) -s OUT="$$work" check-audio; \
 	$(MAKE) -s OUT="$$work" check-saves; \
-	$(MAKE) -s OUT="$$work" check-control
+	$(MAKE) -s OUT="$$work" check-control; \
+	$(MAKE) -s check-profiles
