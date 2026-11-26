@@ -206,6 +206,11 @@ static bool open_client(struct control_server *s)
 	return true;
 }
 
+static bool wants_resume_proof(const unsigned char *payload, size_t size, size_t base)
+{
+	return size == base + 1 && payload[base] == BANANA_RETRO_CTL_RESUME_PROOF;
+}
+
 static bool authorized(const struct control_client *c, uint16_t type,
 		       const unsigned char *payload, size_t size)
 {
@@ -223,9 +228,13 @@ static bool authorized(const struct control_client *c, uint16_t type,
 	}
 	if (c->role == CONTROL_ROLE_SLEEP) {
 		if (type == BANANA_RETRO_CTL_GET_STATUS) return true;
-		if (type == BANANA_RETRO_CTL_CHECKPOINT) return size == 0;
-		if (type == BANANA_RETRO_CTL_PREPARE_SLEEP || type == BANANA_RETRO_CTL_SLEEP_ABORT ||
-		    type == BANANA_RETRO_CTL_WAKE || type == BANANA_RETRO_CTL_SHUTDOWN)
+		if (type == BANANA_RETRO_CTL_CHECKPOINT)
+			return size == 0 || wants_resume_proof(payload, size, 0);
+		if (type == BANANA_RETRO_CTL_SHUTDOWN)
+			return (size == 8 || wants_resume_proof(payload, size, 8)) && get64(payload) != 0;
+		if (type == BANANA_RETRO_CTL_PREPARE_SLEEP)
+			return (size == 8 || wants_resume_proof(payload, size, 8)) && get64(payload) != 0;
+		if (type == BANANA_RETRO_CTL_SLEEP_ABORT || type == BANANA_RETRO_CTL_WAKE)
 			return size == 8 && get64(payload) != 0;
 		return (type == BANANA_RETRO_CTL_PAUSE || type == BANANA_RETRO_CTL_RESUME) &&
 			size == 9 && payload[0] == BANANA_RETRO_CTL_OWNER_SLEEP;
@@ -311,9 +320,13 @@ static uint16_t dispatch(struct control_server *s, struct control_client *c, uin
 			return BANANA_RETRO_CTL_STALE_SESSION;
 		return s->ops.pause && s->ops.pause(s->ops.data, p[0], get64(p + 1),
 			type == BANANA_RETRO_CTL_PAUSE) ? BANANA_RETRO_CTL_OK : BANANA_RETRO_CTL_BAD_STATE;
-	case BANANA_RETRO_CTL_CHECKPOINT:
-		return s->ops.checkpoint && s->ops.checkpoint(s->ops.data) ?
-			BANANA_RETRO_CTL_OK : BANANA_RETRO_CTL_IO_ERROR;
+	case BANANA_RETRO_CTL_CHECKPOINT: {
+		char *token = wants_resume_proof(p, n, 0) ? (char *)body : NULL;
+		if (!s->ops.checkpoint || !s->ops.checkpoint(s->ops.data, token))
+			return BANANA_RETRO_CTL_IO_ERROR;
+		if (token && token[0]) *body_size = BANANA_RETRO_RESUME_TOKEN_SIZE;
+		return BANANA_RETRO_CTL_OK;
+	}
 	case BANANA_RETRO_CTL_FLUSH_SRAM:
 		if (n != 0) return BANANA_RETRO_CTL_INVALID;
 		return s->ops.flush && s->ops.flush(s->ops.data) ? BANANA_RETRO_CTL_OK : BANANA_RETRO_CTL_IO_ERROR;
@@ -355,18 +368,27 @@ static uint16_t dispatch(struct control_server *s, struct control_client *c, uin
 	case BANANA_RETRO_CTL_SLEEP_ABORT:
 	case BANANA_RETRO_CTL_WAKE:
 	case BANANA_RETRO_CTL_SHUTDOWN:
-		if (n != 8 || get64(p) == 0 || c->role != CONTROL_ROLE_SLEEP)
+		if ((n != 8 && !((type == BANANA_RETRO_CTL_SHUTDOWN || type == BANANA_RETRO_CTL_PREPARE_SLEEP) &&
+				 wants_resume_proof(p, n, 8))) ||
+		    get64(p) == 0 || c->role != CONTROL_ROLE_SLEEP)
 			return BANANA_RETRO_CTL_INVALID;
 		if (type == BANANA_RETRO_CTL_PREPARE_SLEEP) {
 			if (get64(p) <= s->power_epoch) return BANANA_RETRO_CTL_BAD_STATE;
-			if (!s->ops.pause || !s->ops.pause(s->ops.data, BANANA_RETRO_CTL_OWNER_SLEEP,
-					get64(p), true)) return BANANA_RETRO_CTL_IO_ERROR;
+			char *token = wants_resume_proof(p, n, 8) ? (char *)body : NULL;
+			bool prepared = s->ops.prepare_sleep ?
+				s->ops.prepare_sleep(s->ops.data, get64(p), token) :
+				s->ops.pause && s->ops.pause(s->ops.data, BANANA_RETRO_CTL_OWNER_SLEEP, get64(p), true);
+			if (!prepared) return BANANA_RETRO_CTL_IO_ERROR;
+			if (token && token[0]) *body_size = BANANA_RETRO_RESUME_TOKEN_SIZE;
 			s->power_epoch = get64(p);
 			return BANANA_RETRO_CTL_OK;
 		}
 		if (type == BANANA_RETRO_CTL_SHUTDOWN) {
 			if (get64(p) <= s->power_epoch) return BANANA_RETRO_CTL_BAD_STATE;
-			if (!s->ops.shutdown || !s->ops.shutdown(s->ops.data)) return BANANA_RETRO_CTL_IO_ERROR;
+			char *token = wants_resume_proof(p, n, 8) ? (char *)body : NULL;
+			if (!s->ops.shutdown || !s->ops.shutdown(s->ops.data, token))
+				return BANANA_RETRO_CTL_IO_ERROR;
+			if (token && token[0]) *body_size = BANANA_RETRO_RESUME_TOKEN_SIZE;
 			s->power_epoch = get64(p);
 			return BANANA_RETRO_CTL_OK;
 		}

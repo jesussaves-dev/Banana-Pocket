@@ -11,6 +11,9 @@ struct core_video {
                    const struct retro_game_geometry *geometry, unsigned rotation);
 };
 
+/* SHA-256 of the exact content bytes this core consumed, available once core_load()
+ * has succeeded. Bind save and checkpoint identity to it, never to a second read of the path. */
+bool core_content_digest(unsigned char digest[SAVES_CONTENT_DIGEST_SIZE]);
 /* One synchronous core per process. Paths and video callbacks must outlive core_release(). */
 bool core_load(const char *core_path, const char *content_path, const struct core_video *video);
 const char *core_name(void);
@@ -37,7 +40,7 @@ enum core_checkpoint_result {
     CORE_CHECKPOINT_UNAVAILABLE,
     CORE_CHECKPOINT_ERROR
 };
-enum core_checkpoint_result core_persistence_checkpoint(struct saves *saves);
+enum core_checkpoint_result core_persistence_checkpoint(struct saves *saves, char token[65]);
 enum saves_resume_result core_persistence_restore_checkpoint(struct saves *saves, const char *token);
 bool core_release(void);
 

@@ -36,8 +36,9 @@ static struct wl_display *native_display;
 static struct saves *open_saves_profile(const char *root,const char *core,const char *content)
 {
     char fingerprint[CORE_OPTIONS_FINGERPRINT_SIZE];
-    if (!core_options_fingerprint(fingerprint)) return NULL;
-    struct saves *saves = saves_open_with_options(root, core, content, fingerprint);
+    unsigned char content_digest[SAVES_CONTENT_DIGEST_SIZE];
+    if (!core_options_fingerprint(fingerprint) || !core_content_digest(content_digest)) return NULL;
+    struct saves *saves = saves_open_content(root, core, content, content_digest, fingerprint);
     if (saves) (void)saves_set_legacy_core_name(saves, core_name());
     return saves;
 }
@@ -180,6 +181,8 @@ struct native_runtime {
     bool stopped;
     bool failed_load;
     bool committed;
+    /* The digest acknowledged with the terminal commit; a repeated terminal request replays it. */
+    char terminal_token[65];
     bool started;
     bool commit_intent_marked;
     bool ui_paused;
@@ -189,12 +192,24 @@ struct native_runtime {
     const char *content_path;
 };
 
+/* After an acknowledged terminal commit the runtime only replays that result. Every other request that would change
+ * the runtime (pause holds, sleep hold changes, options, reset, loads, saves, checkpoints) is refused: the
+ * acknowledged digest names the state that is CURRENT, and the process is already stopping. Exact replays of an
+ * acknowledged request never reach these operations (the control layer answers them from its replay cache). */
+static bool terminal_fenced(const struct native_runtime *runtime)
+{
+    if (!runtime->committed) return false;
+    fputs("Native request refused: the terminal commit is final\n", stderr);
+    return true;
+}
+
 static uint32_t pause_owners(const struct native_runtime *runtime)
 {
     return (runtime->ui_paused ? 1u : 0u) | (runtime->sleep_paused ? 2u : 0u);
 }
 
-static enum core_checkpoint_result persist_session(struct native_runtime *runtime, bool quick_resume);
+static enum core_checkpoint_result persist_session(struct native_runtime *runtime, bool quick_resume,
+                                                   char *resume_token);
 
 static void control_status(void *data, struct control_status *status)
 {
@@ -212,18 +227,36 @@ static void control_status(void *data, struct control_status *status)
     status->audio_underruns = audio.underrun_frames;
 }
 
-static bool control_pause(void *data, unsigned owner, uint64_t epoch, bool acquire)
+static bool pause_owner(struct native_runtime *runtime, unsigned owner, uint64_t epoch,
+                        bool acquire, char *resume_token)
 {
-    struct native_runtime *runtime = data;
+    if (terminal_fenced(runtime)) return false;
     bool was_paused = pause_owners(runtime) != 0;
+    if (resume_token) resume_token[0] = '\0';
     if (owner == BANANA_RETRO_CTL_OWNER_UI) {
         runtime->ui_paused = acquire;
     } else if (owner == BANANA_RETRO_CTL_OWNER_SLEEP) {
         if (acquire) {
             if (!epoch || (runtime->sleep_paused && epoch != runtime->sleep_epoch) ||
                 (!runtime->sleep_paused && epoch <= runtime->sleep_epoch)) return false;
-            if (persist_session(runtime, true) != CORE_CHECKPOINT_OK ||
-                (runtime->audio && !audio_alsa_sleep(runtime->audio, true))) return false;
+            /* The acknowledged checkpoint stays CURRENT for the whole hold, so a repeated acquire of the held
+             * epoch is acknowledged without committing again (and carries no proof). */
+            if (runtime->sleep_paused) return resume_token == NULL;
+            /* Audio closes before the checkpoint commits: a PCM that cannot be released in time refuses the
+             * sleep with CURRENT untouched, instead of acknowledging a checkpoint the suspend cannot honour. */
+            if (runtime->audio && !audio_alsa_sleep(runtime->audio, true)) {
+                fputs("Native sleep refused: audio did not close in time; no checkpoint was committed\n", stderr);
+                return false;
+            }
+            char token[65] = {0};
+            if (persist_session(runtime, true, token) != CORE_CHECKPOINT_OK) {
+                /* No hold exists after a failed commit: hand the PCM back so the game keeps playing. */
+                fputs("Native sleep refused: checkpoint commit failed; audio is released\n", stderr);
+                if (runtime->audio) (void)audio_alsa_sleep(runtime->audio, false);
+                return false;
+            }
+            /* The proof leaves only with the acknowledgement of a held sleep. */
+            if (resume_token) memcpy(resume_token, token, sizeof(token));
             runtime->sleep_epoch = epoch;
             runtime->sleep_paused = true;
         } else {
@@ -242,30 +275,57 @@ static bool control_pause(void *data, unsigned owner, uint64_t epoch, bool acqui
     return true;
 }
 
+static bool control_pause(void *data, unsigned owner, uint64_t epoch, bool acquire)
+{
+    return pause_owner(data, owner, epoch, acquire, NULL);
+}
+
+static bool control_prepare_sleep(void *data, uint64_t epoch, char *resume_token)
+{
+    return pause_owner(data, BANANA_RETRO_CTL_OWNER_SLEEP, epoch, true, resume_token);
+}
+
 static bool begin_save(struct native_runtime *runtime)
 {
-    if (!runtime->started || !runtime->saves || runtime->failed_load) return false;
+    /* After an acknowledged terminal commit no persistent mutation may supersede it: the
+     * acknowledged digest must stay the exact CURRENT generation until the process exits. */
+    if (!runtime->started || !runtime->saves || runtime->failed_load || runtime->committed) return false;
     if (!runtime->commit_intent_marked)
         runtime->commit_intent_marked = mark_commit_intent();
     return runtime->commit_intent_marked;
 }
 
+/* While the sleep owner holds the runtime, the checkpoint it acknowledged is CURRENT and its proof is already
+ * on its way to a boot record. A request from any other peer that would advance CURRENT is refused until WAKE or
+ * SLEEP_ABORT releases the hold; the sleep owner's own terminal request is not a request of this kind and stays
+ * open. The exit-time persist in main() is bound by the same hold (see persist_on_exit). A committed terminal
+ * state only replays and is never fenced. */
+static bool mutation_fenced(const struct native_runtime *runtime)
+{
+    if (!runtime->sleep_paused || runtime->committed) return false;
+    fputs("Native persistent request refused: a sleep hold owns the checkpoint\n", stderr);
+    return true;
+}
+
 static bool control_flush(void *data)
 {
     struct native_runtime *runtime = data;
-    return begin_save(runtime) && core_persistence_flush(runtime->saves, false);
+    return !mutation_fenced(runtime) && begin_save(runtime) && core_persistence_flush(runtime->saves, false);
 }
 
 static bool control_save_state(void *data, unsigned slot)
 {
     struct native_runtime *runtime = data;
-    return begin_save(runtime) && core_persistence_commit(runtime->saves, (int)slot);
+    return !mutation_fenced(runtime) && begin_save(runtime) &&
+        core_persistence_commit(runtime->saves, (int)slot);
 }
 
 static bool control_load_state(void *data, unsigned slot)
 {
     struct native_runtime *runtime = data;
-    if (runtime->failed_load) return false;
+    /* After an acknowledged terminal commit a load would replace the state the acknowledged digest names, and a failed
+     * one would stop a runtime whose terminal result is already final. The terminal result only replays. */
+    if (runtime->failed_load || runtime->committed) return false;
     enum core_load_result result = core_persistence_load(runtime->saves, (int)slot);
     if (result == CORE_LOAD_FAILED) {
         runtime->failed_load = true;
@@ -304,7 +364,7 @@ static bool control_option(void *data, size_t index, const char **key,
 static bool control_set_option(void *data, const char *key, const char *value,
                                unsigned scope, bool *restart_required)
 {
-    (void)data;
+    if (terminal_fenced(data)) return false;
     if (scope != BANANA_RETRO_CTL_SCOPE_SESSION) return false;
     const char *previous = core_option_get(key);
     bool changed = previous && strcmp(previous, value) != 0;
@@ -316,7 +376,7 @@ static bool control_set_option(void *data, const char *key, const char *value,
 static bool control_reset(void *data)
 {
     struct native_runtime *runtime = data;
-    if (!core_reset()) return false;
+    if (terminal_fenced(runtime) || !core_reset()) return false;
     if (runtime->audio) audio_alsa_rebase(runtime->audio);
     if (runtime->input && !input_evdev_poll(runtime->input)) return false;
     if (runtime->runner)
@@ -339,9 +399,9 @@ static bool save_requested_slot(struct native_runtime *runtime)
     return false;
 }
 
-static enum core_checkpoint_result publish_checkpoint(struct native_runtime *runtime)
+static enum core_checkpoint_result publish_checkpoint(struct native_runtime *runtime, char *resume_token)
 {
-    enum core_checkpoint_result result = core_persistence_checkpoint(runtime->saves);
+    enum core_checkpoint_result result = core_persistence_checkpoint(runtime->saves, resume_token);
     if (result == CORE_CHECKPOINT_UNAVAILABLE)
         fputs("Native quick resume checkpoint unavailable\n", stderr);
     else if (result == CORE_CHECKPOINT_ERROR)
@@ -349,69 +409,93 @@ static enum core_checkpoint_result publish_checkpoint(struct native_runtime *run
     return result;
 }
 
-static enum core_checkpoint_result persist_session(struct native_runtime *runtime, bool quick_resume)
+static enum core_checkpoint_result persist_session(struct native_runtime *runtime, bool quick_resume,
+                                                   char *resume_token)
 {
     if (!begin_save(runtime)) return CORE_CHECKPOINT_ERROR;
+    /* A separate slot commit must not supersede the checkpoint we acknowledge. */
+    bool slot_saved = save_requested_slot(runtime);
     enum core_checkpoint_result result = quick_resume ?
-        publish_checkpoint(runtime) : CORE_CHECKPOINT_UNAVAILABLE;
+        publish_checkpoint(runtime, resume_token) : CORE_CHECKPOINT_UNAVAILABLE;
     if (result != CORE_CHECKPOINT_OK &&
         !save_battery(runtime, result == CORE_CHECKPOINT_UNAVAILABLE))
         return CORE_CHECKPOINT_ERROR;
-    return save_requested_slot(runtime) ? result : CORE_CHECKPOINT_ERROR;
+    return slot_saved ? result : CORE_CHECKPOINT_ERROR;
 }
 
-static bool finish_persistence(struct native_runtime *runtime, bool quick_resume)
+/* Exit-time persistence for a process that ends without an acknowledged terminal commit (plain TERM, loop end).
+ * A sleep hold keeps its acknowledged checkpoint CURRENT: the paused core is exactly what that checkpoint holds,
+ * so a second commit would only advance CURRENT past the proof already on its way to a boot record. A committed
+ * terminal state is already CURRENT. Returns false only when a commit that had to happen failed. */
+static bool persist_on_exit(struct native_runtime *runtime, bool skip_save_commit, bool quick_resume)
 {
-    return persist_session(runtime, quick_resume) != CORE_CHECKPOINT_ERROR;
+    if (!runtime->saves || !runtime->started || skip_save_commit || runtime->failed_load ||
+        runtime->committed || runtime->sleep_paused) return true;
+    return persist_session(runtime, quick_resume, NULL) != CORE_CHECKPOINT_ERROR;
+}
+
+static bool quit_session(struct native_runtime *runtime, char *resume_token)
+{
+    if (runtime->committed) {
+        /* A repeated terminal request is acknowledged again with the same proof, without a commit. */
+        if (resume_token) memcpy(resume_token, runtime->terminal_token, sizeof(runtime->terminal_token));
+        runtime->stopped = true;
+        return true;
+    }
+    char token[65] = {0};
+    if (runtime->started && persist_session(runtime, true, token) == CORE_CHECKPOINT_ERROR)
+        return false;
+    runtime->committed = runtime->started;
+    memcpy(runtime->terminal_token, token, sizeof(token));
+    if (resume_token) memcpy(resume_token, token, sizeof(token));
+    runtime->stopped = true;
+    return true;
 }
 
 static bool control_quit(void *data)
 {
     struct native_runtime *runtime = data;
-    if (runtime->started && !finish_persistence(runtime, true)) return false;
-    runtime->committed = runtime->started;
-    runtime->stopped = true;
-    return true;
+    return !mutation_fenced(runtime) && quit_session(runtime, NULL);
 }
 
-static bool power_checkpoint(void *data)
+static bool power_checkpoint(void *data, char *resume_token)
 {
     struct native_runtime *runtime = data;
-    if (!begin_save(runtime)) return false;
+    if (resume_token) resume_token[0] = 0;
+    if (mutation_fenced(runtime) || !begin_save(runtime)) return false;
     bool slot_saved = save_requested_slot(runtime);
-    return publish_checkpoint(runtime) == CORE_CHECKPOINT_OK && slot_saved;
+    enum core_checkpoint_result result = publish_checkpoint(runtime, resume_token);
+    if (result == CORE_CHECKPOINT_UNAVAILABLE) {
+        /* The core still owns battery memory. Publish it without resume proof; the empty
+         * token tells bananad that no boot record may be written for this tick. */
+        if (resume_token) resume_token[0] = 0;
+        return save_battery(runtime, true) && slot_saved;
+    }
+    return result == CORE_CHECKPOINT_OK && slot_saved;
 }
 
-static void clear_rejected_resume(struct saves *saves, const char *token)
+/* rejected is set only when the boot checkpoint can never be restored (SAVES_RESUME_INVALID); a read or resource
+ * failure may succeed on a later boot, so it stays a plain load failure. */
+static bool load_persistence(struct saves *saves, int state_slot, const char *resume_token, bool *rejected)
 {
-    if (!saves_resume_clear_if(saves, token))
-        fputs("Failed to clear the rejected native resume marker\n", stderr);
-}
-
-static bool load_persistence(struct saves *saves, int state_slot, bool quick_resume)
-{
-    if (quick_resume && state_slot < 0) {
-        char token[65];
-        enum saves_resume_result result = saves_resume_probe(saves, token);
-        bool restore = result == SAVES_RESUME_READY;
-        if (restore) result = core_persistence_restore_checkpoint(saves, token);
+    if (resume_token) {
+        enum saves_resume_result result = core_persistence_restore_checkpoint(saves, resume_token);
         if (result == SAVES_RESUME_READY) return true;
-        if (result == SAVES_RESUME_RETRY) {
-            fputs("Native resume checkpoint could not be loaded. Retry or use --load-battery.\n", stderr);
-            return false;
-        }
-        if (result == SAVES_RESUME_INVALID) {
-            clear_rejected_resume(saves, token);
-            if (restore) return false;
-        }
+        *rejected = result == SAVES_RESUME_INVALID;
+        if (result == SAVES_RESUME_INVALID && !saves_resume_clear_if(saves, resume_token))
+            fputs("Failed to clear the rejected native resume marker\n", stderr);
+        /* A failed unserialize may already have mutated the core. */
+        fputs("Native boot checkpoint is unavailable or incompatible; start the game normally to load battery data.\n",
+              stderr);
+        return false;
     }
     return core_persistence_load(saves, state_slot) == CORE_LOAD_OK ||
         (state_slot < 0 && saves_has_no_generation(saves));
 }
 
-static bool control_shutdown(void *data)
+static bool control_shutdown(void *data, char *resume_token)
 {
-    return control_quit(data);
+    return quit_session(data, resume_token);
 }
 
 static bool parse_session_id(const char *text, unsigned char session_id[16])
@@ -553,7 +637,9 @@ int main(int argc, char **argv)
     bool native = forever;
     int load_state_slot = -1, save_state_slot = -1;
     bool load_battery = false;
+    const char *resume_token = NULL;
     bool skip_save_commit = false;
+    bool resume_rejected = false;
     bool stopped = false, ran = false, ok;
     bool readiness_reached = false;
     bool readiness_gated_launch = getenv("BANANA_RETRO_READY_FILE") != NULL;
@@ -576,8 +662,8 @@ int main(int argc, char **argv)
 #endif
 
     if (!forever && (argc < 5 || strcmp(argv[3], "--frames") != 0)) {
-        fprintf(stderr, "Usage: %s CORE CONTENT --frames COUNT [--wayland] [--load-state N | --load-battery] [--save-state N]\n", argv[0]);
-        fprintf(stderr, "       %s CORE CONTENT --wayland [--load-state N | --load-battery] [--save-state N]\n", argv[0]);
+        fprintf(stderr, "Usage: %s CORE CONTENT --frames COUNT [--wayland] [--load-state N | --load-battery | --resume-checkpoint TOKEN] [--save-state N]\n", argv[0]);
+        fprintf(stderr, "       %s CORE CONTENT --wayland [--load-state N | --load-battery | --resume-checkpoint TOKEN] [--save-state N]\n", argv[0]);
         return 2;
     }
     if (!forever) {
@@ -594,6 +680,13 @@ int main(int argc, char **argv)
             native = true;
         } else if (strcmp(argv[i], "--load-battery") == 0) {
             load_battery = true;
+        } else if (strcmp(argv[i], "--resume-checkpoint") == 0 && !resume_token && i + 1 < argc) {
+            resume_token = argv[++i];
+            if (strlen(resume_token) != BANANA_RETRO_RESUME_TOKEN_SIZE ||
+                strspn(resume_token, "0123456789abcdef") != BANANA_RETRO_RESUME_TOKEN_SIZE) {
+                fputs("Invalid native boot checkpoint token\n", stderr);
+                return 2;
+            }
         } else if ((strcmp(argv[i], "--state-slot") == 0 ||
                     strcmp(argv[i], "--load-state") == 0 ||
                     strcmp(argv[i], "--save-state") == 0) && i + 1 < argc) {
@@ -614,6 +707,11 @@ int main(int argc, char **argv)
             return 2;
         }
     }
+    if (resume_token && (load_battery || load_state_slot >= 0 || (!native && !test_persistence))) {
+        fputs("--resume-checkpoint requires native persistence and cannot be combined with another load option\n",
+              stderr);
+        return 2;
+    }
     if (load_battery && load_state_slot >= 0) {
         fputs("--load-battery cannot be combined with --load-state or --state-slot\n", stderr);
         return 2;
@@ -626,7 +724,6 @@ int main(int argc, char **argv)
         fputs("State slots require --wayland\n", stderr);
         return 2;
     }
-    quick_resume = quick_resume || native;
     if (native) {
         video = wayland_video_open();
         if (!video || !native_display) {
@@ -674,8 +771,8 @@ int main(int argc, char **argv)
             fputs("Native save storage unavailable\n", stderr);
             skip_save_commit = load_state_slot >= 0;
             ok = false;
-        } else if (!load_persistence(runtime.saves, load_state_slot, quick_resume && !load_battery)) {
-            startup_error_code = "persistence-load";
+        } else if (!load_persistence(runtime.saves, load_state_slot, resume_token, &resume_rejected)) {
+            startup_error_code = resume_rejected ? "resume-rejected" : "persistence-load";
             fputs("Native save or requested state slot could not be loaded\n", stderr);
             skip_save_commit = true;
             ok = false;
@@ -721,6 +818,7 @@ int main(int argc, char **argv)
             .data = &runtime,
             .status = control_status,
             .pause = control_pause,
+            .prepare_sleep = control_prepare_sleep,
             .flush = control_flush,
             .save_state = control_save_state,
             .load_state = control_load_state,
@@ -808,9 +906,7 @@ int main(int argc, char **argv)
     if (runtime.control) control_close(runtime.control);
     if (ok && video && ran && !readiness_gated_launch && wayland_video_presented(video))
         runtime.started = true;
-    if (runtime.saves && runtime.started && !skip_save_commit &&
-        !finish_persistence(&runtime, quick_resume))
-        ok = false;
+    if (!persist_on_exit(&runtime, skip_save_commit, native || quick_resume)) ok = false;
     if (!core_release()) ok = false;
     saves_close(runtime.saves);
     core_set_audio_output(NULL);

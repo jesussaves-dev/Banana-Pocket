@@ -152,6 +152,12 @@ bool retro_load_game(const struct retro_game_info *game)
         if (length != sizeof(expected_content) - 1 ||
             memcmp(bytes, expected_content, length) != 0)
             return false;
+        if (getenv("BANANA_RETRO_TEST_MUTATE_CONTENT_AFTER_READ")) {
+            /* A concurrent writer replaces the ROM after this core has read it. */
+            FILE *rewrite = fopen(game->path, "r+b");
+            require(rewrite != NULL && fseek(rewrite, 4, SEEK_SET) == 0 &&
+                    fputc('X', rewrite) != EOF && fclose(rewrite) == 0, "mutate content");
+        }
     } else {
         require(game->data != NULL && game->size != 0, "memory content");
         if (game->size != sizeof(expected_content) - 1 ||

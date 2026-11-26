@@ -125,23 +125,34 @@ static void mutate_after_validation(void)
 	else put(mutate_path,&replacement_byte,sizeof(replacement_byte));
 }
 
-static int runtime_run(const char *runtime,const char *core,const char *rom,
-		       const char *root,bool signal_exit,int state_operation,int quick_resume)
+/* When set, runtime_run_token points the runtime's startup-error file here. */
+static char startup_error_file[4096];
+static void assert_startup_error(const char *expected)
+{
+	size_t size=0;uint8_t *got=read_bytes(startup_error_file,&size);
+	assert(got&&size==strlen(expected)&&memcmp(got,expected,size)==0);free(got);
+	assert(unlink(startup_error_file)==0);
+}
+static int runtime_run_token(const char *runtime,const char *core,const char *rom,
+			     const char *root,bool signal_exit,int state_operation,int quick_resume,
+			     const char *token)
 {
 	int pipes[2];assert(pipe(pipes)==0);pid_t pid=fork();assert(pid>=0);
 	if(pid==0){
 		close(pipes[0]);assert(dup2(pipes[1],STDERR_FILENO)>=0);close(pipes[1]);
 		int nullfd=open("/dev/null",O_WRONLY);assert(nullfd>=0);assert(dup2(nullfd,STDOUT_FILENO)>=0);close(nullfd);
 		assert(setenv("BANANA_RETRO_NATIVE_DIR",root,1)==0);
+		if(startup_error_file[0])assert(setenv("BANANA_RETRO_STARTUP_ERROR_FILE",startup_error_file,1)==0);
 		assert(setenv("BANANA_RETRO_TEST_PERSISTENCE","1",1)==0);
 		if(quick_resume)assert(setenv("BANANA_RETRO_TEST_QUICK_RESUME","1",1)==0);
 		else unsetenv("BANANA_RETRO_TEST_QUICK_RESUME");
 		if(quick_resume==4||quick_resume==5)assert(setenv("BANANA_RETRO_TEST_UNSERIALIZE_OOM","1",1)==0);
 		if(signal_exit)assert(setenv("BANANA_RETRO_TEST_WAIT_FOR_SIGNAL","1",1)==0);
 		else unsetenv("BANANA_RETRO_TEST_WAIT_FOR_SIGNAL");
-		char *args[10];int n=0;args[n++]=(char*)runtime;args[n++]=(char*)core;args[n++]=(char*)rom;args[n++]="--frames";args[n++]=signal_exit?"10000":"2";
+		char *args[12];int n=0;args[n++]=(char*)runtime;args[n++]=(char*)core;args[n++]=(char*)rom;args[n++]="--frames";args[n++]=signal_exit?"10000":"2";
 		if(state_operation){args[n++]=state_operation==1?"--load-state":"--save-state";args[n++]="0";}
 		if(quick_resume==5)args[n++]="--load-battery";
+		if(token){args[n++]="--resume-checkpoint";args[n++]=(char*)token;}
 		args[n]=NULL;
 		execv(runtime,args);_exit(127);
 	}
@@ -163,6 +174,18 @@ static int runtime_run(const char *runtime,const char *core,const char *rom,
 	else if(quick_resume)assert(saw_run);
 	while(read(pipes[0],&c,1)==1){}
 	close(pipes[0]);int status;assert(waitpid(pid,&status,0)==pid);assert(WIFEXITED(status));	return WEXITSTATUS(status);
+}
+
+static int runtime_run(const char *runtime,const char *core,const char *rom,
+		       const char *root,bool signal_exit,int state_operation,int quick_resume)
+{
+	char token[65], *resume=NULL;
+	if(quick_resume==2||quick_resume==4||quick_resume==6){
+		struct saves *s=saves_open_with_options(root,core,rom,"banana-retro-options-v1:");
+		assert(s&&saves_resume_probe(s,token)==SAVES_RESUME_READY);saves_close(s);
+		resume=token;
+	}
+	return runtime_run_token(runtime,core,rom,root,signal_exit,state_operation,quick_resume,resume);
 }
 
 static int legacy_cli_run(const char *runtime,const char *core,const char *rom,
@@ -209,9 +232,9 @@ static void assert_resume_snapshot(struct saves *s,const char *expected_token,
 static void check_resume_publication(const char *root,const char *core,const char *content)
 {
 	struct saves *s=saves_open(root,core,content);assert(s);
-	assert(saves_commit_checkpoint(s,"a",1,"b",1,"c",1));
 	char token[65],identity[4096],old_generation[4096];
-	assert(saves_resume_probe(s,token)==SAVES_RESUME_READY);
+	assert(saves_commit_checkpoint(s,"a",1,"b",1,"c",1,token));
+	assert_resume_snapshot(s,token,'c','a','b');
 	only_entry(root,identity,sizeof(identity));
 	uint64_t pinned=current(identity);
 	assert(snprintf(old_generation,sizeof(old_generation),"%s/g%016llx",
@@ -221,33 +244,36 @@ static void check_resume_publication(const char *root,const char *core,const cha
 	uint8_t ordinary_sram=0,ordinary_rtc=0;
 	assert(saves_load_memory(s,&ordinary_sram,1,&ordinary_rtc,1));
 	assert(ordinary_sram=='d'&&ordinary_rtc=='e');
-	assert_resume_snapshot(s,token,'c','a','b');
+	char ineligible[65];
+	assert(saves_resume_probe(s,ineligible)==SAVES_RESUME_NONE);
 
 	/* CURRENT is already durable when the RESUME rename fails or is interrupted. */
 	uint64_t ordinary_generation=current(identity);
 	saves_test_fail_event(SAVES_TEST_RESUME_RENAME,1);
-	assert(!saves_commit_checkpoint(s,"f",1,"g",1,"h",1));
+	assert(!saves_commit_checkpoint(s,"f",1,"g",1,"h",1,NULL));
 	assert(current(identity)>ordinary_generation);
-	assert_resume_snapshot(s,token,'c','a','b');
+	assert(saves_resume_probe(s,ineligible)==SAVES_RESUME_NONE);
 
 	pid_t child=fork();assert(child>=0);
 	if(child==0){
 		struct saves *other=saves_open(root,core,content);
 		if(!other)_exit(1);
 		saves_test_crash_event(SAVES_TEST_RESUME_RENAME);
-		(void)saves_commit_checkpoint(other,"i",1,"j",1,"k",1);
+		(void)saves_commit_checkpoint(other,"i",1,"j",1,"k",1,NULL);
 		_exit(2);
 	}
 	int status;assert(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==86);
 	saves_close(s);
 	s=saves_open(root,core,content);assert(s);
-	assert_resume_snapshot(s,token,'c','a','b');
+	assert(saves_resume_probe(s,ineligible)==SAVES_RESUME_NONE);
+	assert(saves_load_memory(s,&ordinary_sram,1,&ordinary_rtc,1));
+	assert(ordinary_sram=='i'&&ordinary_rtc=='j');
 	for(unsigned i=0;i<3;i++)assert(saves_commit(s,"l",1,"m",1,-1,NULL,0));
-	assert_resume_snapshot(s,token,'c','a','b');
+	assert(saves_resume_probe(s,ineligible)==SAVES_RESUME_NONE);
 
 	/* A rename whose fsync fails may be visible, but both snapshots must survive. */
 	saves_test_fail_event(SAVES_TEST_PARENT_DIR_FSYNC,3);
-	assert(!saves_commit_checkpoint(s,"n",1,"o",1,"c",1));
+	assert(!saves_commit_checkpoint(s,"n",1,"o",1,"c",1,NULL));
 	assert(access(old_generation,F_OK)==0);
 	char replacement[65];
 	assert(saves_resume_probe(s,replacement)==SAVES_RESUME_READY&&strcmp(token,replacement)!=0);
@@ -255,7 +281,7 @@ static void check_resume_publication(const char *root,const char *core,const cha
 	uint8_t unused=0;
 	assert(saves_load_resume(s,token,&unused,1,&unused,1,&unused,1)==SAVES_RESUME_RETRY);
 
-	assert(saves_commit_checkpoint(s,"p",1,"q",1,"r",1));
+	assert(saves_commit_checkpoint(s,"p",1,"q",1,"r",1,NULL));
 	assert(saves_resume_probe(s,replacement)==SAVES_RESUME_READY);
 	assert_resume_snapshot(s,replacement,'r','p','q');
 	assert(access(old_generation,F_OK)<0&&errno==ENOENT);
@@ -279,7 +305,7 @@ static void check_resume_publication(const char *root,const char *core,const cha
 	assert(saves_commit(other,"x",1,"y",1,-1,NULL,0));
 	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_NONE);
 	saves_test_fail_event(SAVES_TEST_RESUME_RENAME,1);
-	assert(!saves_commit_checkpoint(other,"x",1,"y",1,"z",1));
+	assert(!saves_commit_checkpoint(other,"x",1,"y",1,"z",1,NULL));
 	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_NONE);
 	assert(saves_load_memory(s,&ordinary_sram,1,&ordinary_rtc,1));
 	assert(ordinary_sram=='x'&&ordinary_rtc=='y');
@@ -289,10 +315,34 @@ static void check_resume_publication(const char *root,const char *core,const cha
 	assert(saves_resume_probe(s,replacement)==SAVES_RESUME_NONE&&access(marker,F_OK)==0);
 	assert(saves_load_memory(s,&ordinary_sram,1,&ordinary_rtc,1));
 	assert(ordinary_sram=='x'&&ordinary_rtc=='y');
-	assert(saves_commit_checkpoint(other,"u",1,"v",1,"w",1));
+	assert(saves_commit_checkpoint(other,"u",1,"v",1,"w",1,NULL));
 	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_READY);
 	assert(saves_commit(s,"x",1,"y",1,-1,NULL,0));
-	assert_resume_snapshot(s,replacement,'w','u','v');
+	assert(saves_resume_probe(s,replacement)==SAVES_RESUME_NONE);
+
+	/* A required cutoff that is missing or malformed under the exact checkpoint is permanent
+	 * metadata: it can never load on a later boot. A superseded or unrelated token stays
+	 * retryable, and a repaired record loads again. */
+	char exact[65],unrelated[65];
+	assert(saves_commit_checkpoint(other,"A",1,"B",1,"C",1,exact));
+	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_READY&&!strcmp(replacement,exact));
+	char exact_floor[4096];
+	uint8_t exact_state=0,exact_sram=0,exact_rtc=0;
+	memset(unrelated,'0',64);unrelated[64]=0;
+	assert(snprintf(exact_floor,sizeof(exact_floor),"%s/g%016llx/resume-floor",identity,
+		(unsigned long long)current(identity))>0);
+	assert(unlink(exact_floor)==0);
+	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_INVALID&&!strcmp(replacement,exact));
+	assert(saves_load_resume(other,exact,&exact_state,1,&exact_sram,1,&exact_rtc,1)==SAVES_RESUME_INVALID);
+	assert(saves_load_resume(other,unrelated,&exact_state,1,&exact_sram,1,&exact_rtc,1)==SAVES_RESUME_RETRY);
+	assert(saves_resume_clear_if(other,exact));
+	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_NONE);
+	assert(saves_commit_checkpoint(other,"D",1,"E",1,"F",1,exact));
+	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_READY&&!strcmp(replacement,exact));
+	assert(snprintf(exact_floor,sizeof(exact_floor),"%s/g%016llx/resume-floor",identity,
+		(unsigned long long)current(identity))>0);
+	put(exact_floor,"x",1);
+	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_INVALID&&!strcmp(replacement,exact));
 	saves_close(other);
 	saves_close(s);
 }
@@ -301,7 +351,7 @@ static void check_legacy_resume(const char *root,const char *core,const char *co
 {
 	struct saves *s=saves_open(root,core,content);assert(s);
 	assert(saves_commit(s,"a",1,"b",1,0,"d",1));
-	assert(saves_commit_checkpoint(s,"a",1,"b",1,"c",1));
+	assert(saves_commit_checkpoint(s,"a",1,"b",1,"c",1,NULL));
 	assert(saves_test_downgrade_current_manifest(s,2));
 	char identity[4096],marker[4096],token[65];
 	only_entry(root,identity,sizeof(identity));
@@ -320,10 +370,10 @@ static void check_legacy_resume(const char *root,const char *core,const char *co
 	assert(saves_load_memory(s,&sram,1,&rtc,1)&&sram=='e'&&rtc=='f');
 	assert(saves_resume_probe(s,token)==SAVES_RESUME_NONE&&!token[0]);
 	saves_test_fail_event(SAVES_TEST_RESUME_RENAME,1);
-	assert(!saves_commit_checkpoint(s,"e",1,"f",1,"xy",2));
+	assert(!saves_commit_checkpoint(s,"e",1,"f",1,"xy",2,NULL));
 	for(unsigned i=0;i<3;i++)assert(saves_commit(s,"e",1,"f",1,-1,NULL,0));
 	assert(saves_load_checkpoint(s,&state,1)&&state=='c');
-	assert(saves_commit_checkpoint(s,"g",1,"h",1,"i",1));
+	assert(saves_commit_checkpoint(s,"g",1,"h",1,"i",1,NULL));
 	assert(saves_resume_probe(s,token)==SAVES_RESUME_READY);
 	assert_resume_snapshot(s,token,'i','g','h');
 	assert(saves_state_present(s,0)&&!saves_load_state(s,0,&state,1));
@@ -374,6 +424,548 @@ static unsigned path_components(const char *path)
 	unsigned count=0;while(*path){while(*path=='/')++path;if(!*path)break;++count;while(*path&&*path!='/')++path;}return count;
 }
 
+static void corrupt_byte(const char *path)
+{
+	int fd=open(path,O_RDWR|O_CLOEXEC|O_NOFOLLOW);assert(fd>=0);
+	unsigned char b;assert(pread(fd,&b,1,0)==1);b^=0xff;assert(pwrite(fd,&b,1,0)==1);
+	assert(fsync(fd)==0&&close(fd)==0);
+}
+static void generation_file(const char *identity,uint64_t generation,const char *name,char *out,size_t size)
+{
+	int n=snprintf(out,size,"%s/g%016llx/%s",identity,(unsigned long long)generation,name);
+	assert(n>0&&(size_t)n<size);
+}
+/* A damaged manual slot must neither roll battery memory back to an older generation nor
+ * stop later commits from publishing newer SRAM and RTC. */
+static void check_slot_damage_isolated(const char *root,const char *core,const char *content)
+{
+	struct saves *s=saves_open(root,core,content);assert(s);
+	assert(saves_commit(s,"a",1,"r",1,0,"S",1));
+	assert(saves_commit(s,"b",1,"r",1,1,"T",1));
+	assert(saves_commit(s,"c",1,"s",1,-1,NULL,0));
+	char identity[4096],path[4096];only_entry(root,identity,sizeof(identity));
+	uint64_t newest=current(identity);
+	generation_file(identity,newest,"state-00",path,sizeof(path));corrupt_byte(path);
+	uint8_t sram=0,rtc=0,state=0;
+	assert(saves_load_memory(s,&sram,1,&rtc,1)&&sram=='c'&&rtc=='s');
+	/* The previous generation still holds a verifying copy of the slot. */
+	assert(saves_state_present(s,0)&&saves_load_state(s,0,&state,1)&&state=='S');
+	generation_file(identity,newest-1,"state-00",path,sizeof(path));corrupt_byte(path);
+	sram=rtc=0;
+	assert(saves_load_memory(s,&sram,1,&rtc,1)&&sram=='c'&&rtc=='s');
+	assert(!saves_state_present(s,0)&&!saves_load_state(s,0,&state,1));
+	assert(saves_state_present(s,1)&&saves_load_state(s,1,&state,1)&&state=='T');
+	/* With no verifying copy left the slot is dropped, and the new battery data is kept. */
+	assert(saves_commit(s,"d",1,"t",1,-1,NULL,0));
+	sram=rtc=0;
+	assert(saves_load_memory(s,&sram,1,&rtc,1)&&sram=='d'&&rtc=='t');
+	assert(!saves_state_present(s,0)&&saves_state_present(s,1));
+	state=0;assert(saves_load_state(s,1,&state,1)&&state=='T');
+	saves_close(s);
+}
+static struct saves *seed_two_slots(const char *root,const char *core,const char *content,
+				    char *identity,size_t size)
+{
+	struct saves *s=saves_open(root,core,content);assert(s);
+	assert(saves_commit(s,"a",1,"r",1,0,"S",1));
+	assert(saves_commit(s,"b",1,"r",1,1,"T",1));
+	assert(saves_commit(s,"c",1,"s",1,-1,NULL,0));
+	only_entry(root,identity,size);
+	return s;
+}
+static int slot_value(struct saves *s,unsigned slot)
+{
+	uint8_t value=0;
+	return saves_state_present(s,slot)&&saves_load_state(s,slot,&value,1) ? (int)value : -1;
+}
+static void assert_memory(struct saves *s,uint8_t sram,uint8_t rtc)
+{
+	uint8_t a=0,b=0;
+	assert(saves_load_memory(s,&a,1,&b,1)&&a==sram&&b==rtc);
+}
+/* A copy of one manual slot that cannot be read is damage to that slot alone. It must not block
+ * the commit that carries SRAM and RTC, and the newest copy that does verify must be kept. A
+ * failed directory scan or a resource failure says nothing about the copies, so it still fails
+ * the commit and leaves CURRENT and every slot as they were. */
+static void check_slot_copy_read_errors(const char *base,const char *core,const char *content)
+{
+	char root[4096],identity[4096],path[4096];struct saves *s;uint64_t newest;
+	/* An unreadable newest copy falls back to the older verifying copy. */
+	assert(snprintf(root,sizeof(root),"%s/slot-read-fallback",base)>0);
+	s=seed_two_slots(root,core,content,identity,sizeof(identity));newest=current(identity);
+	saves_test_fail_read(newest,"state-00",EIO);
+	assert(saves_commit(s,"d",1,"t",1,-1,NULL,0));
+	assert(slot_value(s,0)=='S');
+	saves_test_fail_read(0,NULL,0);
+	assert_memory(s,'d','t');assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	saves_close(s);
+	/* With no copy readable or valid, only that slot is left out of the new generation. */
+	assert(snprintf(root,sizeof(root),"%s/slot-read-dropped",base)>0);
+	s=seed_two_slots(root,core,content,identity,sizeof(identity));newest=current(identity);
+	generation_file(identity,newest-1,"state-00",path,sizeof(path));corrupt_byte(path);
+	saves_test_fail_read(newest,"state-00",EIO);
+	assert(saves_commit(s,"d",1,"t",1,-1,NULL,0));
+	assert_memory(s,'d','t');assert(slot_value(s,0)==-1&&slot_value(s,1)=='T');
+	/* The unreadable copy stays retained: once readable again it is found, and the next commit
+	 * carries it forward instead of losing it. */
+	saves_test_fail_read(0,NULL,0);
+	assert(slot_value(s,0)=='S');
+	assert(saves_commit(s,"e",1,"u",1,-1,NULL,0));
+	assert_memory(s,'e','u');assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	saves_close(s);
+	/* An older generation whose manifest cannot be read is skipped the same way. */
+	assert(snprintf(root,sizeof(root),"%s/slot-manifest-read",base)>0);
+	s=seed_two_slots(root,core,content,identity,sizeof(identity));newest=current(identity);
+	generation_file(identity,newest,"state-00",path,sizeof(path));corrupt_byte(path);
+	saves_test_fail_read(newest-1,"manifest",EIO);
+	assert(saves_commit(s,"d",1,"t",1,-1,NULL,0));
+	assert_memory(s,'d','t');assert(slot_value(s,0)==-1&&slot_value(s,1)=='T');
+	/* The generation with the unreadable manifest is kept, so the slot returns once it reads. */
+	saves_test_fail_read(0,NULL,0);
+	assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	saves_close(s);
+	/* Of two verifying copies the newest is the one carried forward. */
+	assert(snprintf(root,sizeof(root),"%s/slot-newest-copy",base)>0);
+	s=saves_open(root,core,content);assert(s);
+	assert(saves_commit(s,"a",1,"r",1,0,"S",1));
+	assert(saves_commit(s,"b",1,"r",1,0,"U",1));
+	assert(saves_commit(s,"c",1,"s",1,-1,NULL,0));
+	assert_memory(s,'c','s');assert(slot_value(s,0)=='U');
+	saves_close(s);
+	/* A directory scan failure fails closed: nothing is published and no slot is dropped. */
+	assert(snprintf(root,sizeof(root),"%s/slot-scan-failure",base)>0);
+	s=seed_two_slots(root,core,content,identity,sizeof(identity));newest=current(identity);
+	saves_test_fail_event(SAVES_TEST_GENERATION_SCAN,1);
+	assert(!saves_commit(s,"d",1,"t",1,-1,NULL,0));
+	assert(current(identity)==newest);assert_memory(s,'c','s');
+	assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	assert(saves_commit(s,"d",1,"t",1,-1,NULL,0));
+	assert_memory(s,'d','t');assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	saves_close(s);
+	/* So does a resource failure, whether it hits the payload buffer or opening a copy. */
+	assert(snprintf(root,sizeof(root),"%s/slot-resource-failure",base)>0);
+	s=seed_two_slots(root,core,content,identity,sizeof(identity));newest=current(identity);
+	saves_test_fail_event(SAVES_TEST_SLOT_ALLOC,1);
+	assert(!saves_commit(s,"d",1,"t",1,-1,NULL,0));
+	assert(current(identity)==newest);assert_memory(s,'c','s');
+	saves_test_fail_read(newest,"state-00",EMFILE);
+	assert(!saves_commit(s,"d",1,"t",1,-1,NULL,0));
+	saves_test_fail_read(0,NULL,0);
+	assert(current(identity)==newest);assert_memory(s,'c','s');
+	assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	assert(saves_commit(s,"d",1,"t",1,-1,NULL,0));
+	assert_memory(s,'d','t');assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	saves_close(s);
+	assert(snprintf(root,sizeof(root),"%s/slot-resource-manifest",base)>0);
+	s=seed_two_slots(root,core,content,identity,sizeof(identity));newest=current(identity);
+	generation_file(identity,newest,"state-00",path,sizeof(path));corrupt_byte(path);
+	saves_test_fail_read(newest-1,"manifest",ENFILE);
+	assert(!saves_commit(s,"d",1,"t",1,-1,NULL,0));
+	saves_test_fail_read(0,NULL,0);
+	assert(current(identity)==newest);assert_memory(s,'c','s');
+	assert(saves_commit(s,"d",1,"t",1,-1,NULL,0));
+	assert_memory(s,'d','t');assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	saves_close(s);
+}
+static int log_begin(const char *path)
+{
+	fflush(stderr);
+	int saved=dup(STDERR_FILENO);assert(saved>=0);
+	int fd=open(path,O_WRONLY|O_CREAT|O_TRUNC,0600);assert(fd>=0);
+	assert(dup2(fd,STDERR_FILENO)>=0&&close(fd)==0);
+	return saved;
+}
+static void log_end(int saved,const char *path,char *out,size_t size)
+{
+	fflush(stderr);
+	assert(dup2(saved,STDERR_FILENO)>=0&&close(saved)==0);
+	int fd=open(path,O_RDONLY);assert(fd>=0);
+	ssize_t n=read(fd,out,size-1);assert(n>=0&&close(fd)==0);
+	out[n]=0;
+}
+static unsigned count_generations(const char *identity)
+{
+	DIR *d=opendir(identity);assert(d);
+	unsigned n=0;struct dirent *e;
+	while((e=readdir(d))!=NULL)if(e->d_name[0]=='g'&&strlen(e->d_name)==17)n++;
+	assert(closedir(d)==0);
+	return n;
+}
+/* A battery commit whose stderr diagnostics are captured. */
+static void commit_logged(struct saves *s,const char *logfile,char *log,size_t size)
+{
+	int saved=log_begin(logfile);
+	bool ok=saves_commit(s,"e",1,"u",1,-1,NULL,0);
+	log_end(saved,logfile,log,size);
+	assert(ok);
+}
+/* Slot 0 holds 'S' in the older and 'U' in the newest retained generation; slot 1 holds 'T'. */
+static struct saves *seed_versions(const char *root,const char *core,const char *content,
+				   char *identity,size_t size)
+{
+	struct saves *s=saves_open(root,core,content);assert(s);
+	assert(saves_commit(s,"a",1,"r",1,0,"S",1));
+	assert(saves_commit(s,"b",1,"r",1,1,"T",1));
+	assert(saves_commit(s,"c",1,"s",1,0,"U",1));
+	only_entry(root,identity,size);
+	assert(count_generations(identity)==2);
+	return s;
+}
+/* A slot copy that cannot be read may only be temporarily damaged. Commits go on, an older
+ * verified copy serves as a fallback, and neither that copy nor the unreadable newer one may be
+ * pruned or shadowed until the newer one reads again, nor may a persistent fault accumulate
+ * generations. */
+static void check_slot_retention(const char *base,const char *core,const char *content)
+{
+	char root[4096],identity[4096],path[4096],logfile[4096],log[1024];
+	struct saves *s;uint64_t g3;
+	assert(snprintf(logfile,sizeof(logfile),"%s/slot-log.txt",base)>0);
+	/* Transient: the copy reads again after several commits and pruning passes. */
+	assert(snprintf(root,sizeof(root),"%s/slot-retain-transient",base)>0);
+	s=seed_versions(root,core,content,identity,sizeof(identity));g3=current(identity);
+	saves_test_fail_read(g3,"state-00",EIO);
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(strstr(log,"Native save slot 0:")&&strstr(log,"unreadable, kept")&&!strstr(log,"slot 1"));
+	assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	for(unsigned i=0;i<5;i++)commit_logged(s,logfile,log,sizeof(log));
+	assert(count_generations(identity)==4);
+	assert_memory(s,'e','u');assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	saves_test_fail_read(0,NULL,0);
+	saves_test_fail_read(g3,"manifest",EIO);
+	commit_logged(s,logfile,log,sizeof(log));
+	/* Every empty slot walks past that manifest; it is reported once. */
+	assert(strstr(log,"manifest unreadable")&&!strstr(strstr(log,"manifest unreadable")+1,"manifest unreadable"));
+	assert(count_generations(identity)==4&&slot_value(s,0)=='S');
+	saves_test_fail_read(0,NULL,0);
+	assert(slot_value(s,0)=='U'&&slot_value(s,1)=='T');
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(log[0]==0&&count_generations(identity)==3);
+	assert(slot_value(s,0)=='U'&&slot_value(s,1)=='T');
+	/* The copy's verified source is this slot's fallback until a later commit carries a
+	 * verified copy of its own; damage to the newest copy must not lose the slot. */
+	generation_file(identity,current(identity),"state-00",path,sizeof(path));corrupt_byte(path);
+	assert(slot_value(s,0)=='U');
+	saves_close(s);
+	/* The fallback is the newest verified older copy. */
+	assert(snprintf(root,sizeof(root),"%s/slot-retain-newest",base)>0);
+	s=saves_open(root,core,content);assert(s);
+	assert(saves_commit(s,"a",1,"r",1,0,"S",1));
+	assert(saves_commit(s,"b",1,"r",1,0,"V",1));
+	assert(saves_commit(s,"c",1,"r",1,0,"U",1));
+	only_entry(root,identity,sizeof(identity));g3=current(identity);
+	saves_test_fail_read(g3,"state-00",EIO);
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(slot_value(s,0)=='V');
+	saves_test_fail_read(0,NULL,0);
+	assert(slot_value(s,0)=='U');
+	saves_close(s);
+	/* Persistent, with no verifying copy: kept and bounded, found again once readable. */
+	assert(snprintf(root,sizeof(root),"%s/slot-retain-persistent",base)>0);
+	s=seed_versions(root,core,content,identity,sizeof(identity));g3=current(identity);
+	generation_file(identity,g3-1,"state-00",path,sizeof(path));corrupt_byte(path);
+	saves_test_fail_read(g3,"state-00",EIO);
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(strstr(log,"no verified copy"));
+	for(unsigned i=0;i<6;i++)commit_logged(s,logfile,log,sizeof(log));
+	assert(count_generations(identity)==3);
+	assert(slot_value(s,0)==-1&&slot_value(s,1)=='T');
+	saves_test_fail_read(0,NULL,0);
+	assert(slot_value(s,0)=='U');
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(count_generations(identity)==3&&slot_value(s,0)=='U');
+	generation_file(identity,current(identity),"state-00",path,sizeof(path));corrupt_byte(path);
+	assert(slot_value(s,0)=='U');
+	saves_close(s);
+	/* A second fault, on the fallback itself, must not cost the fallback. */
+	assert(snprintf(root,sizeof(root),"%s/slot-retain-second-fault",base)>0);
+	s=seed_versions(root,core,content,identity,sizeof(identity));g3=current(identity);
+	saves_test_fail_read(g3,"state-00",EIO);
+	commit_logged(s,logfile,log,sizeof(log));
+	saves_test_fail_read(g3-1,"state-00",EIO);
+	commit_logged(s,logfile,log,sizeof(log));
+	saves_test_fail_read(0,NULL,0);
+	saves_test_fail_read(g3,"state-00",EIO);
+	assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	saves_test_fail_read(0,NULL,0);
+	assert(slot_value(s,0)=='U');
+	saves_close(s);
+	/* A commit that failed to publish leaves an orphan above CURRENT. It must not displace
+	 * the committed copy that a later fault hides. */
+	assert(snprintf(root,sizeof(root),"%s/slot-retain-orphan",base)>0);
+	s=seed_versions(root,core,content,identity,sizeof(identity));g3=current(identity);
+	saves_test_fail_event(SAVES_TEST_CURRENT_RENAME,1);
+	assert(!saves_commit(s,"x",1,"y",1,0,"D",1));
+	assert(current(identity)==g3);
+	saves_test_fail_read(g3,"state-00",EIO);
+	commit_logged(s,logfile,log,sizeof(log));
+	commit_logged(s,logfile,log,sizeof(log));
+	saves_test_fail_read(0,NULL,0);
+	assert(slot_value(s,0)=='U'&&slot_value(s,1)=='T');
+	saves_close(s);
+	/* Checkpoint, battery-only and plain commits treat degraded slots alike. */
+	assert(snprintf(root,sizeof(root),"%s/slot-retain-kinds",base)>0);
+	s=seed_versions(root,core,content,identity,sizeof(identity));g3=current(identity);
+	saves_test_fail_read(g3,"state-00",EIO);
+	saves_test_fail_read(g3,"state-01",EIO);
+	assert(saves_commit_checkpoint(s,"p",1,"q",1,"k",1,NULL));
+	assert(saves_commit_battery_only(s,"e",1,"u",1));
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(count_generations(identity)<=6);
+	assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	saves_test_fail_read(0,NULL,0);
+	assert(slot_value(s,0)=='U'&&slot_value(s,1)=='T');
+	commit_logged(s,logfile,log,sizeof(log));
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(slot_value(s,0)=='U'&&slot_value(s,1)=='T'&&count_generations(identity)<=3);
+	saves_close(s);
+	/* Explicit replacement supersedes the unresolved copies; a zero-length slot is refused. */
+	assert(snprintf(root,sizeof(root),"%s/slot-retain-replace",base)>0);
+	s=seed_versions(root,core,content,identity,sizeof(identity));g3=current(identity);
+	saves_test_fail_read(g3,"state-00",EIO);
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(saves_commit(s,"e",1,"u",1,1,"Z",1));
+	assert(count_generations(identity)==4&&slot_value(s,0)=='S'&&slot_value(s,1)=='Z');
+	uint64_t before=current(identity);
+	assert(!saves_commit(s,"x",1,"y",1,0,NULL,0));
+	assert(current(identity)==before&&slot_value(s,0)=='S');
+	assert(saves_commit(s,"e",1,"u",1,0,"W",1));
+	assert(count_generations(identity)==2&&slot_value(s,0)=='W'&&slot_value(s,1)=='Z');
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(log[0]==0&&slot_value(s,0)=='W'&&slot_value(s,1)=='Z');
+	saves_test_fail_read(0,NULL,0);
+	saves_close(s);
+	/* A verified source, displaced by a damaged newer copy, is retained as the one fallback
+	 * until a later commit carries a verified copy of its own. Retention stays bounded. */
+	assert(snprintf(root,sizeof(root),"%s/slot-retain-source",base)>0);
+	s=seed_versions(root,core,content,identity,sizeof(identity));g3=current(identity);
+	generation_file(identity,g3,"state-00",path,sizeof(path));corrupt_byte(path);
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T'&&count_generations(identity)==3);
+	generation_file(identity,g3-1,"manifest",path,sizeof(path));assert(access(path,F_OK)==0);
+	for(unsigned i=0;i<3;i++){
+		generation_file(identity,current(identity),"state-00",path,sizeof(path));corrupt_byte(path);
+		commit_logged(s,logfile,log,sizeof(log));
+		assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T'&&count_generations(identity)==3);
+		generation_file(identity,g3-1,"manifest",path,sizeof(path));assert(access(path,F_OK)==0);
+	}
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T'&&count_generations(identity)==2);
+	generation_file(identity,g3-1,"manifest",path,sizeof(path));
+	assert(access(path,F_OK)<0&&errno==ENOENT);
+	/* The released state still has one fallback; losing both copies leaves none. */
+	generation_file(identity,current(identity),"state-00",path,sizeof(path));corrupt_byte(path);
+	assert(slot_value(s,0)=='S');
+	generation_file(identity,current(identity)-1,"state-00",path,sizeof(path));corrupt_byte(path);
+	assert(slot_value(s,0)==-1);
+	saves_close(s);
+}
+/* A possible legacy resume target whose manifest cannot be read is kept by pruning. */
+static void check_legacy_prune_protection(const char *base,const char *core,const char *content)
+{
+	char root[4096],identity[4096],marker[4096],manifest[4096];
+	assert(snprintf(root,sizeof(root),"%s/legacy-prune",base)>0);
+	struct saves *s=saves_open(root,core,content);assert(s);
+	for(unsigned i=0;i<SAVES_STATE_SLOTS;i++){
+		uint8_t value=(uint8_t)('a'+i);
+		assert(saves_commit(s,"a",1,"b",1,(int)i,&value,1));
+	}
+	assert(saves_commit_checkpoint(s,"a",1,"b",1,"c",1,NULL));
+	assert(saves_test_downgrade_current_manifest(s,2));
+	only_entry(root,identity,sizeof(identity));
+	uint64_t legacy=current(identity);
+	const char v2[]="v2\n2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6\n";
+	assert(snprintf(marker,sizeof(marker),"%s/RESUME",identity)>0);
+	put(marker,v2,sizeof(v2)-1);
+	generation_file(identity,legacy,"manifest",manifest,sizeof(manifest));
+	assert(saves_commit(s,"e",1,"f",1,-1,NULL,0));
+	static const int errors[]={ENFILE,EIO};
+	for(unsigned i=0;i<2;i++){
+		saves_test_fail_read(legacy,"manifest",errors[i]);
+		assert(saves_commit(s,"e",1,"f",1,-1,NULL,0));
+		assert(saves_commit(s,"e",1,"f",1,-1,NULL,0));
+		assert(access(manifest,F_OK)==0);
+		saves_test_fail_read(0,NULL,0);
+	}
+	uint8_t state=0;
+	assert(saves_load_checkpoint(s,&state,1)&&state=='c');
+	saves_close(s);
+}
+/* A commit whose generation directory was published but whose CURRENT rename failed. The runtime
+ * never acknowledged it, so it is not committed data: CURRENT still names the last real commit. */
+static struct saves *seed_orphan(const char *base,const char *name,const char *core,const char *content,
+				 char *identity,size_t size,uint64_t *committed,bool checkpoint)
+{
+	char root[4096];
+	assert(snprintf(root,sizeof(root),"%s/%s",base,name)>0);
+	struct saves *s=seed_versions(root,core,content,identity,size);
+	*committed=current(identity);
+	saves_test_fail_event(SAVES_TEST_CURRENT_RENAME,1);
+	assert(checkpoint ? !saves_commit_checkpoint(s,"x",1,"y",1,"k",1,NULL) :
+			    !saves_commit(s,"x",1,"y",1,0,"D",1));
+	assert(current(identity)==*committed&&count_generations(identity)==3);
+	return s;
+}
+/* A generation above CURRENT must never become authoritative: not as the fallback for a damaged
+ * committed copy, not as the source of carried-forward slots, and not as the checkpoint. */
+static void check_orphan_generations(const char *base,const char *core,const char *content)
+{
+	char identity[4096],path[4096],logfile[4096],log[1024];
+	struct saves *s;uint64_t g3;
+	assert(snprintf(logfile,sizeof(logfile),"%s/orphan-log.txt",base)>0);
+	/* Slot loading: the newest committed copy is damaged; the older committed copy is the fallback. */
+	s=seed_orphan(base,"orphan-slot-load",core,content,identity,sizeof(identity),&g3,false);
+	assert(slot_value(s,0)=='U');
+	generation_file(identity,g3,"state-00",path,sizeof(path));corrupt_byte(path);
+	assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	saves_close(s);
+	/* Battery loading: likewise for SRAM and RTC. */
+	s=seed_orphan(base,"orphan-memory",core,content,identity,sizeof(identity),&g3,false);
+	assert_memory(s,'c','s');
+	generation_file(identity,g3,"memory",path,sizeof(path));corrupt_byte(path);
+	assert_memory(s,'b','r');
+	saves_close(s);
+	/* Carry-forward: the orphan's slot copy must not enter the next committed generation, and the
+	 * orphan is removed by that commit. */
+	s=seed_orphan(base,"orphan-carry",core,content,identity,sizeof(identity),&g3,false);
+	generation_file(identity,g3,"state-00",path,sizeof(path));corrupt_byte(path);
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(slot_value(s,0)=='S'&&slot_value(s,1)=='T');
+	assert_memory(s,'e','u');
+	assert(count_generations(identity)==3);
+	/* The verified source of the carried slot stays as its fallback. */
+	generation_file(identity,current(identity),"state-00",path,sizeof(path));corrupt_byte(path);
+	assert(slot_value(s,0)=='S');
+	saves_close(s);
+	/* The previous generation a commit retains is the committed fallback, not the orphan, when
+	 * CURRENT's own battery memory is damaged. */
+	s=seed_orphan(base,"orphan-previous",core,content,identity,sizeof(identity),&g3,false);
+	generation_file(identity,g3,"memory",path,sizeof(path));corrupt_byte(path);
+	commit_logged(s,logfile,log,sizeof(log));
+	assert_memory(s,'e','u');
+	generation_file(identity,g3-1,"manifest",path,sizeof(path));assert(access(path,F_OK)==0);
+	generation_file(identity,g3+1,"manifest",path,sizeof(path));assert(access(path,F_OK)!=0);
+	assert(count_generations(identity)==3);
+	/* The carried slot keeps its newer verified source, not the older committed fallback. */
+	generation_file(identity,current(identity),"state-00",path,sizeof(path));corrupt_byte(path);
+	assert(slot_value(s,0)=='U');
+	saves_close(s);
+	/* An orphan checkpoint is not a checkpoint, and no later prune keeps it alive. */
+	s=seed_orphan(base,"orphan-checkpoint",core,content,identity,sizeof(identity),&g3,true);
+	uint8_t k=0;
+	assert(!saves_checkpoint_present(s)&&!saves_load_checkpoint(s,&k,1));
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(count_generations(identity)==2&&!saves_checkpoint_present(s));
+	saves_close(s);
+	/* An interruption immediately after CURRENT moves must not turn an orphan into history. */
+	s=seed_orphan(base,"orphan-publish-crash",core,content,identity,sizeof(identity),&g3,false);
+	pid_t child=fork();assert(child>=0);
+	if(child==0){
+		saves_test_crash_event(SAVES_TEST_AFTER_CURRENT_RENAME);
+		(void)saves_commit(s,"e",1,"u",1,-1,NULL,0);
+		_exit(2);
+	}
+	int status;
+	assert(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==86);
+	assert(current(identity)==g3+2);
+	generation_file(identity,g3+1,"manifest",path,sizeof(path));assert(access(path,F_OK)!=0&&errno==ENOENT);
+	generation_file(identity,g3+2,"state-00",path,sizeof(path));corrupt_byte(path);
+	assert(slot_value(s,0)=='U');
+	saves_close(s);
+	/* A RESUME marker that names an orphan cannot keep it alive: the commit that wrote it never published. */
+	s=seed_orphan(base,"orphan-marker",core,content,identity,sizeof(identity),&g3,false);
+	{
+		char text[86];
+		assert(snprintf(text,sizeof(text),"v4\n%016llx\n%064x\n",(unsigned long long)(g3+1),0)==85);
+		assert(snprintf(path,sizeof(path),"%s/RESUME",identity)>0);
+		put(path,text,85);
+	}
+	commit_logged(s,logfile,log,sizeof(log));
+	assert(count_generations(identity)==2);
+	generation_file(identity,g3+1,"manifest",path,sizeof(path));assert(access(path,F_OK)!=0);
+	saves_close(s);
+	/* A CURRENT that cannot be read says nothing about which commit is last: fail closed rather
+	 * than guess from the directory. (A root user ignores the mode, so skip there.) */
+	if(geteuid()!=0){
+		uint8_t sram=0,rtc=0;
+		s=seed_orphan(base,"orphan-current-unreadable",core,content,identity,sizeof(identity),&g3,false);
+		assert(snprintf(path,sizeof(path),"%s/CURRENT",identity)>0);
+		assert(chmod(path,0)==0);
+		assert(!saves_load_memory(s,&sram,1,&rtc,1)&&slot_value(s,0)==-1);
+		assert(!saves_commit(s,"z",1,"z",1,-1,NULL,0)&&count_generations(identity)==3);
+		assert(chmod(path,0600)==0);
+		assert_memory(s,'c','s');
+		assert(slot_value(s,0)=='U');
+		saves_close(s);
+	}
+}
+/* The reader shipped before the CURRENT-generation check consults RESUME and the cutoff file
+ * named by a '+' CURRENT, and nothing else. Report whether it would restore the checkpoint. */
+static bool baseline_reader_would_resume(const char *identity)
+{
+	char path[4096],line[32]={0},generation[32]={0};
+	int n=snprintf(path,sizeof(path),"%s/RESUME",identity);assert(n>0&&(size_t)n<sizeof(path));
+	FILE *marker=fopen(path,"r");if(!marker)return false;
+	bool ok=fgets(line,sizeof(line),marker)&&fgets(generation,sizeof(generation),marker);
+	assert(fclose(marker)==0);
+	if(!ok||strcmp(line,"v4\n"))return false;
+	n=snprintf(path,sizeof(path),"%s/CURRENT",identity);assert(n>0&&(size_t)n<sizeof(path));
+	marker=fopen(path,"r");assert(marker&&fgets(line,sizeof(line),marker));assert(fclose(marker)==0);
+	uint64_t floor=0;
+	if(line[0]=='+'){
+		generation_file(identity,strtoull(line,NULL,10),"resume-floor",path,sizeof(path));
+		size_t size=0;uint8_t *data=read_bytes(path,&size);assert(size>=8);
+		for(unsigned i=0;i<8;i++)floor|=(uint64_t)data[i]<<(i*8);
+		free(data);
+	}
+	return strtoull(generation,NULL,16)>floor;
+}
+/* Any commit that is not a checkpoint carries newer battery memory. A downgraded runtime must
+ * find the cutoff, whether the commit saved a slot or only flushed memory. */
+static void check_superseded_checkpoint_downgrade(const char *root,const char *core,const char *content)
+{
+	struct saves *s=saves_open(root,core,content);assert(s);
+	char token[65],identity[4096],probe[65];
+	assert(saves_commit_checkpoint(s,"a",1,"b",1,"c",1,token));
+	only_entry(root,identity,sizeof(identity));
+	assert(baseline_reader_would_resume(identity));
+	assert(saves_commit(s,"d",1,"e",1,0,"S",1));
+	assert(!baseline_reader_would_resume(identity));
+	assert(saves_resume_probe(s,probe)==SAVES_RESUME_NONE);
+	assert(saves_commit_checkpoint(s,"f",1,"g",1,"h",1,token));
+	assert(baseline_reader_would_resume(identity));
+	assert(saves_commit(s,"i",1,"j",1,-1,NULL,0));
+	assert(!baseline_reader_would_resume(identity));
+	assert(saves_resume_probe(s,probe)==SAVES_RESUME_NONE);
+	/* Two checkpoints in a row: the second is durable in CURRENT but its marker never lands. */
+	assert(saves_commit_checkpoint(s,"k",1,"l",1,"m",1,token));
+	assert(baseline_reader_would_resume(identity));
+	saves_test_fail_event(SAVES_TEST_RESUME_RENAME,1);
+	assert(!saves_commit_checkpoint(s,"n",1,"o",1,"p",1,NULL));
+	assert(!baseline_reader_would_resume(identity));
+	assert(saves_resume_probe(s,probe)==SAVES_RESUME_NONE);
+	saves_close(s);
+}
+/* Save identity binds to the digest the caller measured, not to the file's later contents. */
+static void check_content_bound_identity(const char *root,const char *core,const char *rom)
+{
+	put(rom,"original",8);
+	unsigned char digest[SAVES_CONTENT_DIGEST_SIZE],other[SAVES_CONTENT_DIGEST_SIZE];
+	saves_digest_content("original",8,digest);
+	int fd=open(rom,O_RDONLY|O_CLOEXEC);assert(fd>=0);
+	assert(saves_digest_content_fd(fd,8,other)&&!memcmp(digest,other,sizeof(digest)));
+	assert(!saves_digest_content_fd(fd,7,other)&&!saves_digest_content_fd(fd,9,other));
+	assert(close(fd)==0);
+	struct saves *bound=saves_open_content(root,core,rom,digest,"banana-retro-options-v1:");
+	assert(bound&&saves_commit(bound,"x",1,"y",1,-1,NULL,0));
+	put(rom,"replaced",8);
+	uint8_t sram=0,rtc=0;
+	struct saves *by_path=saves_open_with_options(root,core,rom,"banana-retro-options-v1:");
+	assert(by_path&&!saves_load_memory(by_path,&sram,1,&rtc,1));
+	struct saves *again=saves_open_content(root,core,rom,digest,"banana-retro-options-v1:");
+	assert(again&&saves_load_memory(again,&sram,1,&rtc,1)&&sram=='x'&&rtc=='y');
+	assert(!saves_open_content(root,core,rom,NULL,"banana-retro-options-v1:"));
+	saves_close(again);saves_close(by_path);saves_close(bound);
+}
 int main(int argc,char **argv)
 {
 	char tmp[]="/tmp/banana-retro-saves.XXXXXX";char *base=mkdtemp(tmp);assert(base);
@@ -504,7 +1096,7 @@ int main(int argc,char **argv)
 	struct saves *checkpoint=saves_open(checkpoint_root,core,content);assert(checkpoint);
 	uint8_t checkpoint_data[]={2,7,1,8};
 	assert(saves_commit(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),9,checkpoint_data,sizeof(checkpoint_data)));
-	assert(saves_commit_checkpoint(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),checkpoint_data,sizeof(checkpoint_data)));
+	assert(saves_commit_checkpoint(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),checkpoint_data,sizeof(checkpoint_data),NULL));
 	assert(saves_checkpoint_present(checkpoint));
 	char resume_hash[65];assert(saves_resume_probe(checkpoint,resume_hash)==SAVES_RESUME_READY);uint8_t checkpoint_out[sizeof(checkpoint_data)];
 	assert(saves_load_checkpoint(checkpoint,checkpoint_out,sizeof(checkpoint_out))&&!memcmp(checkpoint_out,checkpoint_data,sizeof(checkpoint_data)));
@@ -512,10 +1104,10 @@ int main(int argc,char **argv)
 	/* Failed publication leaves the old resume generation usable. */
 	saves_test_fail_write_after(0);
 	uint8_t replacement_state[]={9,3,2,3};
-	assert(!saves_commit_checkpoint(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),replacement_state,sizeof(replacement_state)));
+	assert(!saves_commit_checkpoint(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),replacement_state,sizeof(replacement_state),NULL));
 	assert(saves_resume_probe(checkpoint,resume_hash)==SAVES_RESUME_READY);
 	char rejected_generation_hash[65];memcpy(rejected_generation_hash,resume_hash,sizeof(resume_hash));
-	assert(saves_commit_checkpoint(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),replacement_state,sizeof(replacement_state)));
+	assert(saves_commit_checkpoint(checkpoint,sram,sizeof(sram),rtc,sizeof(rtc),replacement_state,sizeof(replacement_state),NULL));
 	assert(saves_resume_probe(checkpoint,resume_hash)==SAVES_RESUME_READY);
 	assert(strcmp(rejected_generation_hash,resume_hash)!=0);
 	assert(saves_resume_clear_if(checkpoint,rejected_generation_hash));
@@ -537,6 +1129,18 @@ int main(int argc,char **argv)
 	check_resume_publication(publication_root,core,content);
 	assert(snprintf(legacy_resume_root,sizeof(legacy_resume_root),"%s/legacy-resume",base)>0);
 	check_legacy_resume(legacy_resume_root,core,content);
+	char isolation_root[4096],downgrade_root[4096],binding_root[4096],binding_rom[4096];
+	assert(snprintf(isolation_root,sizeof(isolation_root),"%s/slot-isolation",base)>0);
+	check_slot_damage_isolated(isolation_root,core,content);
+	check_slot_copy_read_errors(base,core,content);
+	check_slot_retention(base,core,content);
+	check_legacy_prune_protection(base,core,content);
+	check_orphan_generations(base,core,content);
+	assert(snprintf(downgrade_root,sizeof(downgrade_root),"%s/downgrade-cutoff",base)>0);
+	check_superseded_checkpoint_downgrade(downgrade_root,core,content);
+	assert(snprintf(binding_root,sizeof(binding_root),"%s/content-binding",base)>0);
+	assert(snprintf(binding_rom,sizeof(binding_rom),"%s/a/binding.rom",base)>0);
+	check_content_bound_identity(binding_root,core,binding_rom);
 	/* A second committed generation retains untouched explicit slots. */
 	uint8_t sram2[]={7,7,7,7};assert(saves_commit(s,sram2,sizeof(sram2),rtc,sizeof(rtc),-1,NULL,0));memset(got_state,0,sizeof(got_state));assert(saves_load_state(s,0,got_state,sizeof(got_state))&&!memcmp(state0,got_state,sizeof(state0)));
 	/* A truncated newest payload is rejected and the previous generation remains loadable. */
@@ -602,7 +1206,8 @@ int main(int argc,char **argv)
 	assert(snprintf(rr,sizeof(rr),"%s/runtime-quit-callbacks",base)>0);
 	run_persistence_callbacks(runtime,"quit",fixture,rom,rr);
 	const char *regressions[]={"battery-crash","battery-unlink","option-during-restore",
-		"options-ui","options-core","transient-resume","legacy-1","legacy-2","legacy-3"};
+		"options-ui","options-core","transient-resume","exit-persist","legacy-1","legacy-2","legacy-3",
+		"content-memory","content-path","content-mutated"};
 	for(size_t i=0;i<sizeof(regressions)/sizeof(regressions[0]);i++){
 		assert(snprintf(rr,sizeof(rr),"%s/runtime-%s",base,regressions[i])>0);
 		run_persistence_callbacks(runtime,regressions[i],fixture,rom,rr);
@@ -630,13 +1235,25 @@ int main(int argc,char **argv)
 	assert(snprintf(rr,sizeof(rr),"%s/runtime-quick-resume",base)>0);assert(runtime_run(runtime,fixture,rom,rr,false,0,1)==0);assert(runtime_run(runtime,fixture,rom,rr,false,0,2)==0);
 	char resume_ident[4096],resume_gen[4096],resume_payload[4096];only_entry(rr,resume_ident,sizeof(resume_ident));uint64_t resume_generation=current(resume_ident);
 	assert(snprintf(resume_gen,sizeof(resume_gen),"%s/g%016llx",resume_ident,(unsigned long long)resume_generation)>0);
-	assert(snprintf(resume_payload,sizeof(resume_payload),"%s/checkpoint",resume_gen)>0);put(resume_payload,"x",1);
+	assert(snprintf(resume_payload,sizeof(resume_payload),"%s/checkpoint",resume_gen)>0);
+	struct saves *missing=saves_open_with_options(rr,fixture,rom,"banana-retro-options-v1:");
+	char missing_token[65];
+	assert(missing&&saves_resume_probe(missing,missing_token)==SAVES_RESUME_READY);
+	saves_close(missing);
+	assert(unlink(resume_payload)==0);
+	/* The launcher tells a permanent rejection (the checkpoint can never restore) from a failure a later boot may
+	 * overcome by the startup error the runtime leaves. */
+	assert(snprintf(startup_error_file,sizeof(startup_error_file),"%s/startup-error",base)>0);
+	assert(runtime_run_token(runtime,fixture,rom,rr,false,0,6,missing_token)==1);
+	assert_startup_error("resume-rejected\n");
+	assert(runtime_run_token(runtime,fixture,rom,rr,false,0,6,"invalid")==2);
+	assert(current(resume_ident)==resume_generation);
 	assert(runtime_run(runtime,fixture,rom,rr,false,0,3)==0);
 	/* A marked checkpoint with the wrong serialization size must never fall back
 	   to an older checkpoint even if that older payload fits this core. */
 	struct saves *wrong_size=saves_open_with_options(rr,fixture,rom,"banana-retro-options-v1:");
 	assert(wrong_size);
-	assert(saves_commit_checkpoint(wrong_size,sram,sizeof(sram),rtc,sizeof(rtc),"x",1));
+	assert(saves_commit_checkpoint(wrong_size,sram,sizeof(sram),rtc,sizeof(rtc),"x",1,NULL));
 	saves_close(wrong_size);
 	assert(runtime_run(runtime,fixture,rom,rr,false,0,6)!=0);
 	assert(snprintf(rr,sizeof(rr),"%s/runtime-rejected-resume",base)>0);
@@ -658,11 +1275,12 @@ int main(int argc,char **argv)
 	const uint8_t recent_sram[4]={0x56},recent_rtc[2]={0x78};
 	assert(saves_commit(rejected_resume,recent_sram,sizeof(recent_sram),recent_rtc,sizeof(recent_rtc),-1,NULL,0));
 	resume_generation=current(resume_ident);
-	assert(saves_resume_probe(rejected_resume,rejected_hash)==SAVES_RESUME_READY);
-	assert(runtime_run(runtime,fixture,rom,rr,false,0,4)!=0);
+	assert(saves_resume_probe(rejected_resume,after_rejection)==SAVES_RESUME_NONE);
+	assert(runtime_run_token(runtime,fixture,rom,rr,false,0,4,rejected_hash)!=0);
+	assert_startup_error("persistence-load\n");
+	startup_error_file[0]=0;
 	assert(current(resume_ident)==resume_generation);
-	assert(saves_resume_probe(rejected_resume,after_rejection)==SAVES_RESUME_READY&&
-		strcmp(rejected_hash,after_rejection)==0);
+	assert(saves_resume_probe(rejected_resume,after_rejection)==SAVES_RESUME_NONE);
 	saves_close(rejected_resume);
 	assert(setenv("BANANA_RETRO_TEST_EXPECT_INITIAL_BATTERY","56:78",1)==0);
 	assert(runtime_run(runtime,fixture,rom,rr,false,0,5)==0);

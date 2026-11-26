@@ -69,6 +69,13 @@ static struct {
     bool options_observed;
     bool state_options_uncertain;
     void *content;
+    /* SHA-256 of the bytes the core consumed. A need_fullpath core reads the path itself,
+     * so the opened file stays pinned and is measured again after the core loads it. */
+    unsigned char content_digest[SAVES_CONTENT_DIGEST_SIZE];
+    const char *content_path;
+    struct stat content_info;
+    int content_fd;
+    bool content_pinned, content_verified;
     struct retro_system_av_info av;
     const char *name;
     const char *version;
@@ -409,6 +416,13 @@ static ssize_t read_retry(int fd, void *data, size_t bytes)
     return n;
 }
 
+static bool same_content_file(const struct stat *a, const struct stat *b)
+{
+    return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_size == b->st_size &&
+           a->st_mtim.tv_sec == b->st_mtim.tv_sec && a->st_mtim.tv_nsec == b->st_mtim.tv_nsec &&
+           a->st_ctim.tv_sec == b->st_ctim.tv_sec && a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
+}
+
 static bool prepare_content(struct retro_game_info *game, bool need_fullpath)
 {
     struct stat info;
@@ -458,13 +472,43 @@ static bool prepare_content(struct retro_game_info *game, bool need_fullpath)
         }
         game->data = data;
         game->size = size;
+        saves_digest_content(data, size, session.content_digest);
+    } else {
+        if (!saves_digest_content_fd(fd, (uint64_t)info.st_size, session.content_digest)) {
+            fputs("Content changed or could not be read\n", stderr);
+            goto done;
+        }
+        session.content_path = game->path;
+        session.content_info = info;
+        session.content_fd = fd;
+        session.content_pinned = true;
+        fd = -1;
     }
     ok = true;
 done:
-    if (close(fd) < 0) {
+    if (fd >= 0 && close(fd) < 0) {
         fprintf(stderr, "Cannot close content: %s\n", strerror(errno));
         ok = false;
     }
+    return ok;
+}
+
+/* A need_fullpath core opens the path on its own. Require the pinned file and the path to
+ * still be the measured content once it has loaded; later lazy reads stay unobserved. */
+static bool verify_pinned_content(void)
+{
+    if (!session.content_pinned) return true;
+    struct stat now, at_path;
+    unsigned char digest[SAVES_CONTENT_DIGEST_SIZE];
+    bool ok = fstat(session.content_fd, &now) == 0 &&
+              same_content_file(&now, &session.content_info) &&
+              stat(session.content_path, &at_path) == 0 &&
+              at_path.st_dev == now.st_dev && at_path.st_ino == now.st_ino &&
+              saves_digest_content_fd(session.content_fd, (uint64_t)now.st_size, digest) &&
+              memcmp(digest, session.content_digest, sizeof(digest)) == 0;
+    if (close(session.content_fd) < 0) ok = false;
+    session.content_pinned = false;
+    if (!ok) fputs("Content changed while the core loaded it\n", stderr);
     return ok;
 }
 
@@ -549,6 +593,9 @@ bool core_load(const char *core_path, const char *content_path, const struct cor
     session.capacity_width = session.av.geometry.max_width;
     session.capacity_height = session.av.geometry.max_height;
     api->retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+    if (!verify_pinned_content())
+        return false;
+    session.content_verified = true;
     return true;
 }
 
@@ -558,6 +605,12 @@ const struct retro_game_geometry *core_geometry(void)
 }
 
 const char *core_name(void) { return session.name ? session.name : ""; }
+bool core_content_digest(unsigned char digest[SAVES_CONTENT_DIGEST_SIZE])
+{
+    if (!digest || !session.loaded || !session.content_verified) return false;
+    memcpy(digest, session.content_digest, SAVES_CONTENT_DIGEST_SIZE);
+    return true;
+}
 const char *core_version(void) { return session.version ? session.version : ""; }
 uint32_t core_capabilities(void)
 {
@@ -628,6 +681,7 @@ bool core_release(void)
         fprintf(stderr, "Cannot close core: %s\n", dlerror());
         ok = false;
     }
+    if (session.content_pinned && close(session.content_fd) < 0) ok = false;
     free(session.content);
     memset(&session, 0, sizeof(session));
     return ok;
@@ -767,7 +821,7 @@ bool core_save_memory_sizes(size_t *sram_size, size_t *rtc_size)
     return true;
 }
 
-enum core_checkpoint_result core_persistence_checkpoint(struct saves *saves)
+enum core_checkpoint_result core_persistence_checkpoint(struct saves *saves, char token[65])
 {
     if (!saves || !session.loaded) return CORE_CHECKPOINT_ERROR;
     if (!session.api.retro_serialize_size || !session.api.retro_serialize ||
@@ -786,7 +840,7 @@ enum core_checkpoint_result core_persistence_checkpoint(struct saves *saves)
             void *sram = session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
             void *rtc = session.api.retro_get_memory_data(RETRO_MEMORY_RTC);
             if (!sync_state_options(saves)) result = CORE_CHECKPOINT_UNAVAILABLE;
-            else if (saves_commit_checkpoint(saves, sram, sram_size, rtc, rtc_size, state, state_size))
+            else if (saves_commit_checkpoint(saves, sram, sram_size, rtc, rtc_size, state, state_size, token))
                 result = CORE_CHECKPOINT_OK;
         }
     }

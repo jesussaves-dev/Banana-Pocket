@@ -38,11 +38,13 @@ ${CXX:-c++} -O2 -std=c++17 -I"$HERE/src" $(pkg-config --cflags libdrm 2>/dev/nul
 ${CXX:-c++} -O2 -std=c++17 $(pkg-config --cflags libdrm 2>/dev/null) -o "$OUT/dmabuf-test" "$HERE/tests/dmabuf-test.cpp" 2> "$OUT/dmabuf-build.log" ||
     { echo "FAIL: can't build dmabuf-test (see $OUT/dmabuf-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/dmabuf-test" > "$OUT/dmabuf.log" 2>&1 || { echo "FAIL: dmabuf-test"; cat "$OUT/dmabuf.log"; fail=1; }
-# the Phase 3C rotation map must be turn.h's 90-degree turn, and the quad's UVs must interpolate to it
-${CXX:-c++} -O2 -std=c++17 -o "$OUT/resume-test" "$HERE/tests/resume-test.cpp" 2> "$OUT/resume-build.log" ||
+# Resume policy: resident display recovery and cold-boot checkpoint records.
+${CXX:-c++} -O2 -std=c++17 $(pkg-config --cflags libdrm 2>/dev/null) -I"$HERE/../system/bananad/include" \
+    -o "$OUT/resume-test" "$HERE/tests/resume-test.cpp" 2> "$OUT/resume-build.log" ||
     { echo "FAIL: can't build resume-test (see $OUT/resume-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/resume-test" > "$OUT/resume.log" 2>&1 || { echo "FAIL: resume-test"; cat "$OUT/resume.log"; fail=1; }
 
+# the Phase 3C rotation map must be turn.h's 90-degree turn, and the quad's UVs must interpolate to it
 ${CXX:-c++} -O2 -std=c++17 -o "$OUT/rotation-test" "$HERE/tests/rotation-test.cpp" 2> "$OUT/rotation-build.log" ||
     { echo "FAIL: can't build rotation-test (see $OUT/rotation-build.log)"; fail=1; }
 [ "$fail" = 1 ] || "$OUT/rotation-test" > "$OUT/rotation.log" 2>&1 || { echo "FAIL: rotation-test"; cat "$OUT/rotation.log"; fail=1; }
@@ -359,16 +361,23 @@ for size in 640x557; do
     grep -q 'wifi-scan WPA2-PSK-CCMP: secured=1 wep=0 unsupported=0' "$rlog" || { echo "FAIL $size: WPA scan flags are wrong"; fail=1; }
     # resume: the boot decision (ready / missing / blocked) and the two consumers, through the script verb
     ROM="$FX/roms/ngp/Peel Quest.ngp"; RR=$FX/data/resume; RT=$FX/data/resume-tries
-    resume_run() {	# resume_run <marker text or ""> <tries or ""> [take|cancel]
-        rm -f "$RR" "$RT"; [ -n "$1" ] && echo "$1" > "$RR"; [ -n "$2" ] && echo "$2" > "$RT"
+    resume_tries() { printf 'banana-resume-tries-v1\n%s\n%s\n\n\n\n' "$1" "$2" > "$RT"; }
+    resume_run() {	# resume_run <marker text or ""> <tries or ""> [begin|ready|end exit N|end signal N|cancel]
+        rm -f "$RR" "$RT"; [ -n "$1" ] && echo "$1" > "$RR"; [ -n "$2" ] && resume_tries "$2" "$1"
         "$HERE/banana-ui" --headless "$OUT/$size-" --size 640x557 --assets "$HERE/assets/rnds" \
             --systems "$HERE/tests/systems.conf" --roms "$FX/roms" --data "$FX/data" --script "resume $3" 2>> "$rlog" ||
             { echo "FAIL $size: banana-ui (resume) exited $?"; fail=1; }; }
     resume_run "$ROM" ""
     grep -q "resume: ready $ROM" "$rlog" || { echo "FAIL $size: a real ROM is not ready to resume"; fail=1; }
     [ -f "$RR" ] || { echo "FAIL $size: the plan consumed the marker"; fail=1; }
-    resume_run "$ROM" "" take
-    [ ! -e "$RR" ] && [ "$(cat "$RT" 2>/dev/null)" = 1 ] || { echo "FAIL $size: take did not consume and count"; fail=1; }
+    resume_run "$ROM" "" begin
+    [ -f "$RR" ] && [ "$(sed -n 2p "$RT" 2>/dev/null)" = 1 ] || { echo "FAIL $size: begin did not keep the marker and count"; fail=1; }
+    resume_run "$ROM" 1 "end exit 75"
+    [ -f "$RR" ] && [ "$(sed -n 2p "$RT" 2>/dev/null)" = 1 ] || { echo "FAIL $size: a retryable failure consumed the marker"; fail=1; }
+    resume_run "$ROM" 1 "end exit 78"
+    [ ! -e "$RR" ] && [ ! -e "$RT" ] || { echo "FAIL $size: a permanent rejection kept the marker"; fail=1; }
+    resume_run "$ROM" 1 ready
+    [ ! -e "$RR" ] && [ ! -e "$RT" ] || { echo "FAIL $size: readiness did not consume marker and count"; fail=1; }
     resume_run "/nope/Missing.ngp" ""
     grep -q 'resume: missing' "$rlog" || { echo "FAIL $size: a missing ROM was not reported"; fail=1; }
     [ ! -e "$RR" ] || { echo "FAIL $size: a missing ROM left the marker"; fail=1; }

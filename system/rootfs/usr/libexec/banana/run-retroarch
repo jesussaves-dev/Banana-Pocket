@@ -10,6 +10,11 @@
 # Adreno a6xx driver implements but does not advertise as conformant; SwanStation's Vulkan renderer asks for it.
 TU_DEBUG=noconform
 export TU_DEBUG
+# Typed boot resume is native-only, including when the current profile refuses it.
+if [ "${1-}" = --boot-resume ]; then
+    exec /usr/libexec/banana/run-libretro "$@"
+    exit 1
+fi
 . /usr/libexec/banana/libretro-core.sh
 if [ "$1" = --resolved-core ]; then
     CORE=$2

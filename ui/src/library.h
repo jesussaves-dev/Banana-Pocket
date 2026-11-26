@@ -72,8 +72,19 @@ namespace banana
 		int countMatches(const std::string& q) const;	// the games a search for q would find
 		int searchShelf() const { return !shelves.empty() && shelves[0].search ? 0 : -1; }
 		int pendingLaunch() const { return launchGame; }
-		void clearLaunch() { launchGame = -1; }
+		void clearLaunch() { launchGame = -1; press = {}; }
+		// Who the pending launch is for, taken when the game was chosen. Shelves are re-arranged by every rescan and
+		// favourite, so the index above is only good for the moment it was made; this is what to start later.
+		struct Press
+		{
+			std::string system;	// the id of the system or app that owns the game (empty for the Store entry)
+			std::string rom;	// its path ("banana:store" for the Store entry)
+			int shelf = -1;		// the shelf shown when it was chosen
+		};
+		const Press& pendingPress() const { return press; }
 		const Shelf& shelf(int i) const { return shelves[i]; }
+		// The Apps collection's entry for the app `id` whose entry file is `path`: (shelf, game), or (-1, -1)
+		std::pair<int, int> appEntry(const std::string& id, const std::string& path) const;
 		int currentShelf() const { return lib; }
 		// The shoulder-button letter jump: the game index `dir` (+1/-1) jumps to from `game` in the shelf now shown.
 		// +1 is the next title's first letter (the list is sorted by title, case aside); -1 is the start of this
@@ -120,7 +131,7 @@ namespace banana
 		void selectGame(int) override {}
 		int openLibrary(int sys) override;
 		void backToHome() override {}
-		void launch(int game) override { launchGame = game; }
+		void launch(int game) override;
 		void toggleSystemFav(int sys) override;
 		void toggleGameFav(int game) override;
 		int resumeGame(int sys) override;
@@ -142,6 +153,7 @@ namespace banana
 		std::map<std::string, GameOverride> overrides;	// "<system>/<rel>"
 		void saveOverrides();
 		int lib = 0, home = 0, launchGame = -1;
+		Press press;
 		bool changed = false;
 		std::string query;
 

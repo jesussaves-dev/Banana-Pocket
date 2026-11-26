@@ -33,9 +33,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/inotify.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
+#include <sys/random.h>
 #include <sys/socket.h>
 #include <linux/netlink.h>
 #include <sys/reboot.h>
@@ -374,6 +376,92 @@ static pid_t pid_of(const char *pidfile)
 
 enum retro_power_result { RETRO_POWER_NONE, RETRO_POWER_OK, RETRO_POWER_FAILED, RETRO_POWER_BAD_STATE };
 
+struct retro_resume_proof {
+	char system[64];
+	char core[64];
+	char token[BANANA_RETRO_RESUME_TOKEN_SIZE + 1];
+	/* A CHECKPOINT answered OK with no digest: the runtime committed battery data only, on purpose.
+	 * A malformed reply or a transport failure never sets this. */
+	int battery_only;
+};
+
+struct retro_session {
+	pid_t child;
+	unsigned char id[16];
+	struct sockaddr_un address;
+	char core[64];
+	int rom_matches;
+};
+
+/* The UI's registration of the running game, "v1 <session> <leader pid> <start ticks> <rom>". It is written whole
+ * before game.pid and removed after the child is reaped, so a daemon that captured it and still finds the same
+ * leader alive knows which session it is acting for. Resume ownership is this session, never the ROM path. */
+struct retro_owner {
+	char session[33];
+	pid_t pid;
+	unsigned long long start;
+	char rom[PATH_MAX];
+};
+
+/* LIVE: the session must still be running. SHUTDOWN: the captured session is being stopped by a shutdown that
+ * holds /run/banana/shutting-down; its leader has gone by the time the record is written. */
+enum retro_publish_mode { RETRO_PUBLISH_LIVE, RETRO_PUBLISH_SHUTDOWN };
+
+static const char retro_run_dir[] = "/run/banana";
+static const char retro_resume_dir[] = "/data/banana";
+
+static int retro_hex(const char *s, size_t size)
+{
+	for (size_t i = 0; i < size; ++i)
+		if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f'))) return 0;
+	return 1;
+}
+
+static int retro_record_id(const char *id)
+{
+	size_t n = strnlen(id, 64);
+	return n > 0 && n < 64 && strspn(id, "abcdefghijklmnopqrstuvwxyz0123456789_-") == n;
+}
+
+static int retro_rom_path(const char *rom)
+{
+	return rom && rom[0] == '/' && strnlen(rom, PATH_MAX) < PATH_MAX && !strpbrk(rom, "\r\n");
+}
+
+/* These run files contain one complete line. Do not trim a ROM filename or
+ * accept a prefix of an invalid record. Only ENOENT means no record. */
+static int retro_read_line(const char *path, char *line, size_t capacity)
+{
+	line[0] = '\0';
+	int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+	if (fd < 0) return errno == ENOENT ? RETRO_POWER_NONE : RETRO_POWER_FAILED;
+	struct stat st;
+	int ok = fstat(fd, &st) == 0 && S_ISREG(st.st_mode);
+	size_t size = 0;
+	while (ok && size < capacity) {
+		ssize_t got = read(fd, line + size, capacity - size);
+		if (got > 0) size += (size_t)got;
+		else if (got == 0) break;
+		else if (errno != EINTR) ok = 0;
+	}
+	close(fd);
+	if (!ok || size == 0 || size == capacity || line[size - 1] != '\n' ||
+	    memchr(line, '\0', size) || memchr(line, '\r', size) || memchr(line, '\n', size - 1)) {
+		line[0] = '\0';
+		return RETRO_POWER_FAILED;
+	}
+	line[size - 1] = '\0';
+	return RETRO_POWER_OK;
+}
+
+static unsigned long long retro_number(const char *s, unsigned long long max)
+{
+	if (!*s || s[strspn(s, "0123456789")] != '\0') return 0;
+	errno = 0;
+	unsigned long long n = strtoull(s, NULL, 10);
+	return !errno && n <= max ? n : 0;
+}
+
 static void retro_put16(unsigned char *p, uint16_t v)
 { p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); }
 static void retro_put64(unsigned char *p, uint64_t v)
@@ -387,46 +475,151 @@ static uint64_t retro_get64(const unsigned char *p)
 	return v;
 }
 
+/* A stopped leader (T, t) is still the registered process when its identity checks out: shutdown may meet one that
+ * a suspend or a job-control stop left behind, and it must still be able to prove which session it acts for.
+ * stopped_ok allows only those two states; a zombie or dead leader never is the session. */
 static int retro_child_identity_valid(pid_t child, unsigned long long recorded_start,
 				     unsigned long long current_start, pid_t child_group,
-				     pid_t game_group, char proc_state)
+				     pid_t game_group, char proc_state, int stopped_ok)
 {
 	return child > 0 && recorded_start != 0 && current_start == recorded_start &&
-		child_group > 0 && child_group == game_group && !strchr("TtZXx", proc_state);
+		child_group > 0 && child_group == game_group && !strchr("ZXx", proc_state) &&
+		(stopped_ok || !strchr("Tt", proc_state));
 }
 
-static int retro_session(char session[33], char socket_path[sizeof(((struct sockaddr_un *)0)->sun_path)])
+static int retro_read_session(const char *run_dir, pid_t game, const struct retro_owner *owner,
+			      struct retro_session *session)
 {
-	char version[8], state[16], core[64], rom[PATH_MAX];
-	unsigned long long start;
-	long started;
-	int child;
-	FILE *f = fopen("/run/banana/native-session", "r");
-	if (!f) return 0;
-	int n = fscanf(f, "%7s %32s %d %llu %63s %ld %15s %4095s",
-		version, session, &child, &start, core, &started, state, rom);
-	fclose(f);
-	pid_t game = pid_of("/run/banana/game.pid");
-	if (n != 8 || strcmp(version, "v1") != 0 || strlen(session) != 32 ||
-	    strcmp(state, "ready") != 0 || child <= 0 || start == 0 || started <= 0 || game <= 0)
-		return 0;
-	char proc_path[64], proc_line[512];
-	snprintf(proc_path, sizeof proc_path, "/proc/%d/stat", child);
-	f = fopen(proc_path, "r");
-	if (!f) return 0;
+	char path[sizeof session->address.sun_path], record[PATH_MAX + 160];
+	int len = snprintf(path, sizeof path, "%s/native-session", run_dir);
+	if (len < 0 || (size_t)len >= sizeof path) return RETRO_POWER_FAILED;
+	int result = retro_read_line(path, record, sizeof record);
+	if (result != RETRO_POWER_OK) return result;
+	char *fields[7], *rest = record;
+	for (size_t i = 0; i < sizeof fields / sizeof *fields; ++i) {
+		fields[i] = rest;
+		char *space = strchr(rest, ' ');
+		if (!space || space == rest) return RETRO_POWER_FAILED;
+		*space = '\0';
+		rest = space + 1;
+	}
+	const char *id = fields[1];
+	pid_t child = (pid_t)retro_number(fields[2], INT_MAX);
+	unsigned long long start = retro_number(fields[3], ULLONG_MAX);
+	if (strcmp(fields[0], "v1") || strlen(id) != 32 || !retro_hex(id, 32) ||
+	    !retro_record_id(fields[4]) || !retro_number(fields[5], LONG_MAX) ||
+	    strcmp(fields[6], "ready") || !retro_rom_path(rest) ||
+	    child <= 0 || start == 0 || game <= 0)
+		return RETRO_POWER_FAILED;
+	char proc_line[512];
+	snprintf(path, sizeof path, "/proc/%d/stat", child);
+	FILE *f = fopen(path, "r");
+	if (!f) return RETRO_POWER_FAILED;
 	int alive = fgets(proc_line, sizeof proc_line, f) != NULL;
 	fclose(f);
-	if (!alive) return 0;
+	if (!alive) return RETRO_POWER_FAILED;
 	char *state_at = strrchr(proc_line, ')');
 	if (!state_at || state_at[1] != ' ' ||
 	    !retro_child_identity_valid(child, start, proc_start_ticks(child), getpgid(child),
-					getpgid(game), state_at[2])) return 0;
-	for (size_t i = 0; i < 32; ++i)
-		if (!((session[i] >= '0' && session[i] <= '9') ||
-		      (session[i] >= 'a' && session[i] <= 'f'))) return 0;
-	struct sockaddr_un address;
-	int len = snprintf(socket_path, sizeof(address.sun_path), "/run/banana/retro-%s.sock", session);
-	return len > 0 && (size_t)len < sizeof(address.sun_path);
+					getpgid(game), state_at[2], 0)) return RETRO_POWER_FAILED;
+	/* Native proof binds to the registered session: a record naming another session is not this game's. */
+	if (owner && strcmp(id, owner->session)) return RETRO_POWER_FAILED;
+	session->child = child;
+	session->rom_matches = owner && strcmp(rest, owner->rom) == 0;
+	strcpy(session->core, fields[4]);
+	for (size_t i = 0; i < sizeof session->id; ++i) {
+		unsigned a = (unsigned)(id[2 * i] <= '9' ? id[2 * i] - '0' : id[2 * i] - 'a' + 10);
+		unsigned b = (unsigned)(id[2 * i + 1] <= '9' ? id[2 * i + 1] - '0' : id[2 * i + 1] - 'a' + 10);
+		session->id[i] = (unsigned char)((a << 4) | b);
+	}
+	session->address.sun_family = AF_UNIX;
+	len = snprintf(session->address.sun_path, sizeof session->address.sun_path, "%s/retro-%s.sock", run_dir, id);
+	return len > 0 && (size_t)len < sizeof session->address.sun_path ? RETRO_POWER_OK : RETRO_POWER_FAILED;
+}
+
+static pid_t retro_game_pid(const char *run_dir)
+{
+	char path[PATH_MAX], line[32];
+	int len = snprintf(path, sizeof path, "%s/game.pid", run_dir);
+	if (len < 0 || (size_t)len >= sizeof path || retro_read_line(path, line, sizeof line) != RETRO_POWER_OK) return 0;
+	return (pid_t)retro_number(line, INT_MAX);
+}
+
+/* Parse only: whole line, bounded fields, no liveness. NONE: no registration. FAILED: unreadable or malformed. */
+static int retro_read_registration(const char *run_dir, struct retro_owner *owner)
+{
+	char path[PATH_MAX], record[PATH_MAX + 128];
+	memset(owner, 0, sizeof *owner);
+	int len = snprintf(path, sizeof path, "%s/game.session", run_dir);
+	if (len < 0 || (size_t)len >= sizeof path) return RETRO_POWER_FAILED;
+	int result = retro_read_line(path, record, sizeof record);
+	if (result != RETRO_POWER_OK) return result;
+	char *fields[4], *rest = record;
+	for (size_t i = 0; i < sizeof fields / sizeof *fields; ++i) {
+		fields[i] = rest;
+		char *space = strchr(rest, ' ');
+		if (!space || space == rest) return RETRO_POWER_FAILED;
+		*space = '\0';
+		rest = space + 1;
+	}
+	pid_t pid = (pid_t)retro_number(fields[2], INT_MAX);
+	unsigned long long start = retro_number(fields[3], ULLONG_MAX);
+	if (strcmp(fields[0], "v1") || strlen(fields[1]) != 32 || !retro_hex(fields[1], 32) ||
+	    pid <= 0 || start == 0 || !retro_rom_path(rest) || strlen(rest) >= sizeof owner->rom)
+		return RETRO_POWER_FAILED;
+	memcpy(owner->session, fields[1], 33);
+	owner->pid = pid;
+	owner->start = start;
+	strcpy(owner->rom, rest);
+	return RETRO_POWER_OK;
+}
+
+/* The registered leader is still the process that started: same start ticks, leading its own group, not a zombie
+ * and (unless stopped_ok) not stopped, and still the one game.pid names. A reused PID fails on the start ticks. */
+static int retro_owner_live(const char *run_dir, const struct retro_owner *owner, int stopped_ok)
+{
+	char path[64], line[512];
+	if (!owner || owner->pid <= 0 || retro_game_pid(run_dir) != owner->pid) return 0;
+	snprintf(path, sizeof path, "/proc/%d/stat", (int)owner->pid);
+	FILE *f = fopen(path, "r");
+	if (!f) return 0;
+	int read_ok = fgets(line, sizeof line, f) != NULL;
+	fclose(f);
+	char *state = read_ok ? strrchr(line, ')') : NULL;
+	return state && state[1] == ' ' &&
+		retro_child_identity_valid(owner->pid, owner->start, proc_start_ticks(owner->pid),
+					   getpgid(owner->pid), owner->pid, state[2], stopped_ok);
+}
+
+/* The owner of the game game.pid names right now, or none. Anything missing, malformed or stale fails closed.
+ * Only a shutdown capture accepts a stopped leader; every other caller still requires a running one. */
+static int retro_capture_owner(const char *run_dir, pid_t game, struct retro_owner *owner, int mode)
+{
+	if (game <= 0 || retro_read_registration(run_dir, owner) != RETRO_POWER_OK ||
+	    owner->pid != game || !retro_owner_live(run_dir, owner, mode == RETRO_PUBLISH_SHUTDOWN)) {
+		memset(owner, 0, sizeof *owner);
+		return 0;
+	}
+	return 1;
+}
+
+/* Revalidate a captured owner. The caller holds resume.lock, which serializes this check with every other publisher
+ * and with the UI's settlements; the UI's retirement of the registration is not under that lock, so the registration
+ * and the shutdown latch are both looked at here, after the lock was taken. A shutdown owns the record once the
+ * latch exists: only its own publication (SHUTDOWN, which requires the latch) may change it, and a live session's
+ * periodic publication or battery-only removal that began before the latch appeared is refused. */
+static int retro_owner_current(const char *run_dir, const struct retro_owner *owner, int mode)
+{
+	struct retro_owner now;
+	if (!owner || owner->session[0] == '\0' || retro_read_registration(run_dir, &now) != RETRO_POWER_OK ||
+	    strcmp(now.session, owner->session) || now.pid != owner->pid || now.start != owner->start ||
+	    strcmp(now.rom, owner->rom)) return 0;
+	char latch[PATH_MAX];
+	int len = snprintf(latch, sizeof latch, "%s/shutting-down", run_dir);
+	if (len <= 0 || (size_t)len >= sizeof latch) return 0;
+	const int latched = access(latch, F_OK) == 0;
+	if (mode == RETRO_PUBLISH_SHUTDOWN) return latched;
+	return !latched && retro_owner_live(run_dir, owner, 0);
 }
 
 static int retro_wait_fd(int fd, short events, double deadline)
@@ -447,17 +640,24 @@ static int retro_wait_fd(int fd, short events, double deadline)
 }
 
 static int retro_send_request(int fd, const unsigned char session[16], uint16_t type,
-			      uint64_t id, uint64_t epoch, double deadline)
+			      uint64_t id, uint64_t epoch, double deadline,
+			      struct retro_resume_proof *proof)
 {
-	unsigned char packet[BANANA_RETRO_CONTROL_HEADER_SIZE + 8] = {0};
+	unsigned char packet[BANANA_RETRO_CONTROL_HEADER_SIZE + 2 + BANANA_RETRO_RESUME_TOKEN_SIZE] = {0};
+	size_t payload = epoch ? 8 : 0;
+	if (proof) {
+		proof->token[0] = '\0';
+		proof->battery_only = 0;
+		packet[BANANA_RETRO_CONTROL_HEADER_SIZE + payload++] = BANANA_RETRO_CTL_RESUME_PROOF;
+	}
 	memcpy(packet, BANANA_RETRO_CONTROL_MAGIC, 4);
 	retro_put16(packet + BANANA_RETRO_CTL_VERSION, BANANA_RETRO_CONTROL_VERSION);
 	retro_put16(packet + BANANA_RETRO_CTL_TYPE, type);
 	for (unsigned i = 0; i < 8; ++i) packet[BANANA_RETRO_CTL_REQUEST_ID + i] = (unsigned char)(id >> (i * 8));
 	memcpy(packet + BANANA_RETRO_CTL_SESSION_ID, session, 16);
 	if (epoch) retro_put64(packet + BANANA_RETRO_CONTROL_HEADER_SIZE, epoch);
-	retro_put16(packet + BANANA_RETRO_CTL_LENGTH, epoch ? 8 : 0);
-	size_t size = BANANA_RETRO_CONTROL_HEADER_SIZE + (epoch ? 8 : 0);
+	retro_put16(packet + BANANA_RETRO_CTL_LENGTH, (uint16_t)payload);
+	size_t size = BANANA_RETRO_CONTROL_HEADER_SIZE + payload;
 	ssize_t sent;
 	for (;;) {
 		if (!retro_wait_fd(fd, POLLOUT, deadline)) return -1;
@@ -473,33 +673,70 @@ static int retro_send_request(int fd, const unsigned char session[16], uint16_t 
 		if (got < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
 		break;
 	}
-	if (got != (ssize_t)(BANANA_RETRO_CONTROL_HEADER_SIZE + 2) ||
+	if (got < (ssize_t)(BANANA_RETRO_CONTROL_HEADER_SIZE + 2) || got > (ssize_t)sizeof packet ||
 	    memcmp(packet, BANANA_RETRO_CONTROL_MAGIC, 4) != 0 ||
 	    retro_get16(packet + BANANA_RETRO_CTL_VERSION) != BANANA_RETRO_CONTROL_VERSION ||
 	    retro_get16(packet + BANANA_RETRO_CTL_TYPE) != (uint16_t)(type | 0x8000u) ||
 	    retro_get64(packet + BANANA_RETRO_CTL_REQUEST_ID) != id ||
 	    memcmp(packet + BANANA_RETRO_CTL_SESSION_ID, session, 16) != 0 ||
 	    retro_get16(packet + BANANA_RETRO_CTL_FLAGS) != 0 ||
-	    retro_get16(packet + BANANA_RETRO_CTL_LENGTH) != 2) return -1;
-	return (int)retro_get16(packet + BANANA_RETRO_CONTROL_HEADER_SIZE);
+	    retro_get16(packet + BANANA_RETRO_CTL_LENGTH) != got - BANANA_RETRO_CONTROL_HEADER_SIZE) return -1;
+	uint16_t status = retro_get16(packet + BANANA_RETRO_CONTROL_HEADER_SIZE);
+	const size_t body_size = (size_t)got - BANANA_RETRO_CONTROL_HEADER_SIZE - 2;
+	if (status > BANANA_RETRO_CTL_STALE_SESSION) return -1;
+	if (body_size) {
+		const char *token = (const char *)packet + BANANA_RETRO_CONTROL_HEADER_SIZE + 2;
+		if (!proof || status != BANANA_RETRO_CTL_OK || body_size != BANANA_RETRO_RESUME_TOKEN_SIZE ||
+		    !retro_hex(token, body_size)) return -1;
+		memcpy(proof->token, token, body_size);
+		proof->token[body_size] = '\0';
+	} else if (proof && (type == BANANA_RETRO_CTL_CHECKPOINT || type == BANANA_RETRO_CTL_SHUTDOWN) &&
+		   status == BANANA_RETRO_CTL_OK) {
+		/* The runtime answered a request that asked for proof with OK and no digest: it committed battery
+		 * data on purpose. The compatibility retry in retro_control_request asks for no proof, so its empty OK never lands here. */
+		proof->battery_only = 1;
+	}
+	return status;
 }
 
-static int retro_control_request(uint16_t type, uint64_t epoch, unsigned timeout_ms)
+enum retro_intent { RETRO_INTENT_NONE, RETRO_INTENT_NORMAL, RETRO_INTENT_NATIVE, RETRO_INTENT_INVALID };
+
+/* The UI publishes this before game.pid, and removes it after game.pid. A
+ * typed boot stays native even before or after the launcher's own metadata. */
+static enum retro_intent retro_read_intent(const char *run_dir, char system[64])
 {
-	char hex[33], path[sizeof(((struct sockaddr_un *)0)->sun_path)];
-	if (!retro_session(hex, path)) return RETRO_POWER_NONE;
-	unsigned char session[16];
-	for (unsigned i = 0; i < 16; ++i) {
-		unsigned a = (unsigned)(hex[2 * i] <= '9' ? hex[2 * i] - '0' : hex[2 * i] - 'a' + 10);
-		unsigned b = (unsigned)(hex[2 * i + 1] <= '9' ? hex[2 * i + 1] - '0' : hex[2 * i + 1] - 'a' + 10);
-		session[i] = (unsigned char)((a << 4) | b);
+	char path[sizeof(((struct sockaddr_un *)0)->sun_path)], line[7 + 64 + 1];
+	int len = snprintf(path, sizeof path, "%s/game.native", run_dir);
+	if (len < 0 || (size_t)len >= sizeof path) return RETRO_INTENT_INVALID;
+	int found = retro_read_line(path, line, sizeof line);
+	if (found == RETRO_POWER_NONE) return RETRO_INTENT_NONE;
+	if (found != RETRO_POWER_OK) return RETRO_INTENT_INVALID;
+	enum retro_intent intent;
+	if (!strncmp(line, "native ", 7)) intent = RETRO_INTENT_NATIVE;
+	else if (!strncmp(line, "normal ", 7)) intent = RETRO_INTENT_NORMAL;
+	else return RETRO_INTENT_INVALID;
+	if (!retro_record_id(line + 7)) return RETRO_INTENT_INVALID;
+	strcpy(system, line + 7);
+	return intent;
+}
+
+static int retro_control_request(const char *run_dir, pid_t game, const struct retro_owner *owner,
+				 uint16_t type, uint64_t epoch, unsigned timeout_ms,
+				 struct retro_resume_proof *proof)
+{
+	struct retro_session session = {0};
+	if (proof) *proof = (struct retro_resume_proof){0};
+	int found = retro_read_session(run_dir, game, owner, &session);
+	if (proof && found != RETRO_POWER_FAILED) {
+		enum retro_intent intent = retro_read_intent(run_dir, proof->system);
+		if (found == RETRO_POWER_NONE && (intent == RETRO_INTENT_NATIVE || intent == RETRO_INTENT_INVALID))
+			found = RETRO_POWER_FAILED;
 	}
-	struct sockaddr_un address = { .sun_family = AF_UNIX };
-	memcpy(address.sun_path, path, strlen(path) + 1);
+	if (found != RETRO_POWER_OK) return proof ? found : RETRO_POWER_NONE;
 	double deadline = mono() + (double)timeout_ms / 1000.0;
 	int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
 	if (fd < 0) return RETRO_POWER_FAILED;
-	if (connect(fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+	if (connect(fd, (struct sockaddr *)&session.address, sizeof session.address) < 0) {
 		if (errno != EINPROGRESS && errno != EAGAIN && errno != EWOULDBLOCK) {
 			close(fd); return RETRO_POWER_FAILED;
 		}
@@ -511,29 +748,111 @@ static int retro_control_request(uint16_t type, uint64_t epoch, unsigned timeout
 			close(fd); return RETRO_POWER_FAILED;
 		}
 	}
-	if (retro_request_id > UINT64_MAX - 2) { close(fd); return RETRO_POWER_FAILED; }
+	struct ucred cred;
+	socklen_t cred_size = sizeof cred;
+	if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &cred_size) < 0 ||
+	    cred_size != sizeof cred || cred.pid != session.child || cred.uid != geteuid() ||
+	    retro_request_id > UINT64_MAX - (proof ? 3u : 2u)) {
+		close(fd);
+		return RETRO_POWER_FAILED;
+	}
 	uint64_t hello_id = ++retro_request_id;
-	int ok = retro_send_request(fd, session, BANANA_RETRO_CTL_HELLO, hello_id, 0, deadline);
-	if (ok == BANANA_RETRO_CTL_OK)
-		ok = retro_send_request(fd, session, type, ++retro_request_id, epoch, deadline);
+	int ok = retro_send_request(fd, session.id, BANANA_RETRO_CTL_HELLO, hello_id, 0, deadline, NULL);
+	if (ok == BANANA_RETRO_CTL_OK) {
+		ok = retro_send_request(fd, session.id, type, ++retro_request_id, epoch, deadline, proof);
+		if (proof && ok == BANANA_RETRO_CTL_UNSUPPORTED)
+			ok = retro_send_request(fd, session.id, type, ++retro_request_id, epoch, deadline, NULL);
+	}
 	close(fd);
-	if (ok == BANANA_RETRO_CTL_OK) return RETRO_POWER_OK;
+	if (ok == BANANA_RETRO_CTL_OK) {
+		if (proof && proof->token[0]) {
+			if (session.rom_matches && proof->system[0]) strcpy(proof->core, session.core);
+			else proof->token[0] = '\0';
+		} else if (proof && proof->battery_only && !(session.rom_matches && proof->system[0])) {
+			/* Only the session that owns the boot record's ROM may supersede it. */
+			proof->battery_only = 0;
+		}
+		return RETRO_POWER_OK;
+	}
 	if (ok == BANANA_RETRO_CTL_BAD_STATE) return RETRO_POWER_BAD_STATE;
 	return RETRO_POWER_FAILED;
 }
 
+enum retro_stage { RETRO_STAGE_SKIPPED, RETRO_STAGE_OK, RETRO_STAGE_FAILED };
+
+/* The three outcomes of a power or checkpoint transaction, kept apart: the runtime's checkpoint (an
+ * enum retro_power_result), the publication of the boot record that names it, and the removal of a record it
+ * superseded (both an enum retro_stage). */
+struct retro_power_report {
+	int checkpoint;
+	int publication;
+	int cleanup;
+};
+
 struct retro_power_ops {
 	void *data;
 	int (*request)(void *data, uint16_t type, uint64_t epoch, unsigned timeout_ms);
+	int (*request_proof)(void *data, pid_t game, const struct retro_owner *owner, uint16_t type, uint64_t epoch,
+			     unsigned timeout_ms, struct retro_resume_proof *proof);
 	int (*signal_group)(void *data, pid_t pg, int signal_number);
 	int (*child_alive)(void *data, pid_t game);
 	void (*wait_ms)(void *data, unsigned milliseconds);
-	void (*resume_marker)(void *data, const char *rom, int remember);
+	/* Publish the record for the owner's session (proof NULL: a RetroArch record), or remove the record that
+	 * session owns. Both revalidate the owner under resume.lock and never touch another session's record. */
+	int (*resume_marker)(void *data, const struct retro_owner *owner, int mode,
+			     const struct retro_resume_proof *proof);
+	int (*resume_invalidate)(void *data, const struct retro_owner *owner, int mode);
 	void (*shutdown_finalize)(void *data);
+	/* Optional: receives the last transaction's outcomes (production passes none; they are logged). */
+	struct retro_power_report *report;
 };
 
+static const char *retro_stage_name(int stage)
+{ return stage == RETRO_STAGE_OK ? "ok" : stage == RETRO_STAGE_FAILED ? "failed" : "skipped"; }
+
+static const char *retro_checkpoint_name(int result)
+{
+	return result == RETRO_POWER_OK ? "ok" : result == RETRO_POWER_FAILED ? "failed" :
+	       result == RETRO_POWER_BAD_STATE ? "bad state" : "none";
+}
+
+/* One line per transaction in which any stage went wrong, so a boot record that was not written or a record that
+ * could not be removed is never mistaken for a checkpoint that failed (or the other way around). */
+static void retro_report_finish(const struct retro_power_ops *ops, const char *what,
+				const struct retro_power_report *rep)
+{
+	if (ops->report) *ops->report = *rep;
+	if (rep->checkpoint == RETRO_POWER_FAILED || rep->checkpoint == RETRO_POWER_BAD_STATE ||
+	    rep->publication == RETRO_STAGE_FAILED || rep->cleanup == RETRO_STAGE_FAILED)
+		sleep_log("%s: checkpoint %s, boot record %s, cleanup %s", what, retro_checkpoint_name(rep->checkpoint),
+			  retro_stage_name(rep->publication), retro_stage_name(rep->cleanup));
+}
+
 static int retro_system_request(void *data, uint16_t type, uint64_t epoch, unsigned timeout_ms)
-{ (void)data; return retro_control_request(type, epoch, timeout_ms); }
+{
+	(void)data;
+	return retro_control_request(retro_run_dir, pid_of("/run/banana/game.pid"), NULL,
+				     type, epoch, timeout_ms, NULL);
+}
+static int retro_system_request_proof(void *data, pid_t game, const struct retro_owner *owner, uint16_t type,
+				      uint64_t epoch, unsigned timeout_ms, struct retro_resume_proof *proof)
+{
+	(void)data;
+	int result = retro_control_request(retro_run_dir, game, owner, type, epoch, timeout_ms, proof);
+	if (result == RETRO_POWER_NONE && pid_of("/run/banana/game.pid") != game)
+		return RETRO_POWER_FAILED;
+	if (type == BANANA_RETRO_CTL_CHECKPOINT && result != RETRO_POWER_NONE) {
+		static int battery_only_logged;
+		if (result == RETRO_POWER_OK && !proof->token[0] && proof->battery_only) {
+			if (!battery_only_logged)
+				sleep_log("native periodic checkpoint: battery data only (core cannot checkpoint)");
+			battery_only_logged = 1;
+		} else if (result != RETRO_POWER_OK || !proof->token[0]) {
+			sleep_log("native periodic checkpoint unconfirmed");
+		}
+	}
+	return result;
+}
 static int retro_system_signal(void *data, pid_t pg, int signal_number)
 { (void)data; return pg > 0 ? kill(-pg, signal_number) : -1; }
 static int retro_system_child_alive(void *data, pid_t game)
@@ -541,34 +860,405 @@ static int retro_system_child_alive(void *data, pid_t game)
 static void retro_system_wait_ms(void *data, unsigned milliseconds)
 { (void)data; sleep_us((long)milliseconds * 1000L); }
 static void retro_system_shutdown_finalize(void *data);
-static void retro_system_resume_marker(void *data, const char *rom, int remember)
+/* Publication, attempt reservation and settlement share this lock. Bound
+ * contention so a wedged menu cannot hold up sleep or shutdown. */
+static int retro_resume_lock(const char *directory)
+{
+	char path[PATH_MAX];
+	int size = snprintf(path, sizeof path, "%s/resume.lock", directory);
+	if (size <= 0 || (size_t)size >= sizeof path) return -1;
+	int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+	if (fd < 0) return -1;
+	for (int waited = 0; waited < 20; ) {
+		if (flock(fd, LOCK_EX | LOCK_NB) == 0) return fd;
+		if (errno == EINTR) continue;
+		if (errno != EWOULDBLOCK) break;
+		sleep_us(2000);
+		waited++;
+	}
+	close(fd);
+	return -1;
+}
+
+static int retro_legacy_resume_id(char id[BANANA_LEGACY_RESUME_ID_SIZE + 1])
+{
+	unsigned char bytes[BANANA_LEGACY_RESUME_ID_SIZE / 2];
+	ssize_t count = getrandom(bytes, sizeof bytes, GRND_NONBLOCK);
+	if (count != (ssize_t)sizeof bytes) return 0;
+	static const char hex[] = "0123456789abcdef";
+	for (size_t i = 0; i < sizeof bytes; ++i) {
+		id[2 * i] = hex[bytes[i] >> 4];
+		id[2 * i + 1] = hex[bytes[i] & 15];
+	}
+	id[BANANA_LEGACY_RESUME_ID_SIZE] = '\0';
+	return 1;
+}
+
+/* Ownership of the visible record is a two-entry stamp in /run/banana/resume-owner, written under resume.lock
+ * before the record is renamed into place:
+ *	banana-resume-owner-v1
+ *	<previous entry or ->
+ *	<candidate entry or ->
+ * An entry is "<session|-> <key>", the key naming one publication ("N <digest> <system> <core> <rom>" for a native
+ * record, "L <id> - - <rom>" for a RetroArch one). An interruption on either side of the rename leaves the visible
+ * record matching exactly one entry, so the on-disk formats need no change. A record with no matching entry, an old
+ * record without an ID, or an unreadable stamp is unowned, and nothing may remove an unowned record on a
+ * session's behalf. The stamp lives in /run, so it never outlives the sessions it names. */
+#define RETRO_KEY_MAX (PATH_MAX + 2 * 64 + BANANA_RETRO_RESUME_TOKEN_SIZE + 16)
+
+/* 1: key written. 0: no record, or none that can be owned (no ID, malformed, oversized, a link). -1: unreadable. */
+static int retro_visible_record(int dir, char key[RETRO_KEY_MAX])
+{
+	char bytes[PATH_MAX + 2 * 64 + BANANA_RETRO_RESUME_TOKEN_SIZE + 64];
+	int fd = openat(dir, "resume", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+	if (fd < 0) return errno == ENOENT || errno == ELOOP ? 0 : -1;
+	struct stat st;
+	size_t size = 0;
+	int ok = fstat(fd, &st) == 0;
+	if (ok && (!S_ISREG(st.st_mode) || st.st_size >= (off_t)sizeof bytes)) { close(fd); return 0; }
+	while (ok && size < sizeof bytes) {
+		ssize_t got = read(fd, bytes + size, sizeof bytes - size);
+		if (got > 0) size += (size_t)got;
+		else if (got == 0) break;
+		else if (errno != EINTR) ok = 0;
+	}
+	if (close(fd) < 0) ok = 0;
+	if (!ok) return -1;
+	if (size == 0 || size == sizeof bytes || bytes[size - 1] != '\n' || memchr(bytes, '\0', size) ||
+	    memchr(bytes, '\r', size)) return 0;
+	bytes[size - 1] = '\0';
+	char *line[4];
+	size_t count = 0;
+	char *p = bytes;
+	for (;;) {
+		if (count == 4) { count = 5; break; }	/* more lines than any record has */
+		line[count++] = p;
+		char *nl = strchr(p, '\n');
+		if (!nl) break;
+		*nl = '\0';
+		p = nl + 1;
+	}
+	int len = -1;
+	if (count == 4 && !strcmp(line[0], "banana-retro-v1")) {
+		char *colon = strchr(line[1], ':');
+		if (!colon || !retro_rom_path(line[3])) return 0;
+		*colon = '\0';
+		if (!retro_record_id(line[1]) || !retro_record_id(colon + 1) ||
+		    strlen(line[2]) != BANANA_RETRO_RESUME_TOKEN_SIZE || !retro_hex(line[2], BANANA_RETRO_RESUME_TOKEN_SIZE))
+			return 0;
+		len = snprintf(key, RETRO_KEY_MAX, "N %s %s %s %s", line[2], line[1], colon + 1, line[3]);
+	} else if (count == 2 && retro_rom_path(line[0]) &&
+		   !strncmp(line[1], BANANA_LEGACY_RESUME_ID_PREFIX, sizeof(BANANA_LEGACY_RESUME_ID_PREFIX) - 1)) {
+		const char *id = line[1] + sizeof(BANANA_LEGACY_RESUME_ID_PREFIX) - 1;
+		if (strlen(id) != BANANA_LEGACY_RESUME_ID_SIZE || !retro_hex(id, BANANA_LEGACY_RESUME_ID_SIZE)) return 0;
+		len = snprintf(key, RETRO_KEY_MAX, "L %s - - %s", id, line[0]);
+	}
+	return len > 0 && len < (int)RETRO_KEY_MAX ? 1 : 0;
+}
+
+/* A key names one publication: "N <digest> <system> <core> <rom>" or "L <id> - - <rom>". */
+static int retro_stamp_key_valid(const char *key)
+{
+	char id[64];
+	if (key[0] == 'L' && key[1] == ' ') {
+		const char *p = key + 2;
+		return strlen(p) > BANANA_LEGACY_RESUME_ID_SIZE + 5 && retro_hex(p, BANANA_LEGACY_RESUME_ID_SIZE) &&
+			!memcmp(p + BANANA_LEGACY_RESUME_ID_SIZE, " - - ", 5) &&
+			retro_rom_path(p + BANANA_LEGACY_RESUME_ID_SIZE + 5);
+	}
+	if (key[0] != 'N' || key[1] != ' ') return 0;
+	const char *p = key + 2;
+	if (strlen(p) < BANANA_RETRO_RESUME_TOKEN_SIZE + 1 || !retro_hex(p, BANANA_RETRO_RESUME_TOKEN_SIZE) ||
+	    p[BANANA_RETRO_RESUME_TOKEN_SIZE] != ' ') return 0;
+	p += BANANA_RETRO_RESUME_TOKEN_SIZE + 1;
+	for (int field = 0; field < 2; ++field) {	/* system, then core */
+		const char *space = strchr(p, ' ');
+		if (!space || (size_t)(space - p) >= sizeof id) return 0;
+		memcpy(id, p, (size_t)(space - p));
+		id[space - p] = '\0';
+		if (!retro_record_id(id)) return 0;
+		p = space + 1;
+	}
+	return retro_rom_path(p);
+}
+
+/* One stamp entry: "-" (the previous entry only: nothing was visible) or "<session|-> <key>". session is empty for
+ * an unowned publication. Anything else is damage. */
+static int retro_stamp_entry(const char *entry, int allow_empty, const char **key, char session[33])
+{
+	session[0] = '\0';
+	*key = NULL;
+	if (allow_empty && !strcmp(entry, "-")) return 1;
+	if (entry[0] == '-' && entry[1] == ' ') *key = entry + 2;
+	else if (strlen(entry) >= 34 && entry[32] == ' ' && retro_hex(entry, 32)) {
+		memcpy(session, entry, 32);
+		session[32] = '\0';
+		*key = entry + 33;
+	} else return 0;
+	return retro_stamp_key_valid(*key);
+}
+
+/* The session the stamp binds to this visible record. The whole stamp must be well formed -- exactly the header,
+ * the previous entry and the candidate entry -- or the record is unowned: a damaged entry never lets the other one
+ * stand in for it. The newest matching entry wins, and two different owners for one key name no owner at all. */
+static int retro_stamp_owner(const char *run_dir, const char *key, char session[33])
+{
+	char path[PATH_MAX], bytes[2 * (RETRO_KEY_MAX + 40) + 32];
+	int len = snprintf(path, sizeof path, "%s/resume-owner", run_dir);
+	if (len < 0 || (size_t)len >= sizeof path) return 0;
+	int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+	if (fd < 0) return 0;
+	size_t size = 0;
+	int ok = 1;
+	while (ok && size < sizeof bytes) {
+		ssize_t got = read(fd, bytes + size, sizeof bytes - size);
+		if (got > 0) size += (size_t)got;
+		else if (got == 0) break;
+		else if (errno != EINTR) ok = 0;
+	}
+	close(fd);
+	if (!ok || size == 0 || size == sizeof bytes || bytes[size - 1] != '\n' || memchr(bytes, '\0', size)) return 0;
+	bytes[size - 1] = '\0';
+	static const char header[] = "banana-resume-owner-v1";
+	char *first = strchr(bytes, '\n'), *second = first ? strchr(first + 1, '\n') : NULL;
+	if (!first || !second || strchr(second + 1, '\n') || (size_t)(first - bytes) != sizeof header - 1 ||
+	    memcmp(bytes, header, sizeof header - 1))
+		return 0;
+	*first = '\0';
+	*second = '\0';
+	const char *previous_key, *candidate_key;
+	char previous_session[33], candidate_session[33];
+	if (!retro_stamp_entry(first + 1, 1, &previous_key, previous_session) ||
+	    !retro_stamp_entry(second + 1, 0, &candidate_key, candidate_session)) return 0;
+	if (previous_key && !strcmp(previous_key, candidate_key) && previous_session[0] && candidate_session[0] &&
+	    strcmp(previous_session, candidate_session))
+		return 0;	/* one key, two owners */
+	const char *keys[2] = { candidate_key, previous_key };	/* candidate, then previous */
+	const char *owners[2] = { candidate_session, previous_session };
+	for (size_t i = 0; i < 2; ++i) {
+		if (!keys[i] || strcmp(keys[i], key)) continue;
+		if (!owners[i][0]) return 0;	/* published unowned */
+		memcpy(session, owners[i], 33);
+		return 1;
+	}
+	return 0;
+}
+
+static int retro_write_stamp(const char *run_dir, const char *previous, const char *candidate)
+{
+	char path[PATH_MAX], tmp[PATH_MAX];
+	int a = snprintf(path, sizeof path, "%s/resume-owner", run_dir);
+	int b = snprintf(tmp, sizeof tmp, "%s/resume-owner.tmp", run_dir);
+	if (a < 0 || (size_t)a >= sizeof path || b < 0 || (size_t)b >= sizeof tmp) return 0;
+	(void)unlink(tmp);
+	int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+	if (fd < 0) return 0;
+	FILE *f = fdopen(fd, "w");
+	if (!f) { close(fd); (void)unlink(tmp); return 0; }
+	int ok = fprintf(f, "banana-resume-owner-v1\n%s\n%s\n", previous, candidate) > 0 &&
+		 fflush(f) == 0 && fsync(fd) == 0;
+	if (fclose(f) != 0) ok = 0;
+	if (ok) ok = rename(tmp, path) == 0;
+	if (!ok) (void)unlink(tmp);
+	return ok;
+}
+
+static int retro_owner_fields_valid(const struct retro_owner *owner)
+{
+	return owner && strnlen(owner->session, 33) == 32 && retro_hex(owner->session, 32) &&
+		retro_rom_path(owner->rom);
+}
+
+/* Unlinks of the visible record whose directory sync has not succeeded, by directory. An unlink that returned 0 is
+ * durable only after the sync, so a failed sync leaves a debt that outlives the call: every later invalidation of
+ * this directory pays it first, even when the record is by then absent or another session's, and no other success
+ * hides it. A publication's own directory sync settles it as well. Process-local: a restarted daemon re-reads the
+ * directory, and a record this one unlinked is simply absent. */
+#define RETRO_SYNC_DEBT_SLOTS 4
+static char retro_sync_debt[RETRO_SYNC_DEBT_SLOTS][PATH_MAX];
+
+static char *retro_sync_debt_find(const char *directory)
+{
+	for (size_t i = 0; i < RETRO_SYNC_DEBT_SLOTS; ++i)
+		if (retro_sync_debt[i][0] && !strcmp(retro_sync_debt[i], directory)) return retro_sync_debt[i];
+	return NULL;
+}
+
+/* Reserve before the unlink, so the debt can always be recorded once the record is gone: the slot is taken now. */
+static int retro_sync_debt_reserve(const char *directory)
+{
+	if (!directory[0] || strlen(directory) >= PATH_MAX) return 0;
+	if (retro_sync_debt_find(directory)) return 1;
+	for (size_t i = 0; i < RETRO_SYNC_DEBT_SLOTS; ++i) {
+		if (retro_sync_debt[i][0]) continue;
+		strcpy(retro_sync_debt[i], directory);
+		return 1;
+	}
+	return 0;
+}
+
+/* Sync the directory; a success settles every unlink made in it so far. */
+static int retro_dir_sync(int dir, const char *directory)
+{
+	if (fsync(dir) < 0) return 0;
+	char *slot = retro_sync_debt_find(directory);
+	if (slot) slot[0] = '\0';
+	return 1;
+}
+
+/* Publish under resume.lock, with the lock held and the owner already revalidated. */
+static int retro_publish_locked(int dir, const char *directory, const char *run_dir, const struct retro_owner *owner,
+				const struct retro_resume_proof *proof, const char *legacy_id)
+{
+	char key[RETRO_KEY_MAX], previous_key[RETRO_KEY_MAX], previous[RETRO_KEY_MAX + 40], candidate[RETRO_KEY_MAX + 40];
+	const char *rom = owner->rom;
+	int len = proof ? snprintf(key, sizeof key, "N %s %s %s %s", proof->token, proof->system, proof->core, rom)
+			: snprintf(key, sizeof key, "L %s - - %s", legacy_id, rom);
+	if (len <= 0 || len >= (int)sizeof key) return 0;
+	int visible = retro_visible_record(dir, previous_key);
+	if (visible < 0) return 0;
+	strcpy(previous, "-");
+	if (visible == 1) {
+		char holder[33];
+		if (retro_stamp_owner(run_dir, previous_key, holder)) {
+			/* The candidate entry is chosen before the rename, so it would hand this session a record another
+			 * one published. Identical bytes are not a reason to change who owns them. */
+			if (!strcmp(previous_key, key) && strcmp(holder, owner->session)) {
+				sleep_log("resume publication refused: the visible record belongs to session %.8s", holder);
+				return 0;
+			}
+			snprintf(previous, sizeof previous, "%s %s", holder, previous_key);
+		} else snprintf(previous, sizeof previous, "- %s", previous_key);
+	}
+	snprintf(candidate, sizeof candidate, "%s %s", owner->session, key);
+	if (!retro_write_stamp(run_dir, previous, candidate)) {
+		sleep_log("resume owner stamp failed: %s", strerror(errno));
+		return 0;
+	}
+	/* One daemon writes this file. Discard a temp left by an interrupted
+	 * write; exclusive creation avoids following a replacement link. */
+	(void)unlinkat(dir, "resume.tmp", 0);
+	int ok = 0;
+	int fd = openat(dir, "resume.tmp", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+	if (fd >= 0) {
+		FILE *f = fdopen(fd, "w");
+		if (f) {
+			int count = proof ? fprintf(f, "banana-retro-v1\n%s:%s\n%s\n%s\n",
+						    proof->system, proof->core, proof->token, rom)
+					  : fprintf(f, "%s\n" BANANA_LEGACY_RESUME_ID_PREFIX "%s\n", rom, legacy_id);
+			ok = count > 0 && fflush(f) == 0 && fsync(fd) == 0;
+			if (fclose(f) != 0) ok = 0;
+		} else close(fd);
+		if (ok) ok = renameat(dir, "resume.tmp", dir, "resume") == 0;
+		if (!ok) (void)unlinkat(dir, "resume.tmp", 0);
+	}
+	/* No cleanup follows a failure here: the visible record is either still the previous one or already the
+	 * candidate, and the stamp names the right session for both. */
+	if (ok && !retro_dir_sync(dir, directory)) {
+		sleep_log("resume directory sync failed: %s", strerror(errno));
+		ok = 0;
+	}
+	return ok;
+}
+
+/* Publish the record for the owner's session. proof NULL writes a RetroArch record with a fresh ID. */
+static int retro_write_resume(const char *directory, const char *run_dir, const struct retro_owner *owner,
+			      int mode, const struct retro_resume_proof *proof)
+{
+	if (!retro_owner_fields_valid(owner) ||
+	    (proof && (!retro_record_id(proof->system) || !retro_record_id(proof->core) ||
+		       proof->token[BANANA_RETRO_RESUME_TOKEN_SIZE] != '\0' ||
+		       !retro_hex(proof->token, BANANA_RETRO_RESUME_TOKEN_SIZE)))) return 0;
+	char legacy_id[BANANA_LEGACY_RESUME_ID_SIZE + 1] = "";
+	if (!proof && !retro_legacy_resume_id(legacy_id)) return 0;
+	int dir = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (dir < 0) return 0;
+	int lock = retro_resume_lock(directory);
+	if (lock < 0) { close(dir); return 0; }
+	int ok = 0;
+	if (retro_owner_current(run_dir, owner, mode)) ok = retro_publish_locked(dir, directory, run_dir, owner, proof, legacy_id);
+	else sleep_log("resume publication refused: session %.8s is not the registered game", owner->session);
+	close(lock);
+	close(dir);
+	return ok;
+}
+
+/* Remove the visible record only if the stamp binds it to this session. Another session's record, an unowned one
+ * and a missing one are left alone and reported as success -- once any earlier unlink's sync is paid: there is
+ * nothing of this session's to invalidate, and a replacement is never removed on a retry's behalf. */
+static int retro_invalidate_resume(const char *directory, const char *run_dir, const struct retro_owner *owner,
+				   int mode)
+{
+	if (!retro_owner_fields_valid(owner)) return 0;
+	int dir = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (dir < 0) return 0;
+	int lock = retro_resume_lock(directory);
+	if (lock < 0) { close(dir); return 0; }
+	int ok = 0;
+	/* The debt is paid first, whatever the visible record is. */
+	if (retro_owner_current(run_dir, owner, mode) &&
+	    (!retro_sync_debt_find(directory) || retro_dir_sync(dir, directory))) {
+		char key[RETRO_KEY_MAX], holder[33];
+		int visible = retro_visible_record(dir, key);
+		if (visible == 0) ok = 1;
+		else if (visible == 1) {
+			if (!retro_stamp_owner(run_dir, key, holder) || strcmp(holder, owner->session)) ok = 1;
+			else if (!retro_sync_debt_reserve(directory)) ok = 0;
+			else if (unlinkat(dir, "resume", 0) < 0) ok = errno == ENOENT ? retro_dir_sync(dir, directory) : 0;
+			else ok = retro_dir_sync(dir, directory);
+		}
+	}
+	close(lock);
+	close(dir);
+	return ok;
+}
+
+static int retro_system_resume_marker(void *data, const struct retro_owner *owner, int mode,
+				      const struct retro_resume_proof *proof)
 {
 	(void)data;
-	if (!remember || !rom || !*rom) { unlink("/data/banana/resume"); return; }
-	FILE *f = fopen("/data/banana/resume.tmp", "w");
-	if (!f) return;
-	int ok = fprintf(f, "%s\n", rom) > 0 && fflush(f) == 0 && fsync(fileno(f)) == 0;
-	if (fclose(f) != 0) ok = 0;
-	if (!ok || rename("/data/banana/resume.tmp", "/data/banana/resume") < 0) {
-		unlink("/data/banana/resume.tmp");
-		return;
-	}
-	int dir = open("/data/banana", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-	if (dir >= 0) { if (fsync(dir) < 0) sleep_log("resume directory sync failed: %s", strerror(errno)); close(dir); }
+	return retro_write_resume(retro_resume_dir, retro_run_dir, owner, mode, proof);
+}
+static int retro_system_resume_invalidate(void *data, const struct retro_owner *owner, int mode)
+{
+	(void)data;
+	return retro_invalidate_resume(retro_resume_dir, retro_run_dir, owner, mode);
 }
 static const struct retro_power_ops retro_system_ops = {
 	.request = retro_system_request, .signal_group = retro_system_signal,
+	.request_proof = retro_system_request_proof,
 	.child_alive = retro_system_child_alive, .wait_ms = retro_system_wait_ms,
 	.resume_marker = retro_system_resume_marker,
+	.resume_invalidate = retro_system_resume_invalidate,
 	.shutdown_finalize = retro_system_shutdown_finalize
 };
 
+/* The sleep acknowledgement carries the proof of the checkpoint it committed. With the running session known the
+ * boot record is published here, because nothing after a suspend can ask the runtime for it. A publication that
+ * fails is never acknowledged and never removes the previous record, but it does not promise the record is
+ * unchanged: a failure after the rename (the directory sync) can leave the candidate already visible. The stamp
+ * names the right session for whichever record is visible, and boot accepts only the exact checkpoint CURRENT
+ * names. */
 static int retro_prepare_suspend(const struct retro_power_ops *ops, pid_t game, pid_t pg,
-				 uint64_t epoch, int allow_stop)
+				 uint64_t epoch, int allow_stop, const struct retro_owner *owner)
 {
-	int result = game && allow_stop ?
-		ops->request(ops->data, BANANA_RETRO_CTL_PREPARE_SLEEP, epoch, 1500) : RETRO_POWER_NONE;
-	if (result == RETRO_POWER_OK) return RETRO_POWER_OK;
+	struct retro_resume_proof proof = {0};
+	struct retro_power_report rep = { RETRO_POWER_NONE, RETRO_STAGE_SKIPPED, RETRO_STAGE_SKIPPED };
+	int result = RETRO_POWER_NONE;
+	if (game && allow_stop) {
+		if (owner && ops->request_proof)
+			result = ops->request_proof(ops->data, game, owner, BANANA_RETRO_CTL_PREPARE_SLEEP, epoch, 1500, &proof);
+		else result = ops->request(ops->data, BANANA_RETRO_CTL_PREPARE_SLEEP, epoch, 1500);
+	}
+	rep.checkpoint = result;
+	if (result == RETRO_POWER_OK) {
+		if (owner && proof.token[0] && ops->resume_marker)
+			rep.publication = ops->resume_marker(ops->data, owner, RETRO_PUBLISH_LIVE, &proof) ?
+				RETRO_STAGE_OK : RETRO_STAGE_FAILED;
+		retro_report_finish(ops, "sleep", &rep);
+		return RETRO_POWER_OK;
+	}
+	retro_report_finish(ops, "sleep", &rep);
 	if (result == RETRO_POWER_FAILED)
 		(void)ops->request(ops->data, BANANA_RETRO_CTL_SLEEP_ABORT, epoch, 500);
 	if (allow_stop && pg > 0 && ops->signal_group(ops->data, pg, SIGSTOP) < 0) {
@@ -640,16 +1330,8 @@ static int retro_suspend_failure_action(const struct retro_power_ops *ops, int p
 	return 0;
 }
 
-static int retro_prepare_shutdown(const struct retro_power_ops *ops, pid_t game,
-				 uint64_t epoch)
+static void retro_shutdown_child(const struct retro_power_ops *ops, pid_t game, pid_t pg, int native)
 {
-	return game ? ops->request(ops->data, BANANA_RETRO_CTL_SHUTDOWN, epoch, 3000) : RETRO_POWER_NONE;
-}
-
-static int retro_shutdown_child(const struct retro_power_ops *ops, pid_t game, pid_t pg,
-				uint64_t epoch)
-{
-	int native = retro_prepare_shutdown(ops, game, epoch);
 	if (native == RETRO_POWER_OK)
 		for (unsigned i = 0; i < 30 && ops->child_alive(ops->data, game); ++i)
 			ops->wait_ms(ops->data, 100);
@@ -659,15 +1341,44 @@ static int retro_shutdown_child(const struct retro_power_ops *ops, pid_t game, p
 		for (unsigned i = 0; i < 50 && ops->child_alive(ops->data, game); ++i)
 			ops->wait_ms(ops->data, 100);
 	}
-	return native;
 }
 
+/* owner: the session captured before it was told to stop, or NULL when none could be proven. Without an owner
+ * nothing is published and nothing is removed. */
 static int retro_shutdown_session(const struct retro_power_ops *ops, pid_t game, pid_t pg,
-				  uint64_t epoch, const char *rom)
+				  uint64_t epoch, const struct retro_owner *owner)
 {
-	int result = game > 0 ? retro_shutdown_child(ops, game, pg, epoch) : RETRO_POWER_NONE;
-	if (ops->resume_marker && (result == RETRO_POWER_NONE || result == RETRO_POWER_OK))
-		ops->resume_marker(ops->data, rom, game > 0 && rom && *rom);
+	struct retro_resume_proof proof = {0};
+	struct retro_power_report rep = { RETRO_POWER_NONE, RETRO_STAGE_SKIPPED, RETRO_STAGE_SKIPPED };
+	int result = RETRO_POWER_NONE;
+	if (game > 0) {
+		result = ops->request_proof(ops->data, game, owner, BANANA_RETRO_CTL_SHUTDOWN, epoch, 3000, &proof);
+		rep.checkpoint = result;
+		retro_shutdown_child(ops, game, pg, result);
+	}
+	/* A failed or ambiguous request does not replace a previously committed target, and no failure removes a
+	 * record: exact-token validation at boot decides whether it is still current. A menu shutdown has no newer
+	 * record; an unsettled boot attempt stays for the UI to retry. Publication and cleanup failures are recorded
+	 * in the report only: the checkpoint result and the finalization below do not depend on them. */
+	if (game > 0 && owner && ops->resume_marker && (result == RETRO_POWER_NONE || result == RETRO_POWER_OK)) {
+		if (result == RETRO_POWER_NONE || proof.token[0]) {
+			rep.publication = ops->resume_marker(ops->data, owner, RETRO_PUBLISH_SHUTDOWN,
+							     result == RETRO_POWER_OK ? &proof : NULL) ?
+				RETRO_STAGE_OK : RETRO_STAGE_FAILED;
+		} else if (proof.battery_only) {
+			/* The bound runtime committed battery data and, by an OK reply to a proof request, no checkpoint:
+			 * a record this session published names a superseded one. Only that session's record is removed. */
+			rep.cleanup = ops->resume_invalidate &&
+				ops->resume_invalidate(ops->data, owner, RETRO_PUBLISH_SHUTDOWN) ?
+				RETRO_STAGE_OK : RETRO_STAGE_FAILED;
+		} else {
+			/* OK without a digest that did not identify itself as battery-only (a runtime that could not answer
+			 * the proof request, or a launcher that is not this session's ROM): ambiguous, so nothing is removed.
+			 * Boot validates whatever record is visible against the exact checkpoint CURRENT names. */
+			sleep_log("shutdown reply did not identify a battery-only commit; resume record left as is");
+		}
+	}
+	retro_report_finish(ops, "shutdown", &rep);
 	if (ops->shutdown_finalize) ops->shutdown_finalize(ops->data);
 	return result;
 }
@@ -1225,13 +1936,44 @@ static int sleep_save_state(pid_t game)
 	}
 }
 
-static int session_checkpoint(const struct retro_power_ops *ops, pid_t game,
+enum retro_checkpoint_result { RETRO_CHECKPOINT_FAILED, RETRO_CHECKPOINT_MARKED, RETRO_CHECKPOINT_BATTERY_ONLY };
+
+/* Checkpoint, boot-record publication and cleanup are separate outcomes in *rep; the return value says only
+ * whether the boot record now names the checkpoint just committed (MARKED), was correctly retired (BATTERY_ONLY),
+ * or is unproven and untrusted (FAILED: the previous record was not removed, but a publication that failed
+ * after its rename may already have made the candidate visible). A record that cannot be written or removed
+ * never turns a committed checkpoint into a failed one in the report. */
+static int session_checkpoint_run(const struct retro_power_ops *ops, pid_t game, const struct retro_owner *owner,
+				  int (*legacy_save)(pid_t), struct retro_power_report *rep)
+{
+	struct retro_resume_proof proof = {0};
+	int native = ops->request_proof(ops->data, game, owner, BANANA_RETRO_CTL_CHECKPOINT, 0, 1500, &proof);
+	rep->checkpoint = native;
+	if (native == RETRO_POWER_NONE) {
+		rep->checkpoint = legacy_save(game) ? RETRO_POWER_OK : RETRO_POWER_FAILED;
+		if (rep->checkpoint != RETRO_POWER_OK) return RETRO_CHECKPOINT_FAILED;
+	} else if (native == RETRO_POWER_OK && !proof.token[0] && proof.battery_only) {
+		/* The runtime committed battery data and no checkpoint: a record this session published names a
+		 * checkpoint that is now superseded, so remove it. A record that session does not own stays. */
+		if (!ops->child_alive(ops->data, game)) return RETRO_CHECKPOINT_FAILED;
+		rep->cleanup = ops->resume_invalidate(ops->data, owner, RETRO_PUBLISH_LIVE) ?
+			RETRO_STAGE_OK : RETRO_STAGE_FAILED;
+		return rep->cleanup == RETRO_STAGE_OK ? RETRO_CHECKPOINT_BATTERY_ONLY : RETRO_CHECKPOINT_FAILED;
+	} else if (native != RETRO_POWER_OK || !proof.token[0]) return RETRO_CHECKPOINT_FAILED;
+	if (!ops->child_alive(ops->data, game)) return RETRO_CHECKPOINT_FAILED;
+	rep->publication = ops->resume_marker(ops->data, owner, RETRO_PUBLISH_LIVE,
+					      native == RETRO_POWER_OK ? &proof : NULL) ?
+		RETRO_STAGE_OK : RETRO_STAGE_FAILED;
+	return rep->publication == RETRO_STAGE_OK ? RETRO_CHECKPOINT_MARKED : RETRO_CHECKPOINT_FAILED;
+}
+
+static int session_checkpoint(const struct retro_power_ops *ops, pid_t game, const struct retro_owner *owner,
 			      int (*legacy_save)(pid_t))
 {
-	int native = ops->request(ops->data, BANANA_RETRO_CTL_CHECKPOINT, 0, 1500);
-	if (native == RETRO_POWER_NONE) return legacy_save(game);
-	if (native != RETRO_POWER_OK) sleep_log("native periodic checkpoint unconfirmed");
-	return native == RETRO_POWER_OK;
+	struct retro_power_report rep = { RETRO_POWER_NONE, RETRO_STAGE_SKIPPED, RETRO_STAGE_SKIPPED };
+	int result = session_checkpoint_run(ops, game, owner, legacy_save, &rep);
+	retro_report_finish(ops, "checkpoint", &rep);
+	return result;
 }
 
 /* Sessions that survive a hang: while a game runs, every 180 s (session_secs) its automatic state is written
@@ -1240,13 +1982,11 @@ static int session_checkpoint(const struct retro_power_ops *ops, pid_t game,
  * pulled battery leaves it behind. Written whole and renamed, so a cut during the write leaves the old one. */
 static void session_tick(void)
 {
-	char rom[PATH_MAX] = "";
+	struct retro_owner owner;
 	pid_t game = pid_of("/run/banana/game.pid");
-	read_str("/run/banana/game.path", rom, sizeof rom);
-	if (!game || !rom[0] || access("/run/banana/shutting-down", F_OK) == 0) return;
-	if (session_checkpoint(&retro_system_ops, game, sleep_save_state) &&
-	    pid_of("/run/banana/game.pid") == game)
-		retro_system_resume_marker(NULL, rom, 1);
+	if (!game || access("/run/banana/shutting-down", F_OK) == 0 ||
+	    !retro_capture_owner(retro_run_dir, game, &owner, RETRO_PUBLISH_LIVE)) return;
+	(void)session_checkpoint(&retro_system_ops, game, &owner, sleep_save_state);
 }
 
 /* ---- standby: the SoC awake behind a dark panel ------------------------------------------------------------------- */
@@ -1384,7 +2124,9 @@ static void suspend_now(const char *why)
 	pid_t game = pid_of("/run/banana/game.pid");
 	pid_t pg = game ? getpgid(game) : 0;
 	uint64_t epoch = next_retro_power_epoch();
-	int native = retro_prepare_suspend(&retro_system_ops, game, pg, epoch, !skip("stop"));
+	struct retro_owner owner;
+	int owned = game && retro_capture_owner(retro_run_dir, game, &owner, RETRO_PUBLISH_LIVE);
+	int native = retro_prepare_suspend(&retro_system_ops, game, pg, epoch, !skip("stop"), owned ? &owner : NULL);
 	retro_suspend_prepared = native == RETRO_POWER_OK;
 	retro_suspend_native = native != RETRO_POWER_NONE;
 	if (!retro_suspend_prepared) sleep_save_state(game);
@@ -1656,23 +2398,40 @@ static void retro_system_shutdown_finalize(void *data)
 	if (kill(1, SIGUSR2)) reboot(RB_POWER_OFF);
 }
 
+/* Create the shutdown latch under resume.lock. A publication or invalidation checks the latch and writes the
+ * record while holding that lock, so the latch either exists before the check (the live writer is refused) or is
+ * made after the writer's rename (the record it published is then the one shutdown sees). The wait is bounded like
+ * every other resume.lock acquisition: a wedged lock holder must not stop a shutdown, so without the lock the latch
+ * is created anyway and the failure is logged. rcK serializes its own latch the same way. */
+static void retro_latch_shutdown(const char *directory, const char *run_dir)
+{
+	char path[PATH_MAX];
+	int len = snprintf(path, sizeof path, "%s/shutting-down", run_dir);
+	if (len <= 0 || (size_t)len >= sizeof path) return;
+	int lock = retro_resume_lock(directory);
+	if (lock < 0) sleep_log("shutdown latch created without resume.lock: %s", strerror(errno));
+	int fd = open(path, O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0644);
+	if (fd >= 0) close(fd);
+	else sleep_log("shutdown latch not created: %s", strerror(errno));
+	if (lock >= 0) close(lock);
+}
+
 static void shutdown_now(const char *why)
 {
 	say("shutting down (%s)", why);
 	/* The menu's game-exit path must not clear the marker written below: the game leaving is this shutdown, not a
 	 * quit to the menu. A file, because the menu cannot see this process's state. */
-	FILE *sd = fopen("/run/banana/shutting-down", "w");
-	if (sd) fclose(sd);
-	/* A game a shutdown interrupts is the one to resume at the next boot: the menu wrote its path when it launched
-	 * it, and this has to be read before the game is stopped. Coming from the menu there is nothing to remember, and
-	 * a marker left by an older boot goes. */
-	char rom[PATH_MAX] = "";
-	read_str("/run/banana/game.path", rom, sizeof rom);
+	retro_latch_shutdown(retro_resume_dir, retro_run_dir);
+	/* Capture the registered session before anything stops it. After the reap its leader is gone, so this is the
+	 * only point at which the daemon can prove which session it is acting for. With no game, or none it can
+	 * prove, nothing is published and nothing removed: the UI still owns any unsettled boot-resume record. */
 	pid_t game = pid_of("/run/banana/game.pid");
+	struct retro_owner owner;
+	int owned = game && retro_capture_owner(retro_run_dir, game, &owner, RETRO_PUBLISH_SHUTDOWN);
 	pid_t pg = game ? getpgid(game) : 0;
 	uint64_t epoch = game ? next_retro_power_epoch() : 0;
 	/* Marker, checkpoint/exit handshake, and final platform shutdown are one tested order. */
-	(void)retro_shutdown_session(&retro_system_ops, game, pg, epoch, rom);
+	(void)retro_shutdown_session(&retro_system_ops, game, pg, epoch, owned ? &owner : NULL);
 }
 
 static double save_volume_at, save_backlight_at;	/* debounced: written a moment after the last key */
@@ -2394,7 +3153,7 @@ static int cheevos_line(const char *line)
 /* --selftest hud: runs no daemon and touches nothing; only the formatter and the achievement parser, so the bridge's
  * text can be checked on a workstation */
 struct retro_power_mock {
-	unsigned calls[16];
+	unsigned calls[32];
 	unsigned stops, continues;
 	uint64_t epoch;
 	unsigned owners;
@@ -2406,6 +3165,7 @@ struct retro_power_mock {
 	int term_requested;
 	int child_stopped, identity_mismatch, renderer_alive;
 	int resume_marked;
+	int battery_only, marker_fail;
 };
 
 static void retro_mock_record(struct retro_power_mock *mock, char operation)
@@ -2419,7 +3179,7 @@ static void retro_mock_record(struct retro_power_mock *mock, char operation)
 static int retro_mock_request(void *data, uint16_t type, uint64_t epoch, unsigned timeout_ms)
 {
 	struct retro_power_mock *mock = data;
-	if (!epoch || !timeout_ms || type >= 16) return RETRO_POWER_FAILED;
+	if (!timeout_ms || type >= 32 || (!epoch && type != BANANA_RETRO_CTL_CHECKPOINT)) return RETRO_POWER_FAILED;
 	++mock->calls[type];
 	if (mock->child_stopped || mock->identity_mismatch || !mock->renderer_alive)
 		return RETRO_POWER_NONE;
@@ -2439,6 +3199,27 @@ static int retro_mock_request(void *data, uint16_t type, uint64_t epoch, unsigne
 	if (result == RETRO_POWER_OK && type == mock->lose_ack_type) {
 		mock->lose_ack_type = 0;
 		return RETRO_POWER_FAILED;
+	}
+	return result;
+}
+
+/* the publish mode the last record write used; no_token: an OK reply with no digest, which is battery-only unless
+ * `ambiguous` says the runtime could not identify it as one (the compatibility retry, or another ROM's launcher) */
+static int retro_mock_last_mode = -1, retro_mock_no_token, retro_mock_ambiguous;
+static int retro_mock_request_proof(void *data, pid_t game, const struct retro_owner *owner, uint16_t type,
+				    uint64_t epoch, unsigned timeout_ms, struct retro_resume_proof *proof)
+{
+	int result = retro_mock_request(data, type, epoch, timeout_ms);
+	if (result == RETRO_POWER_OK) {
+		struct retro_power_mock *mock = data;
+		strcpy(proof->system, "gba");
+		strcpy(proof->core, "mgba");
+		if (!owner || retro_mock_no_token || (type == BANANA_RETRO_CTL_CHECKPOINT && mock->battery_only)) {
+			proof->token[0] = '\0';	/* no owner: the real client discards the token */
+			proof->battery_only = !retro_mock_ambiguous &&
+				((type == BANANA_RETRO_CTL_CHECKPOINT && mock->battery_only) ||
+				 (type == BANANA_RETRO_CTL_SHUTDOWN && retro_mock_no_token));
+		} else memset(proof->token, 'a', BANANA_RETRO_RESUME_TOKEN_SIZE);
 	}
 	return result;
 }
@@ -2466,12 +3247,27 @@ static void retro_mock_wait_ms(void *data, unsigned milliseconds)
 		mock->child_alive = 0;
 }
 
-static void retro_mock_resume_marker(void *data, const char *rom, int remember)
+static int retro_mock_resume_marker(void *data, const struct retro_owner *owner, int mode,
+				    const struct retro_resume_proof *proof)
 {
 	struct retro_power_mock *mock = data;
-	mock->resume_marked = remember && rom && *rom;
-	retro_mock_record(mock, mock->resume_marked ? 'M' : 'D');
+	retro_mock_last_mode = mode;
+	mock->resume_marked = !mock->marker_fail && owner && proof && !strcmp(proof->system, "gba") &&
+		!strcmp(proof->core, "mgba") && retro_hex(proof->token, BANANA_RETRO_RESUME_TOKEN_SIZE);
+	retro_mock_record(mock, mock->resume_marked ? 'M' : 'E');
+	return mock->resume_marked;
 }
+
+static int retro_mock_resume_invalidate(void *data, const struct retro_owner *owner, int mode)
+{
+	struct retro_power_mock *mock = data;
+	retro_mock_last_mode = mode;
+	retro_mock_record(mock, 'I');
+	return owner && !mock->marker_fail;
+}
+
+static int retro_mock_legacy_save(pid_t game)
+{ (void)game; return 0; }
 
 static void retro_mock_shutdown_finalize(void *data)
 { retro_mock_record(data, 'F'); }
@@ -2483,24 +3279,33 @@ static int selftest_retro_lifecycle(void)
 	};
 	struct retro_power_ops ops = {
 		.data = &mock, .request = retro_mock_request, .signal_group = retro_mock_signal,
+		.request_proof = retro_mock_request_proof,
 		.child_alive = retro_mock_child_alive, .wait_ms = retro_mock_wait_ms,
-		.resume_marker = retro_mock_resume_marker, .shutdown_finalize = retro_mock_shutdown_finalize
+		.resume_marker = retro_mock_resume_marker, .resume_invalidate = retro_mock_resume_invalidate,
+		.shutdown_finalize = retro_mock_shutdown_finalize
 	};
 	int failed = 0;
+	struct retro_owner owner = { .session = "0123456789abcdef0123456789abcdef", .pid = 100, .start = 7,
+				     .rom = "/game.rom" };
 #define CHECK(name, expr) do { int ok = (expr); printf("retro lifecycle %s: %s\n", (name), ok ? "ok" : "FAIL"); if (!ok) failed = 1; } while (0)
-	CHECK("start-time identity", retro_child_identity_valid(100, 500, 500, 100, 100, 'S') &&
-	      !retro_child_identity_valid(100, 500, 501, 100, 100, 'S') &&
-	      !retro_child_identity_valid(100, 500, 500, 100, 100, 'T'));
+	CHECK("start-time identity", retro_child_identity_valid(100, 500, 500, 100, 100, 'S', 0) &&
+	      !retro_child_identity_valid(100, 500, 501, 100, 100, 'S', 0) &&
+	      !retro_child_identity_valid(100, 500, 500, 100, 100, 'T', 0) &&
+	      retro_child_identity_valid(100, 500, 500, 100, 100, 'T', 1) &&
+	      retro_child_identity_valid(100, 500, 500, 100, 100, 't', 1) &&
+	      !retro_child_identity_valid(100, 500, 501, 100, 100, 'T', 1) &&
+	      !retro_child_identity_valid(100, 500, 500, 100, 100, 'Z', 1) &&
+	      !retro_child_identity_valid(100, 500, 500, 100, 100, 'X', 1));
 	/* Production prepare/wake transitions preserve an independently held UI overlay. */
 	mock.owners = 1u;
-	int prepared = retro_prepare_suspend(&ops, 100, 100, 41, 1);
+	int prepared = retro_prepare_suspend(&ops, 100, 100, 41, 1, NULL);
 	CHECK("overlay prepare", prepared == RETRO_POWER_OK && mock.stops == 0 &&
 	      mock.owners == 3u && strcmp(mock.order, "P") == 0);
 	int aborted = retro_suspend_complete(&ops, 1, 1, 0, 41, 100, 100);
 	CHECK("suspend abort", aborted == RETRO_POWER_OK && mock.continues == 0 &&
 	      mock.owners == 1u && strcmp(mock.order, "PA") == 0);
 	mock.owners = 0;
-	prepared = retro_prepare_suspend(&ops, 100, 100, 42, 1);
+	prepared = retro_prepare_suspend(&ops, 100, 100, 42, 1, NULL);
 	CHECK("native suspend wake", prepared == RETRO_POWER_OK && mock.owners == 2u);
 	int woke = retro_suspend_complete(&ops, 1, 1, 1, 42, 100, 100);
 	CHECK("native wake", woke == RETRO_POWER_OK && mock.owners == 0 &&
@@ -2508,7 +3313,7 @@ static int selftest_retro_lifecycle(void)
 
 	/* A delayed/lost ack can follow a real pause; ABORT reconciles it before group fallback. */
 	mock.lose_ack_type = BANANA_RETRO_CTL_PREPARE_SLEEP;
-	prepared = retro_prepare_suspend(&ops, 100, 100, 43, 1);
+	prepared = retro_prepare_suspend(&ops, 100, 100, 43, 1, NULL);
 	CHECK("late prepare acknowledgement", prepared == RETRO_POWER_FAILED &&
 	      mock.owners == 0 && mock.stops == 1 && strstr(mock.order, "PAS") != NULL);
 	(void)retro_suspend_complete(&ops, 0, 1, 0, 43, 100, 100);
@@ -2518,41 +3323,41 @@ static int selftest_retro_lifecycle(void)
 
 	/* Renderer/service loss falls back to the group; stopped and stale children cannot use native control. */
 	mock.service_alive = 0;
-	prepared = retro_prepare_suspend(&ops, 100, 100, 44, 1);
+	prepared = retro_prepare_suspend(&ops, 100, 100, 44, 1, NULL);
 	CHECK("service loss fallback", prepared == RETRO_POWER_FAILED && mock.stops == 2);
 	mock.service_alive = 1;
 	mock.renderer_alive = 0;
-	prepared = retro_prepare_suspend(&ops, 100, 100, 44, 1);
+	prepared = retro_prepare_suspend(&ops, 100, 100, 44, 1, NULL);
 	CHECK("renderer loss fallback", prepared == RETRO_POWER_NONE && mock.stops == 3);
 	mock.renderer_alive = 1;
 	mock.child_stopped = 1;
-	prepared = retro_prepare_suspend(&ops, 100, 100, 44, 1);
+	prepared = retro_prepare_suspend(&ops, 100, 100, 44, 1, NULL);
 	CHECK("stopped child fallback", prepared == RETRO_POWER_NONE && mock.stops == 4);
 	mock.child_stopped = 0;
 	mock.identity_mismatch = 1;
-	prepared = retro_prepare_suspend(&ops, 100, 100, 44, 1);
+	prepared = retro_prepare_suspend(&ops, 100, 100, 44, 1, NULL);
 	CHECK("stale PID fallback", prepared == RETRO_POWER_NONE && mock.stops == 5);
 	mock.identity_mismatch = 0;
 
 	/* Checkpoint failure leaves no native hold and takes the process-group path. */
 	mock.checkpoint_ok = 0;
-	prepared = retro_prepare_suspend(&ops, 100, 100, 45, 1);
+	prepared = retro_prepare_suspend(&ops, 100, 100, 45, 1, NULL);
 	CHECK("failed checkpoint", prepared == RETRO_POWER_FAILED && mock.stops == 6);
 	mock.checkpoint_ok = 1;
-	prepared = retro_prepare_suspend(&ops, 100, 100, 46, 1);
+	prepared = retro_prepare_suspend(&ops, 100, 100, 46, 1, NULL);
 	mock.service_alive = 0;
 	woke = retro_suspend_complete(&ops, 1, 1, 1, 46, 100, 100);
 	CHECK("failed wake recovery", prepared == RETRO_POWER_OK && woke == RETRO_POWER_FAILED &&
 	      mock.term_requested && mock.child_alive);
 	mock.service_alive = 1;
 	mock.term_requested = 0;
-	prepared = retro_prepare_suspend(&ops, 100, 100, 47, 1);
+	prepared = retro_prepare_suspend(&ops, 100, 100, 47, 1, NULL);
 	mock.lose_ack_type = BANANA_RETRO_CTL_SLEEP_ABORT;
 	woke = retro_suspend_complete(&ops, 0, 1, 1, 47, 100, 100);
 	CHECK("ambiguous abort recovery", prepared == RETRO_POWER_OK && woke == RETRO_POWER_FAILED &&
 	      mock.owners == 0 && mock.term_requested);
 	mock.term_requested = 0;
-	prepared = retro_prepare_suspend(&ops, 100, 100, 52, 1);
+	prepared = retro_prepare_suspend(&ops, 100, 100, 52, 1, NULL);
 	int released = RETRO_POWER_NONE;
 	int retry1 = retro_suspend_failure_action(&ops, 1, 1, 1, 0, 52, 100, 100, &released);
 	int retry2 = retro_suspend_failure_action(&ops, 1, 1, 2, 1, 52, 100, 100, &released);
@@ -2567,15 +3372,16 @@ static int selftest_retro_lifecycle(void)
 	mock.waits = 0;
 	mock.terminate_after_waits = 2;
 	CHECK("direct shutdown marker order and reap", retro_shutdown_session(&ops, 100, 100, 53,
-	      "game.rom") == RETRO_POWER_OK && mock.resume_marked && !mock.child_alive &&
-	      !mock.term_requested && mock.waits == 2 && strstr(mock.order, "XMF") != NULL);
+	      &owner) == RETRO_POWER_OK && mock.resume_marked && !mock.child_alive &&
+	      !mock.term_requested && mock.waits == 2 && strstr(mock.order, "XMF") != NULL &&
+	      retro_mock_last_mode == RETRO_PUBLISH_SHUTDOWN);
 	mock.child_alive = 1;
 	mock.waits = 0;
 	mock.terminate_after_waits = 1;
 	mock.checkpoint_ok = 0;
 	CHECK("shutdown checkpoint failure fallback", retro_shutdown_session(&ops, 100, 100, 54,
-	      "game.rom") ==
-	      RETRO_POWER_FAILED && !mock.child_alive && mock.term_requested && mock.waits == 1);
+	      &owner) == RETRO_POWER_FAILED && !mock.child_alive && mock.term_requested &&
+	      mock.waits == 1 && mock.resume_marked && strstr(mock.order, "XMFTF") != NULL);
 	mock.checkpoint_ok = 1;
 	mock.term_requested = 0;
 	mock.child_alive = 1;
@@ -2583,18 +3389,90 @@ static int selftest_retro_lifecycle(void)
 	mock.terminate_after_waits = 3;
 	mock.service_alive = 0;
 	CHECK("shutdown process-group fallback", retro_shutdown_session(&ops, 100, 100, 55,
-	      "game.rom") ==
+	      &owner) ==
 	      RETRO_POWER_FAILED && !mock.child_alive && mock.term_requested && mock.waits == 3);
 	mock.child_alive = 1;
 	mock.waits = 0;
 	mock.term_requested = 0;
 	mock.terminate_after_waits = 0;
 	CHECK("shutdown bounded wait", retro_shutdown_session(&ops, 100, 100, 56,
-	      "game.rom") ==
+	      &owner) ==
 	      RETRO_POWER_FAILED && mock.child_alive && mock.waits == 50 && mock.term_requested);
 	mock.child_alive = 0;
-	(void)retro_shutdown_session(&ops, 0, 0, 0, "");
-	CHECK("shutdown clears stale resume marker", !mock.resume_marked);
+	mock.resume_marked = 1;
+	(void)retro_shutdown_session(&ops, 0, 0, 0, NULL);
+	CHECK("menu shutdown preserves unsettled resume marker", mock.resume_marked);
+	/* A shutdown that could not prove which session it stops publishes nothing and removes nothing. */
+	mock.service_alive = 1; mock.child_alive = 0; mock.waits = 0; mock.terminate_after_waits = 0;
+	mock.order_size = 0; mock.order[0] = 0;
+	CHECK("shutdown without a provable owner touches no record", retro_shutdown_session(&ops, 100, 100, 57,
+	      NULL) == RETRO_POWER_OK && strcmp(mock.order, "XF") == 0);
+	/* A runtime that committed no checkpoint at shutdown invalidates only the ending session's own record. */
+	mock.order_size = 0; mock.order[0] = 0; retro_mock_no_token = 1;
+	CHECK("shutdown without a checkpoint invalidates through the owner only", retro_shutdown_session(&ops, 100, 100,
+	      58, &owner) == RETRO_POWER_OK && strcmp(mock.order, "XIF") == 0 &&
+	      retro_mock_last_mode == RETRO_PUBLISH_SHUTDOWN);
+	/* The same empty reply, when the runtime did not identify it as a battery-only commit, removes nothing. */
+	mock.order_size = 0; mock.order[0] = 0; retro_mock_ambiguous = 1;
+	CHECK("an ambiguous shutdown reply invalidates nothing", retro_shutdown_session(&ops, 100, 100,
+	      59, &owner) == RETRO_POWER_OK && strcmp(mock.order, "XF") == 0);
+	retro_mock_ambiguous = 0;
+	retro_mock_no_token = 0;
+
+	/* A held sleep acknowledged with a proof publishes the matching boot record. */
+	mock.service_alive = 1; mock.checkpoint_ok = 1; mock.child_alive = 1; mock.renderer_alive = 1;
+	mock.owners = 0; mock.resume_marked = 0; mock.order_size = 0; mock.order[0] = 0;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 60, 1, &owner);
+	CHECK("suspend publishes proof", prepared == RETRO_POWER_OK && mock.resume_marked &&
+	      strcmp(mock.order, "PM") == 0 && retro_mock_last_mode == RETRO_PUBLISH_LIVE);
+	(void)retro_suspend_complete(&ops, 1, 1, 1, 60, 100, 100);
+	/* Without a known ROM there is nothing to name: no record is written. */
+	mock.resume_marked = 0; mock.order_size = 0; mock.order[0] = 0;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 61, 1, NULL);
+	CHECK("suspend without rom writes no record", prepared == RETRO_POWER_OK && !mock.resume_marked &&
+	      strcmp(mock.order, "P") == 0);
+	(void)retro_suspend_complete(&ops, 1, 1, 1, 61, 100, 100);
+	/* A record that cannot be written leaves whatever record exists: no blanket removal follows. */
+	mock.order_size = 0; mock.order[0] = 0; mock.marker_fail = 1;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 62, 1, &owner);
+	CHECK("suspend record failure removes nothing", prepared == RETRO_POWER_OK &&
+	      strcmp(mock.order, "PE") == 0);
+	mock.marker_fail = 0;
+	(void)retro_suspend_complete(&ops, 1, 1, 1, 62, 100, 100);
+	/* A checkpoint that fails keeps the process-group path and publishes nothing. */
+	mock.order_size = 0; mock.order[0] = 0; mock.checkpoint_ok = 0;
+	prepared = retro_prepare_suspend(&ops, 100, 100, 63, 1, &owner);
+	CHECK("suspend failure publishes no record", prepared == RETRO_POWER_FAILED &&
+	      strchr(mock.order, 'M') == NULL);
+	mock.checkpoint_ok = 1;
+
+	/* The runtime answers OK with no digest when it committed battery data only. */
+	mock.order_size = 0; mock.order[0] = 0; mock.battery_only = 1;
+	CHECK("battery-only checkpoint invalidates through the owner",
+	      session_checkpoint(&ops, 100, &owner, retro_mock_legacy_save) == RETRO_CHECKPOINT_BATTERY_ONLY &&
+	      !mock.resume_marked && strcmp(mock.order, "I") == 0 && retro_mock_last_mode == RETRO_PUBLISH_LIVE);
+	mock.order_size = 0; mock.order[0] = 0; mock.child_alive = 0;
+	CHECK("battery-only checkpoint after exit leaves record",
+	      session_checkpoint(&ops, 100, &owner, retro_mock_legacy_save) == RETRO_CHECKPOINT_FAILED &&
+	      mock.order[0] == 0);
+	mock.child_alive = 1; mock.marker_fail = 1;
+	CHECK("battery-only record removal failure is reported",
+	      session_checkpoint(&ops, 100, &owner, retro_mock_legacy_save) == RETRO_CHECKPOINT_FAILED);
+	mock.marker_fail = 0; mock.battery_only = 0;
+	mock.order_size = 0; mock.order[0] = 0; mock.service_alive = 0;
+	CHECK("checkpoint transport failure leaves record",
+	      session_checkpoint(&ops, 100, &owner, retro_mock_legacy_save) == RETRO_CHECKPOINT_FAILED &&
+	      mock.order[0] == 0);
+	mock.service_alive = 1;
+	CHECK("checkpoint with proof publishes record",
+	      session_checkpoint(&ops, 100, &owner, retro_mock_legacy_save) == RETRO_CHECKPOINT_MARKED &&
+	      mock.resume_marked && strcmp(mock.order, "M") == 0);
+	/* A shutdown whose record cannot be written removes nothing. */
+	mock.order_size = 0; mock.order[0] = 0; mock.marker_fail = 1;
+	mock.child_alive = 0; mock.waits = 0; mock.terminate_after_waits = 0;
+	CHECK("shutdown record failure removes nothing", retro_shutdown_session(&ops, 100, 100, 70,
+	      &owner) == RETRO_POWER_OK && strcmp(mock.order, "XEF") == 0);
+	mock.marker_fail = 0;
 #undef CHECK
 	return failed ? 1 : 0;
 }

@@ -3,6 +3,20 @@
 # the game's process group first (banana-ui starts each game in its own session; a poweroff over SSH reaches
 # RetroArch and the ports too, and they write their saves), then the menu; waited for until they are
 # gone, up to 3 s, instead of a second whatever happened
+# Latch the shutdown first, before anything is signalled. banana-ui reaps the game the moment it dies; without the
+# latch it takes that exit for a quit to the menu, clears the resume record and may start a queued launch. bananad
+# writes the same file when it initiates the shutdown, so this is the one place a direct poweroff or reboot gets it.
+# The latch is created under /data/banana/resume.lock, the lock bananad holds while it publishes or invalidates the
+# boot record and rechecks the latch: a publisher that already passed its check finishes first, and none after it
+# can write. The wait is bounded (0.2 s); a lock that stays held, or a card that is not mounted, never stops the
+# shutdown -- the latch is then created without it.
+{ mkdir -p /run/banana
+  ( exec 8>>/data/banana/resume.lock || exit 0
+    n=0
+    while ! flock -n 8 && [ "$n" -lt 20 ]; do sleep 0.01; n=$((n + 1)); done
+    : > /run/banana/shutting-down )
+  [ -e /run/banana/shutting-down ] || : > /run/banana/shutting-down
+} 2>/dev/null
 G=$(cat /run/banana/game.pid 2>/dev/null)
 [ -n "$G" ] && kill -TERM -"$G" 2>/dev/null
 killall -TERM banana-ui retroarch 2>/dev/null

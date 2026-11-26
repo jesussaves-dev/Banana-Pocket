@@ -124,15 +124,66 @@ int runHeadless(const Options& o, Host& lib, const std::string& variant, const s
 		}
 		else if (op == "resume")
 		{
-			// resume [take|cancel]: the boot decision, for the headless checks (test only)
-			std::string what, rom;
-			cs >> what;
-			Resume p = resumePlan(o.data, rom);
-			const char* name = p == Resume::Ready ? "ready" : p == Resume::Missing ? "missing" : p == Resume::Blocked ? "blocked" : "none";
-			logf("resume: %s%s%s", name, p == Resume::Ready ? " " : "", p == Resume::Ready ? rom.c_str() : "");
-			if (p == Resume::Ready && what == "take") resumeTake(o.data);
-			else if (what == "cancel") resumeCancel(o.data);
-			else if (p == Resume::Missing || p == Resume::Blocked) resumeCancel(o.data);
+			// resume [begin|ready|end exit N|end signal N|cancel]: the boot decision and the steps that settle an
+			// attempt, through the same helpers main.cpp calls (test only). The steps after "begin" read the marker
+			// without the retry counter, as main.cpp keeps its record in memory.
+			std::string what, how;
+			int code = 0;
+			ResumeRecord record;
+			cs >> what >> how >> code;
+			const bool settling = what == "ready" || what == "end";
+			Resume p = settling ? resumeRead(o.data, record) : resumePlan(o.data, record);
+			if (p == Resume::Ready && !record.core.empty())
+			{
+				auto [s, i] = launchGameLocation(lib, record.rom, record.system);
+				if (i < 0 || resumeCommandCore(lib.shelf(s).def, record.system).empty())
+				{
+					resumeConfirm(o.data, record);
+					p = Resume::Missing;
+				}
+				else logf("resume: native profile %s:%s", record.system.c_str(), record.core.c_str());
+			}
+			const char* name = p == Resume::Ready ? "ready" : p == Resume::Missing ? "missing" :
+				p == Resume::Blocked ? "blocked" : p == Resume::Unavailable ? "unavailable" : "none";
+			logf("resume: %s%s%s", name, p == Resume::Ready ? " " : "", p == Resume::Ready ? record.rom.c_str() : "");
+			if (p == Resume::Ready && what == "begin") logf("resume: attempt %s", resumeBegin(o.data, record) ? "counted" : "refused");
+			else if (p == Resume::Ready && (what == "ready" || what == "cancel")) resumeConfirm(o.data, record);
+			else if (p == Resume::Ready && what == "end")
+			{
+				// the wait status a child that exited with code, or died of signal, would have left
+				int status = how == "signal" ? (code & 0x7f) : ((code & 0xff) << 8);
+				resumeSettle(o.data, record, status);
+			}
+		}
+		else if (op == "launch")
+		{
+			// launch <shelf> <game> [add <path>|remove <path>]: press <game> of <shelf> as the menu does (Library::launch),
+			// add or remove a ROM file and rescan (which re-sorts every shelf), then resolve the press as main.cpp's
+			// starter does and log the game it names -- and the one its old index would have named (test only)
+			int shelf = 0, game = 0;
+			std::string how, path;
+			cs >> shelf >> game >> how >> path;
+			lib.openLibrary(shelf);
+			lib.launch(game);
+			const int oldIndex = lib.pendingLaunch();
+			if (how == "add") std::ofstream(path) << "ROM";
+			else if (how == "remove") unlink(path.c_str());
+			if (how == "add" || how == "remove") lib.scan();
+			const Library::Press& press = lib.pendingPress();
+			ResumeFlow::Target target;
+			target.system = press.system;
+			target.rom = press.rom;
+			target.shelf = press.shelf;
+			const auto [s, i] = launchTargetLocation(lib, target);
+			if (s >= 0)
+			{
+				lib.openLibrary(s);
+				logf("launch: press %d/%d starts %s:%s", shelf, game, lib.systemOf(i).id.c_str(), lib.gameAt(i).path.c_str());
+			}
+			else logf("launch: press %d/%d names no game now", shelf, game);
+			if (oldIndex >= 0 && lib.openLibrary(shelf) >= 0 && oldIndex < (int)lib.shelf(shelf).games.size())
+				logf("launch: index %d would start %s", oldIndex, lib.shelf(shelf).games[oldIndex].path.c_str());
+			lib.clearLaunch();
 		}
 		else if (op == "wifi-add")
 		{

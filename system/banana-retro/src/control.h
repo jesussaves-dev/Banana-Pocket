@@ -27,8 +27,11 @@ struct control_ops {
 	void *data;
 	void (*status)(void *data, struct control_status *status);
 	bool (*pause)(void *data, unsigned owner, uint64_t epoch, bool acquire);
-	bool (*checkpoint)(void *data);
-	bool (*shutdown)(void *data);
+	/* Optional. PREPARE_SLEEP uses it so the committed checkpoint's digest can be returned; the
+	 * token is filled only when a checkpoint was committed. Without it PREPARE_SLEEP uses pause(). */
+	bool (*prepare_sleep)(void *data, uint64_t epoch, char *resume_token);
+	bool (*checkpoint)(void *data, char *resume_token);
+	bool (*shutdown)(void *data, char *resume_token);
 	bool (*flush)(void *data);
 	bool (*save_state)(void *data, unsigned slot);
 	bool (*load_state)(void *data, unsigned slot);

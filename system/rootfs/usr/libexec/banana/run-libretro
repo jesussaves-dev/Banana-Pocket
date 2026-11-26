@@ -1,8 +1,39 @@
 #!/bin/sh
-# Experimental native Libretro dispatcher. Called by run-retroarch only after
-# that launcher has resolved the effective installed core exactly once.
+# Native Libretro supervisor. The normal dispatcher resolves the installed core
+# first; a typed boot request resolves and validates it here.
 set -u
 . /usr/libexec/banana/libretro-core.sh
+
+# A typed boot resume that ends before native readiness exits with a status the boot menu uses to decide whether to
+# keep its record (ui/src/app.h resumeExit*): 78 when retrying cannot help (the record, profile or runtime was
+# refused), 75 when a later boot may succeed. After readiness the status is the runtime's own. Other launches keep 1.
+resume_token=
+rejected_status=1 retry_status=1
+invalid_resume() {
+    echo "run-libretro: invalid native boot resume context" >&2
+    exit 78
+}
+if [ "${1-}" = --boot-resume ]; then
+    [ "$#" -eq 6 ] || invalid_resume
+    resume_system=$2 resume_core=$3 resume_token=$4
+    for id in "$resume_system" "$resume_core" "$5"; do
+        case $id in ''|*[!abcdefghijklmnopqrstuvwxyz0123456789_-]*) invalid_resume ;; esac
+        [ "${#id}" -le 63 ] || invalid_resume
+    done
+    case $5 in -*) invalid_resume ;; esac
+    case $resume_token in *[!0123456789abcdef]*) invalid_resume ;; esac
+    [ "${#resume_token}" -eq 64 ] || invalid_resume
+    nl='
+'
+    cr=$(printf '\r')
+    case $6 in *"$nl"*|*"$cr"*) invalid_resume ;; /*) ;; *) invalid_resume ;; esac
+    if [ "${BANANA_SYSTEM-}" != "$resume_system" ]; then
+        echo "run-libretro: current system does not match the boot record" >&2
+        exit 78
+    fi
+    shift 4
+    rejected_status=78 retry_status=75
+fi
 
 if [ "${1-}" = --resolved ] && [ "$#" -eq 4 ]; then
     core_name=$2 core_path=$3 rom=$4
@@ -12,21 +43,35 @@ else
         echo "usage: run-libretro CORE ROM" >&2; exit 2;
     }
     banana_resolve_core "$requested" "${BANANA_SYSTEM-}" "${BANANA_CORE-}" || {
-        echo "run-libretro: no installed core for $requested" >&2; exit 1;
+        echo "run-libretro: no installed core for $requested" >&2; exit "$rejected_status";
     }
     core_name=$banana_core_name core_path=$banana_core_path
 fi
 
 fallback() {
+    [ -z "$resume_token" ] || exit "$retry_status"
     exec /usr/libexec/banana/run-retroarch --resolved-core "$core_path" "$rom"
 }
 
+if [ -n "$resume_token" ] && [ "$core_name" != "$resume_core" ]; then
+    echo "run-libretro: current installed core does not match the boot record" >&2
+    exit "$rejected_status"
+fi
+
 if ! banana_native_eligible "${BANANA_SYSTEM-}" "$core_name" "$rom" ||
    ! banana_native_opted_in "${BANANA_SYSTEM-}" "$core_name"; then
+    if [ -n "$resume_token" ]; then
+        echo "run-libretro: native boot resume profile is no longer eligible or enabled" >&2
+        exit "$rejected_status"
+    fi
     echo "run-libretro: native runtime not eligible or not enabled; using RetroArch" >&2
     fallback
 fi
-[ -x /usr/bin/banana-retro ] || { echo "run-libretro: banana-retro is not installed" >&2; fallback; }
+[ -x /usr/bin/banana-retro ] || {
+    echo "run-libretro: banana-retro is not installed" >&2
+    [ -z "$resume_token" ] || exit "$rejected_status"
+    fallback
+}
 
 run_dir=${BANANA_RUN_DIR:-/run/banana}
 mkdir -p "$run_dir" || { echo "run-libretro: cannot create runtime directory" >&2; fallback; }
@@ -44,7 +89,10 @@ metadata=$run_dir/native-session
 ready_file=$run_dir/native-ready-$session_id
 committed_file=$run_dir/native-committed-$session_id
 error_file=$run_dir/native-error-$session_id
-rm -f "$socket" "$metadata" "$ready_file" "$committed_file" "$error_file"
+rm -f "$socket" "$metadata" "$ready_file" "$committed_file" "$error_file" || {
+    echo "run-libretro: cannot reset native session files" >&2
+    fallback
+}
 export BANANA_RETRO_SESSION_ID=$session_id
 export BANANA_RETRO_CONTROL_SOCKET=$socket
 export BANANA_RETRO_CONTROL_UI_PID=${BANANA_RETRO_CONTROL_UI_PID:-$PPID}
@@ -55,32 +103,25 @@ export BANANA_RETRO_STARTUP_ERROR_FILE=$error_file
 # The native branch runs before RetroArch sets up its Wayland environment.
 export XDG_RUNTIME_DIR=/run/banana/wayland WAYLAND_DISPLAY=banana-0
 cancelled=0
+intent_state=normal
 native_pid=
 cancel_launch() {
     cancelled=1
     [ -z "$native_pid" ] || kill -TERM "$native_pid" 2>/dev/null || :
 }
 trap cancel_launch TERM HUP INT
-/usr/bin/banana-retro "$core_path" "$rom" --wayland &
-native_pid=$!
-proc_start() {
+proc_field() {
     [ -r "/proc/$1/stat" ] || return 1
     line=$(cat "/proc/$1/stat") || return 1
+    field=$2
     rest=${line##*) }
     set -- $rest
-    [ "$#" -ge 20 ] || return 1
-    eval 'printf "%s" "${20}"'
-}
-proc_state() {
-    [ -r "/proc/$1/stat" ] || return 1
-    line=$(cat "/proc/$1/stat") || return 1
-    rest=${line##*) }
-    set -- $rest
-    [ "$#" -ge 1 ] || return 1
+    [ "$#" -ge "$field" ] || return 1
+    shift "$((field - 1))"
     printf '%s' "$1"
 }
 native_exited() {
-    state=$(proc_state "$native_pid") && {
+    state=$(proc_field "$native_pid" 1) && {
         [ "$state" = Z ] || [ "$state" = X ]
         return $?
     }
@@ -99,7 +140,7 @@ wait_native_exit() {
 publish_session() {
     state=$1
     process_pid=$2
-    child_start=$(proc_start "$process_pid") || return 1
+    child_start=$(proc_field "$process_pid" 20) || return 1
     started=$(date +%s) || return 1
     tmp=$metadata.$$
     saved_umask=$(umask)
@@ -113,10 +154,109 @@ publish_session() {
     mv -f "$tmp" "$metadata" || { rm -f "$tmp"; return 1; }
     return 0
 }
-publish_session starting "$$" || :
-cleanup_session() {
-    rm -f "$socket" "$metadata" "$ready_file" "$committed_file" "$error_file"
+
+# The UI publishes the library path of the tracked game twice (game.session for bananad, game.path for this launcher)
+# and bananad accepts a checkpoint reply only for that exact spelling. The launcher may have been handed an
+# equivalent spelling of it (a symlink, "//", "." or ".."). Both name the same file when they resolve to one absolute
+# path, and then the runtime is started with, and the session metadata names, the registered spelling, so every
+# party compares the same bytes. Nothing here goes through $(...) alone: command substitution strips trailing
+# newlines, which would make two distinct targets whose names differ by one compare equal.
+resolve_exact() {
+    resolved=$(readlink -f "$1" 2>/dev/null; printf x)
+    resolved=${resolved%x}
+    [ -n "$resolved" ]
 }
+# Only absolute paths resolve; the PID group, the exact intent line and the system still have to match, so a
+# different game, a different session or a stale marker is never promoted.
+same_rom_path() {
+    [ "$1" = "$2" ] && return 0
+    case $1 in /*) ;; *) return 1 ;; esac
+    case $2 in /*) ;; *) return 1 ;; esac
+    [ -e "$1" ] && [ -e "$2" ] || return 1
+    resolve_exact "$1" || return 1
+    first=$resolved
+    resolve_exact "$2" || return 1
+    [ "$first" = "$resolved" ]
+}
+
+# The path the UI published, byte for byte: exactly one line, absolute, read without stripping anything.
+read_published_path() {
+    published_path=
+    [ -f "$1" ] && [ ! -L "$1" ] || return 1
+    IFS= read -r published_path < "$1" || return 1
+    [ "$(wc -l < "$1")" -eq 1 ] || return 1
+    case $published_path in /*) return 0 ;; *) return 1 ;; esac
+}
+
+# The ROM this tracked game was registered under, when it is the same file as the one this launcher was handed.
+registered_rom() {
+    group=$(proc_field "$$" 3) || return 1
+    [ -f "$run_dir/game.pid" ] && [ "$(cat "$run_dir/game.pid" 2>/dev/null)" = "$group" ] || return 1
+    read_published_path "$run_dir/game.path" || return 1
+    same_rom_path "$published_path" "$rom"
+}
+
+# Before the runtime starts: a tracked, non-typed launch continues with the registered spelling of its ROM (typed
+# boots already carry the UI's exact one). A launch that does not match keeps what it was handed; promote_intent then
+# refuses it, as before.
+if [ -z "$resume_token" ] && [ "${BANANA_RETRO_TRACKED_GAME-}" = 1 ] && registered_rom; then
+    rom=$published_path
+fi
+
+promote_intent() {
+    group=$(proc_field "$$" 3) || return 1
+    intent=$run_dir/game.native
+    [ -f "$intent" ] && registered_rom && [ "$published_path" = "$rom" ] &&
+        [ "$(cat "$intent" 2>/dev/null)" = "normal ${BANANA_SYSTEM-}" ] || return 1
+    intent_tmp=$intent.$session_id
+    if printf 'native %s\n' "$BANANA_SYSTEM" > "$intent_tmp" &&
+       [ "$(cat "$run_dir/game.pid" 2>/dev/null)" = "$group" ] &&
+       mv -f "$intent_tmp" "$intent"; then
+        return 0
+    fi
+    rm -f "$intent_tmp"
+    return 1
+}
+
+preserve_native_identity() {
+    # Typed boot already has native intent; a standalone wrapper owns no UI marker.
+    if [ -n "$resume_token" ] || [ "${BANANA_RETRO_TRACKED_GAME-}" != 1 ]; then return 0; fi
+    case $intent_state in
+        native) return 0 ;;
+        failed) return 1 ;;
+    esac
+    if promote_intent; then
+        intent_state=native
+        return 0
+    fi
+    # Retain native-session until UI removes the tracked PID and cleans it up.
+    intent_state=failed
+    echo "run-libretro: could not preserve tracked native identity" >&2
+    return 1
+}
+
+cleanup_session() {
+    [ "$intent_state" = failed ] || rm -f "$metadata"
+    rm -f "$socket" "$committed_file" "$error_file"
+    # A tracked typed launch may exit before banana-ui reads the ready metadata.
+    # Leave exact-session runtime readiness for the UI to read and remove on reap.
+    if [ -z "$resume_token" ] || [ "${BANANA_RETRO_TRACKED_GAME-}" != 1 ]; then rm -f "$ready_file"; fi
+}
+if ! publish_session starting "$$"; then
+    echo "run-libretro: native startup metadata could not be published" >&2
+    cleanup_session
+    [ "$cancelled" -eq 0 ] || exit "$retry_status"
+    fallback
+fi
+if [ "$cancelled" -ne 0 ]; then
+    cleanup_session
+    exit "$retry_status"
+fi
+set -- "$core_path" "$rom" --wayland
+if [ -n "$resume_token" ]; then set -- "$@" --resume-checkpoint "$resume_token"; fi
+/usr/bin/banana-retro "$@" &
+native_pid=$!
+
 stop_native() {
     if ! native_exited; then
         kill -TERM "$native_pid" 2>/dev/null || :
@@ -144,7 +284,9 @@ while [ "$cancelled" -eq 0 ] && [ "$attempt" -lt 100 ]; do
 done
 if [ -f "$ready_file" ]; then ready=1; fi
 if [ "$ready" -eq 1 ] && [ "$cancelled" -eq 0 ]; then
-    if publish_session ready "$native_pid"; then
+    if ! preserve_native_identity; then
+        cancelled=1
+    elif publish_session ready "$native_pid"; then
         if [ "$cancelled" -eq 0 ]; then
             wait "$native_pid"
             result=$?
@@ -167,31 +309,40 @@ fi
 
 if ! stop_native; then
     echo "run-libretro: native child did not exit after bounded TERM/KILL; refusing fallback" >&2
-    exit 1
+    exit "$retry_status"
 fi
 wait "$native_pid"
 startup_result=$?
+if [ -e "$ready_file" ] || [ -e "$committed_file" ]; then
+    preserve_native_identity || cancelled=1
+fi
 if [ "$cancelled" -ne 0 ]; then
     cleanup_session
-    exit 1
+    exit "$retry_status"
 fi
 if [ -e "$ready_file" ]; then
     echo "run-libretro: native readiness appeared during termination; refusing runtime switch" >&2
-    rm -f "$socket" "$metadata" "$ready_file" "$committed_file" "$error_file"
+    cleanup_session
+    [ -z "$resume_token" ] || exit "$retry_status"
     exit "$startup_result"
 fi
 if [ -e "$committed_file" ]; then
     echo "run-libretro: native data commit was attempted before readiness; refusing runtime switch" >&2
-    rm -f "$socket" "$metadata" "$ready_file" "$committed_file" "$error_file"
+    cleanup_session
+    [ -z "$resume_token" ] || exit "$retry_status"
     exit "$startup_result"
 fi
 case $(cat "$error_file" 2>/dev/null) in
-    wayland-init|input-init|signal-mask|signal-init|core-load|persistence-init|persistence-load|audio-format|audio-init|control-init|readiness-publish|presentation|runtime-start)
+    wayland-init|input-init|signal-mask|signal-init|core-load|persistence-init|persistence-load|resume-rejected|audio-format|audio-init|control-init|readiness-publish|presentation|runtime-start)
         startup_kind=$(cat "$error_file") ;;
     *) startup_kind=process-exit ;;
 esac
-rm -f "$socket" "$metadata" "$ready_file" "$error_file"
+cleanup_session
+if [ -n "$resume_token" ]; then
+    echo "run-libretro: native boot resume failed (error=$startup_kind status=$startup_result); refusing runtime switch" >&2
+    [ "$startup_kind" = resume-rejected ] && exit "$rejected_status"
+    exit "$retry_status"
+fi
 echo "run-libretro: native startup error=$startup_kind status=$startup_result before readiness; falling back to RetroArch" >&2
-rm -f "$committed_file"
-[ "$cancelled" -eq 0 ] || exit 1
+[ "$cancelled" -eq 0 ] || exit "$retry_status"
 fallback

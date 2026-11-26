@@ -487,10 +487,12 @@ int main(int argc, char** argv)
 		readyCv.notify_all();
 	});
 	// A resume skips the boot animation: the game is the point, and the splash is a second or two of transition.
-	std::string resumeRom;
-	Resume resume = resumePlan(o.data, resumeRom);
-	if (resume == Resume::Ready) logf("resume: ready %s (any key cancels)", resumeRom.c_str());
-	else if (resume != Resume::None) resumeCancel(o.data);
+	ResumeFlow resumeFlow(o.data, "/run/banana");	// every launch's resume state; see ResumeFlow in app.h
+	Resume resume = resumeFlow.plan();	// refuses, changing nothing, once a shutdown owns the record
+	if (resume == Resume::Ready) logf("resume: ready %s (any key cancels)", resumeFlow.boot.rom.c_str());
+	else if (resume == Resume::Unavailable)
+		logf(resumeFlow.latched() ? "resume: shutdown in progress; the record is left to the daemon"
+		                          : "resume: record or ROM unavailable; leaving it for the next boot");
 	// Select + Start held at power-on: the recovery screen instead of the first-time setup. Asked before the splash
 	// and again after it, so the pad's late enumeration does not hide it.
 	bool recoveryAsked = Input::recoveryHeld();
@@ -844,6 +846,41 @@ int main(int argc, char** argv)
 	};
 
 	double resumeDue = 0;	// the end of the resume's any-key cancel window (0: none pending)
+	bool launchSeen = true;	// /run/banana/launch is looked at on this pass; set again whenever a held request is released
+	// A return's record cleanup can meet the daemon's publication lock. The flow retries it without waiting for a
+	// bounded window; new launches are held (never dropped) until it completes or the window expires, so a menu
+	// return neither blocks nor leaves a record behind when the lock was briefly held.
+	auto runResumeCleanup = [&](double now)
+	{
+		const ResumeCleanup::Step step = resumeFlow.step(now);
+		// A record can be unlinked and its directory sync still owed: it is not "left for the next boot" then, it is
+		// gone from this boot's view and not yet durable, and the next settlement pays the sync first.
+		const bool unsynced = resumeFlow.syncOwed();
+		if (step == ResumeCleanup::Step::Exhausted)
+			logf(unsynced ? "resume: the record is removed but its removal is not durable yet; the directory sync is retried by the next settlement"
+			              : "resume: could not clear the record; it stays for the next boot");
+		else if (step == ResumeCleanup::Step::Halted)
+			logf(unsynced ? "resume: shutdown in progress; the record's removal is not durable yet and is left to the daemon"
+			              : "resume: shutdown in progress; the record is left to the daemon");
+		if (step == ResumeCleanup::Step::Done || step == ResumeCleanup::Step::Exhausted ||
+		    step == ResumeCleanup::Step::Halted)
+			launchSeen = true;
+		// The boot record's own settlement, owed when it met the lock: bounded the same way, and always reported.
+		switch (resumeFlow.stepOwed(now))
+		{
+		case ResumeCleanup::Step::Done: logf("resume: the boot record is settled"); break;
+		case ResumeCleanup::Step::Exhausted:
+			logf(resumeFlow.syncOwed() ? "resume: the boot record is removed but its removal is not durable yet; the directory sync is retried by the next settlement"
+			                           : "resume: could not settle the boot record; it stays for the next boot");
+			break;
+		case ResumeCleanup::Step::Halted:
+			logf(resumeFlow.syncOwed() ? "resume: shutdown in progress; the boot record's removal is not durable yet and is left to the daemon"
+			                           : "resume: shutdown in progress; the boot record is left to the daemon");
+			break;
+		case ResumeCleanup::Step::Idle:
+		case ResumeCleanup::Step::Retried: break;
+		}
+	};
 	auto handle = [&](const InputEvent& ev)
 	{
 		// a volume key is bananad's (the level, or the backlight with MENU held): here it only cancels the pause menu
@@ -853,8 +890,9 @@ int main(int argc, char** argv)
 		// console on arrives here too, and cancelling on it made every real boot skip the resume.
 		if (resumeDue > 0 && (ev.type == InputEvent::PRESS || ev.type == InputEvent::TOUCH_DOWN) && ev.key != Key::WAKE)
 		{
-			resumeCancel(o.data);
-			logf("resume: cancelled (%s)", ev.type == InputEvent::TOUCH_DOWN ? "touch" : "a key");
+			const bool settled = resumeFlow.settleBoot(resumeFlow.boot);
+			logf("resume: cancelled (%s)%s", ev.type == InputEvent::TOUCH_DOWN ? "touch" : "a key",
+			     settled ? "" : "; the record is not cleared yet and will be retried");
 			resumeDue = 0;
 		}
 		// the AMOLED guard: the first press or touch wakes the panel and is swallowed -- and, for a touch, its later
@@ -1008,6 +1046,8 @@ int main(int argc, char** argv)
 	// a game is a client of this process: the menu loop reaps it and runs this
 	auto finishGame = [&](int status)
 	{
+		// (The launch request was claimed by resumeFlow.reap() before this ran; the launcher's runtime readiness
+		// file for this session is read and removed by resumeFlow.ended().)
 		pause.close(false);	// waitpid already reaped this child; only release UI ownership, never signal a possibly reused PID
 		if (shaderChordOff)	// the chord lasts one game: the saved mask is back in the menu
 		{
@@ -1019,7 +1059,17 @@ int main(int argc, char** argv)
 		if (system("banana-perf ui") != 0) {}
 		logf("game ended after %ld s (status %d)", secs, status);
 		unlink("/run/banana/game.pid");
+		unlink("/run/banana/game.native");
 		unlink("/run/banana/game.path");
+		// A launcher that could not promote its intent leaves this proof of
+		// native identity for bananad until the tracked PID has been removed.
+		{
+			char header[36];	// "v1 " + 32 session bytes in hex + space
+			std::ifstream metadata("/run/banana/native-session");
+			if (metadata.read(header, sizeof header) && std::string_view(header, 3) == "v1 " &&
+			    std::string_view(header + 3, 32) == gameSessionId && header[35] == ' ')
+				unlink("/run/banana/native-session");
+		}
 		be.invalidate();	// the compositor kept the panel; the menu is drawn again when the client goes
 		drawn = false;
 		dirty = true;
@@ -1075,9 +1125,25 @@ int main(int argc, char** argv)
 		ui->returnToPage();	// the page it was started from, with the new play time and unlocks
 		sound.setBgm(settings["bgm"] != "off");	// the ambient loop comes back with the menu
 		sound.warm();				// the game handed the DSP frontend back: have it open before the next press
-		// a game that ended because it was quit goes back to a menu the next boot should show too; one a shutdown
-		// stopped leaves the marker bananad wrote, for the next boot to resume
-		if (access("/run/banana/shutting-down", F_OK) != 0) resumeCancel(o.data);
+		// A game that ended because it was quit goes back to a menu the next boot should show too; one a shutdown
+		// stopped leaves the record bananad wrote, for the next boot to resume. resumeFlow knows which session this
+		// was and which boot reservation, if any, it started: a boot resume whose launcher never reported readiness
+		// is settled by how it ended (only rejection consumes it), and a return removes only the record bananad
+		// published for this session, never another session's, whatever ROM it names.
+		switch (resumeFlow.ended(status, nowMs()))
+		{
+		case ResumeFlow::End::Kept:
+		case ResumeFlow::End::Rejected:
+			logf("resume: native launch ended before readiness (%s): %s",
+			     WIFEXITED(status) ? ("status " + std::to_string(WEXITSTATUS(status))).c_str() : "signal",
+			     resumeEnd(status) == ResumeEnd::Rejected ? "record rejected" : "record kept for the next boot");
+			break;
+		case ResumeFlow::End::Latched:
+			logf("resume: shutdown in progress; the record is left to the daemon");
+			break;
+		default: break;
+		}
+		runResumeCleanup(nowMs());
 		guard.input(nowMs());			// the game's own time doesn't count as menu idle
 		dirty = true;
 		batteryDue = true;	// a step passed during the game shows now
@@ -1093,30 +1159,59 @@ int main(int argc, char** argv)
 
 	// The game alone owns the panel while it runs: banana-ui draws nothing, and the game sizes and rotates its own
 	// picture. The menu is drawn afresh when it comes back.
-	auto runGame = [&](int game)
+	// `attempt` is the boot record when this is that record's own launch (ResumeFlow::bootResume); every other launch
+	// passes none and never takes a reservation. true: a child was forked.
+	auto runGame = [&](int game, const ResumeRecord* attempt = nullptr) -> bool
 	{
+		const ResumeRecord* bootNative = attempt && !attempt->core.empty() ? attempt : nullptr;
+		if (resumeFlow.latched())
+		{
+			logf("launch refused: shutting down");
+			return false;
+		}
 		const SystemDef& sd = lib.systemOf(game);
 		std::string rom = lib.gameAt(game).path;
-		unsigned char sessionBytes[16];
-		std::ifstream random("/dev/urandom", std::ios::binary);
-		random.read(reinterpret_cast<char*>(sessionBytes), sizeof(sessionBytes));
-		if (random.gcount() != (std::streamsize)sizeof(sessionBytes))
+		std::string requestedCore;
+		if (bootNative)
+		{
+			requestedCore = resumeCommandCore(sd, bootNative->system);
+			if (bootNative->rom != rom || requestedCore.empty())
+			{
+				logf("resume: the current launch command is incompatible with a native checkpoint");
+				if (!resumeFlow.settleBoot(*bootNative)) logf("resume: the record is not cleared yet and will be retried");
+				return false;
+			}
+		}
+		if (!resumeSessionId("/run/banana", gameSessionId))
 		{
 			logf("launch identity unavailable; refusing to start without a session token");
 			dirty = true;
-			return;
-		}
-		static const char hex[] = "0123456789abcdef";
-		gameSessionId.resize(32);
-		for (size_t i = 0; i < sizeof(sessionBytes); ++i)
-		{
-			gameSessionId[i * 2] = hex[sessionBytes[i] >> 4];
-			gameSessionId[i * 2 + 1] = hex[sessionBytes[i] & 15];
+			return false;
 		}
 		gameLaunchEpoch = (uint64_t)std::time(nullptr);
-		std::string cmd = systemRunCommand(sd.run, rom, sd.id);
+		// Expose the launch kind before the tracked PID, so shutdown cannot see
+		// a typed launch as RetroArch before or after native-session exists.
+		if (resumeProfileId(sd.id))
+		{
+			std::ofstream intent("/run/banana/game.native");
+			intent << (bootNative ? "native " : "normal ") << sd.id << '\n';
+			intent.close();
+			if (!intent)
+			{
+				unlink("/run/banana/game.native");
+				logf("could not publish game launch identity");
+				if (bootNative) return false;
+			}
+		}
+		else unlink("/run/banana/game.native");
+		std::string cmd;
 		// every launcher runs as a client of this process (the EGL presenter letterboxes and rotates any window size)
-		logf("starting %s (resident): %s", sd.id.c_str(), cmd.c_str());
+		if (bootNative) logf("resuming native %s (resident): %s", sd.id.c_str(), rom.c_str());
+		else
+		{
+			cmd = systemRunCommand(sd.run, rom, sd.id);
+			logf("starting %s (resident): %s", sd.id.c_str(), cmd.c_str());
+		}
 		{
 			std::ofstream f(o.data + "/last-system");
 			f << ui->systemIndex() << "\n";
@@ -1149,6 +1244,7 @@ int main(int argc, char** argv)
 		{
 			// the panel, input and sound were handed over above: take them back rather than pretend a game ran
 			logf("fork failed: %s", strerror(errno));
+			unlink("/run/banana/game.native");
 			gameIsApp = false;
 			frameKind = applyFrame(sd.id, FrameKind::None);
 			be.invalidate();
@@ -1156,21 +1252,24 @@ int main(int argc, char** argv)
 			sound.warm();
 			guard.input(nowMs());
 			dirty = true;
-			return;
+			return false;
 		}
 		if (pid == 0)
 		{
 			setsid();
-			signal(SIGPIPE, SIG_DFL);
-			sigset_t none;
-			sigemptyset(&none);
-			sigprocmask(SIG_SETMASK, &none, nullptr);
+			// Restore the default signal dispositions, register, publish game.path and game.pid, then look at the
+			// shutdown latch (rcK and bananad create it before they read game.pid): a child that sees it never executes
+			// the game, so no group can run that a shutdown did not see, and a group TERM that arrives at any point
+			// after publication terminates the child instead of reaching the UI's inherited handler. A game that cannot
+			// register or publish is not started either: no record could be attributed to it and nothing could stop it.
+			if (resumeChildEnter("/run/banana", gameSessionId, getpid(), rom) != ResumeStart::Go) _exit(126);
 			setenv("BANANA_ROM", rom.c_str(), 1);
 			setSystemRunEnvironment(sd.id);
 			setenv("BANANA_RETRO_SESSION_ID", gameSessionId.c_str(), 1);
 			std::string controlSocket = "/run/banana/retro-" + gameSessionId + ".sock";
 			setenv("BANANA_RETRO_CONTROL_SOCKET", controlSocket.c_str(), 1);
 			setenv("BANANA_RETRO_CONTROL_UI_PID", uiPid.c_str(), 1);
+			if (setenv("BANANA_RETRO_TRACKED_GAME", "1", 1) != 0) _exit(127);
 			if (sd.app)
 			{
 				// the app's own data (saves, caches), kept apart from its code so an update never touches it
@@ -1188,16 +1287,17 @@ int main(int argc, char** argv)
 			if (!ov.core.empty()) setenv("BANANA_CORE", ov.core.c_str(), 1);
 			if (!ov.shader.empty()) setenv("BANANA_SHADER", ov.shader.c_str(), 1);
 			setenv("BANANA_FRAME", frameKindWord(frameKind), 1);	// run-retroarch: the Banana frame's hole wants no integer scale
-			execl("/bin/sh", "sh", "-c", cmd.c_str(), (char*)nullptr);
+			if (bootNative)
+				execl(bootResumeLauncher, "run-retroarch", "--boot-resume", bootNative->system.c_str(),
+				      bootNative->core.c_str(), bootNative->token.c_str(), requestedCore.c_str(), rom.c_str(), (char*)nullptr);
+			else execl("/bin/sh", "sh", "-c", cmd.c_str(), (char*)nullptr);
 			_exit(127);
 		}
 		if (pid > 0)
 		{
-			std::ofstream("/run/banana/game.pid") << pid << "\n";	// bananad: the game to pause before a sleep
-			std::ofstream("/run/banana/game.path") << rom << "\n";	// ... and to resume if a shutdown interrupts it
 			gameIndex = game;
 			gameStart = start;
-			gameRA = sd.run.find("run-retroarch") != std::string::npos;
+			gameRA = !bootNative && sd.run.find("run-retroarch") != std::string::npos;
 			gameRom = rom;
 			raQueue.clear();
 			pause.keyQueue.clear();
@@ -1208,7 +1308,27 @@ int main(int argc, char** argv)
 			discNow = 1;
 			ffOn = false;
 			gamePid = pid;	// the main loop reaps it; the compositor keeps drawing
+			resumeFlow.started(gameSessionId, rom, attempt);
 		}
+		return pid > 0;
+	};
+
+	// Resolve a launch request by identity and start it (ResumeFlow::Starter), from the menu, the launch file or the
+	// boot resume alike. The Store entry forks no game: the menu opens its screen, and that is reported as Opened, not
+	// as a started game.
+	const ResumeFlow::Starter startTarget = [&](const ResumeFlow::Target& target, const ResumeRecord* attempt)
+	{
+		if (target.store())
+		{
+			std::lock_guard<std::mutex> l(worker.uiLock);
+			settingsView.openStore();
+			dirty = true;
+			return ResumeFlow::Launched::Opened;
+		}
+		const auto [s, i] = launchTargetLocation(lib, target);
+		if (s < 0) return ResumeFlow::Launched::Missing;
+		lib.openLibrary(s);
+		return runGame(i, attempt) ? ResumeFlow::Launched::Started : ResumeFlow::Launched::Failed;
 	};
 
 
@@ -1224,29 +1344,65 @@ int main(int argc, char** argv)
 	}
 	// the launch file is looked at once at startup, then only when the watch fires (a pass otherwise ran a wasted
 	// access() on every animated frame); without a watch it is looked at every pass as before
-	bool launchSeen = true;
 	bool cheevosSeen = true;	// /run/banana/cheevos: the achievements a game just unlocked, read on this pass
 	bool shotWanted = false;	// /run/banana/screen.req: write the frame to screen.jpg on this pass (below)
 	bool overlaySeen = true;	// /run/banana/overlay: a 3D card over the client on the primary
+	bool nativeSessionSeen = true;	// /run/banana/native-session: a native launcher published its state
 	if (resume == Resume::Ready) resumeDue = nowMs() + 500;	// a short window: the game is the point
 	while (!quit)
 	{
 		double now = nowMs();
+		// the menu's launch animation is a press that has not reached queue() yet (see ResumeFlow::pressing)
+		resumeFlow.pressing = ui->view() == Menu::LAUNCH;
 		// a resident game is a client of this process: reap it without blocking the compositor
 		if (gamePid > 0)
 		{
-			int st = 0;
-			pid_t r = waitpid(gamePid, &st, WNOHANG);
-			if (r == gamePid || (r < 0 && errno == ECHILD)) finishGame(st);
+			// the launch request's lifetime ends at the claim reap() makes right after waitpid, before finishGame
+			resumeFlow.reap(gamePid, [](pid_t pid, int* st) { return waitpid(pid, st, WNOHANG); }, finishGame);
+		}
+		// A menu press is taken out of the library's single slot at once, by identity, so nothing that happens to the
+		// shelves while it waits (a rescan, a favourite, a second request) can change what it will start.
+		if (lib.pendingLaunch() >= 0)
+		{
+			const Library::Press& press = lib.pendingPress();
+			if (!press.rom.empty())
+			{
+				ResumeFlow::Target target;
+				target.system = press.system;
+				target.rom = press.rom;
+				target.shelf = press.shelf;
+				resumeFlow.queue(target);
+			}
+			lib.clearLaunch();
 		}
 		if (resumeDue > 0 && now >= resumeDue)
 		{
-			// the launch file the menu already watches; the game then owns the panel as usual
-			std::ofstream("/run/banana/launch") << resumeRom << "\n";
-			resumeTake(o.data);
-			logf("resume: launching %s", resumeRom.c_str());
 			resumeDue = 0;
+			// A launched game, a request already waiting or a previous session's cleanup still running is an explicit
+			// request or unfinished business. It wins over the boot resume, and the record is settled rather than
+			// executed twice. Once the shutdown latch exists the daemon owns the record: leave it. The boot record
+			// starts only through this call, with its own attempt; no request hook can take it.
+			const ResumeRecord& boot = resumeFlow.boot;
+			switch (resumeFlow.bootResume(gamePid, startTarget))
+			{
+			case ResumeFlow::Boot::Latched: logf("resume: shutdown in progress; the record is left to the daemon"); break;
+			case ResumeFlow::Boot::Deferred: logf("resume: a launch is already pending; the record is settled"); break;
+			case ResumeFlow::Boot::DeferredUnsettled:
+				logf("resume: a launch is already pending; the record is not cleared yet and will be retried");
+				break;
+			case ResumeFlow::Boot::Uncounted: logf("resume: the attempt could not be counted"); break;
+			case ResumeFlow::Boot::Missing:
+				logf("resume: no game at %s on system %s", boot.rom.c_str(), boot.system.c_str());
+				break;
+			case ResumeFlow::Boot::MissingUnsettled:
+				logf("resume: no game at %s on system %s; the record is not cleared yet and will be retried",
+				     boot.rom.c_str(), boot.system.c_str());
+				break;
+			case ResumeFlow::Boot::Started: logf("resume: launching %s", boot.rom.c_str()); break;
+			case ResumeFlow::Boot::Failed: break;
+			}
 		}
+		runResumeCleanup(now);
 		// the burn-in guard is the menu's: dim after bananad.conf's dim_minutes, blank 90 s later -- but never while a
 		// game is on screen (Settings > Sleep & power promises that; a client's picture is not menu idle, and a video
 		// would go dark) and never blank it while on the charger (a dark panel on the cable read as a sleep)
@@ -1294,24 +1450,27 @@ int main(int argc, char** argv)
 			if (settingsView.takeNightLightChanged()) nightLight();	// the panel's gamma follows the row
 			if (settingsView.takeShaderChanged()) shaderApply(false);	// its mask and colour too
 		}
-		// for testing over SSH: a game's path written to /run/banana/launch starts it, as A on it in the library would
+		// for testing over SSH: a game's path written to /run/banana/launch starts it, as A on it in the library would.
+		// It never shares a slot with a menu press: a press that is waiting goes first, and the file stays unread.
 		if (launchSeen || launchWatch < 0)
 		{
 			launchSeen = false;
-			if (access("/run/banana/launch", F_OK) == 0)
+			switch (resumeFlow.admitFile(gamePid > 0, startTarget))
 			{
-				std::string want;
-				{
-					std::ifstream f("/run/banana/launch");
-					std::getline(f, want);
-				}
-				unlink("/run/banana/launch");
-				if (gamePid > 0) { logf("launch file ignored: a game is running"); continue; }
-				bool found = false;
-				for (int s = 0; s < lib.systemCount() && !found; s++)
-					for (int i = 0; i < (int)lib.shelf(s).games.size(); i++)
-						if (lib.shelf(s).games[i].path == want && !lib.shelf(s).favorites) { lib.openLibrary(s); lib.launch(i); found = true; break; }
-				if (!found) logf("launch file: no game at %s", want.c_str());
+			case ResumeFlow::Admit::Idle: break;
+			case ResumeFlow::Admit::Held:
+				launchSeen = true;	// held, not read: the file stays and is looked at again when the way is clear
+				break;
+			case ResumeFlow::Admit::Dropped:
+				logf("launch file ignored: %s", resumeFlow.latched() ? "shutting down" : "a game is running");
+				continue;
+			case ResumeFlow::Admit::Missing:
+				logf("launch file: no game at %s", resumeFlow.lastFileRequest.c_str());
+				break;
+			case ResumeFlow::Admit::Started:
+			case ResumeFlow::Admit::Opened:
+			case ResumeFlow::Admit::Failed:
+				continue;
 			}
 		}
 		// a system-wide hook: anything that wants the menu to show a pop-up writes /run/banana/toast, one line
@@ -1332,6 +1491,16 @@ int main(int argc, char** argv)
 				}
 				unlink("/run/banana/toast");
 			}
+		}
+		// A native boot resume is confirmed when its launcher publishes the session as ready.
+		if (resumeFlow.launch.active && resumeFlow.launch.phase == ResumeFlow::Phase::Running &&
+		    (nativeSessionSeen || launchWatch < 0))
+		{
+			nativeSessionSeen = false;
+			const ResumeFlow::Readiness readiness = resumeFlow.pollReady();
+			if (readiness != ResumeFlow::Readiness::No)
+				logf("resume: native session ready, %s",
+				     readiness == ResumeFlow::Readiness::Settled ? "record settled" : "will settle on reap");
 		}
 		// 3D: a card over a client on the primary, from /run/banana/overlay (kind|title|body|badge|duration_ms).
 		// The card is drawn by the menu's own renderer (level/toast/notice) on a cleared screen, and only its box is
@@ -1364,19 +1533,26 @@ int main(int argc, char** argv)
 			// a volume/charger/achievement card over the quick menu: put the pause card back when it expires
 			if (pause.open) pause.draw();
 		}
-		int g = lib.pendingLaunch();
-		if (g >= 0)
+		// While the previous session's cleanup runs, a queued press stays queued (by identity, in the flow): it is
+		// admitted as soon as the cleanup ends or its window expires (the poll timer below wakes the loop for that),
+		// and runs exactly once.
+		switch (resumeFlow.admitMenu(gamePid > 0, startTarget))
 		{
-			lib.clearLaunch();
-			if (gamePid > 0) { logf("launch ignored: a game is running"); continue; }
-			if (lib.gameAt(g).path == "banana:store")
-			{
-				std::lock_guard<std::mutex> l(worker.uiLock);
-				settingsView.openStore();
-				dirty = true;
-				continue;
-			}
-			runGame(g);
+		case ResumeFlow::Admit::Idle:
+		case ResumeFlow::Admit::Held:
+			break;
+		case ResumeFlow::Admit::Dropped:
+			logf("launch ignored: %s", resumeFlow.latched() ? "shutting down" : "a game is running");
+			launchSeen = true;	// a launch file that waited behind this press is looked at now
+			continue;
+		case ResumeFlow::Admit::Missing:
+			logf("launch ignored: the game is no longer in the library");
+			launchSeen = true;
+			continue;
+		case ResumeFlow::Admit::Started:
+		case ResumeFlow::Admit::Opened:	// the Store screen opened: a launch file that waited behind the press is still eligible
+		case ResumeFlow::Admit::Failed:
+			launchSeen = true;
 			continue;
 		}
 		if (rep.due(now))
@@ -1574,7 +1750,20 @@ int main(int argc, char** argv)
 			int left = std::max(0, (int)(resumeDue - now)) + 1;
 			if (timeout < 0 || left < timeout) timeout = left;
 		}
+		if (resumeFlow.cleanup.pending())
+		{
+			int left = std::max(0, (int)(resumeFlow.cleanup.due - now)) + 1;
+			if (timeout < 0 || left < timeout) timeout = left;
+		}
+		if (resumeFlow.owing())
+		{
+			int left = std::max(0, (int)(resumeFlow.owedAt() - now)) + 1;
+			if (timeout < 0 || left < timeout) timeout = left;
+		}
 
+		// a press the launch animation just finished, or a queued one only the animation held back, has no timer: poll()
+		// would sleep to the next key or the minute tick with the launch sitting there
+		if (resumeFlow.admissionDue(lib.pendingLaunch() >= 0, ui->view() == Menu::LAUNCH)) timeout = 1;
 		// a fixed array, not a vector: this runs every pass (60/s while the menu animates) and the poll set is at
 		// most a handful of fds, so an allocation here was pure churn
 		struct pollfd fds[40];
@@ -1714,6 +1903,7 @@ int main(int argc, char** argv)
 						else if (ev->len && !strcmp(ev->name, "cheevos")) cheevosSeen = true;
 						else if (ev->len && !strcmp(ev->name, "toast")) cheevosSeen = true;
 						else if (ev->len && !strcmp(ev->name, "overlay")) overlaySeen = true;
+						else if (ev->len && !strcmp(ev->name, "native-session")) nativeSessionSeen = true;
 						e += sizeof(inotify_event) + ev->len;
 					}
 				}

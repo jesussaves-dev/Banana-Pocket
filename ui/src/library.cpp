@@ -1165,6 +1165,29 @@ namespace banana
 		return onlineSeen = readLine("/sys/class/net/wlan0/operstate") == "up";
 	}
 
+	std::pair<int, int> Library::appEntry(const std::string& id, const std::string& path) const
+	{
+		for (int s = 0; s < (int)shelves.size(); ++s)
+		{
+			const Shelf& sh = shelves[s];
+			if (!sh.apps) continue;
+			for (int i = 0; i < (int)sh.games.size() && i < (int)sh.sysOf.size(); ++i)
+				if (sh.games[i].path == path && sh.sysOf[i] >= 0 && sh.sysOf[i] < (int)appShelves.size() &&
+				    appShelves[sh.sysOf[i]].def.id == id) return {s, i};
+		}
+		return {-1, -1};
+	}
+
+	void Library::launch(int game)
+	{
+		launchGame = game;
+		press = {};
+		if (lib < 0 || lib >= (int)shelves.size() || game < 0 || game >= (int)shelves[lib].games.size()) return;
+		press.rom = shelves[lib].games[game].path;
+		press.system = press.rom == "banana:store" ? std::string() : systemOf(game).id;
+		press.shelf = lib;
+	}
+
 	int Library::openLibrary(int sys)
 	{
 		if (sys < 0 || sys >= (int)shelves.size()) return 0;
