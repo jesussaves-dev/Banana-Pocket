@@ -1,55 +1,54 @@
+
 # BananaOS Engineering Rules
 
-Target Retroid Pocket Classic (Qualcomm SM4450). Follow `~/.codex/AGENTS.md` and the applicable [repository engineering rules](docs/ENGINEERING-RULES.md).
+Target: Retroid Pocket Classic (SM4450).
+Follow `~/.codex/AGENTS.md` and [engineering rules](docs/ENGINEERING-RULES.md).
 
-## Source and scope
+## Compliance and Scope
+- Use authorized editing tools only; never bypass restrictions. If unavailable, stop and report. Disclose violations.
+- Explicit approval required for commits, push/merge, destructive Git, installations, other repos, temporary repos/worktrees, hardware/SSH, deployment, flashing, partition/bootloader or power operations.
+- Read-only means no builds or modifications. Documentation and skills are not authorization.
+- Work in `/home/tom/banana-retro-dev`; preserve other checkouts and accepted fixes.
+- Preserve evidence, exit statuses and task state until independent acceptance. After compaction, recheck scope, approvals and unresolved findings.
+- No scope expansion, repeated investigations without new evidence or unverified success claims.
 
-- Before subsystem changes, consult [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For Banana-retro, follow the [architecture](docs/plans/banana-retro-architecture.md) and [roadmap](docs/plans/banana-retro-roadmap.md).
-- Use `make agent-map` when needed.
-- Work in `/home/tom/banana-retro-dev` for this roadmap. Preserve other checkouts. Temporary repos, clones, worktrees and external commit workflows require explicit requests.
-- Preserve boot sequencing. Kernel and upstream package patches require evidence and explicit authorization. Establish why userspace or configuration is insufficient before proposing upstream changes.
+## Source Authority
+- Consult [architecture](docs/ARCHITECTURE.md), [Banana-retro architecture](docs/plans/banana-retro-architecture.md) and [roadmap](docs/plans/banana-retro-roadmap.md) as applicable.
+- Use `make agent-map` when needed and authorized.
+- Preserve boot sequencing. Kernel/upstream patches require evidence, explicit approval and justification over userspace/configuration fixes.
 
-## Approval gates
+## Skills
+Read matching `skill://<name>` before subsystem work; load others only for distinct questions.
 
-- Obtain separate explicit approval before pushing or merging, destructive Git actions, changes to other repositories, hardware access (including SSH or on-device traces), deploy/flash, partition/bootloader changes, or suspend/power operations. Never bypass sandbox or permission restrictions.
-- Commits and installations must be authorized. Read-only work permits no builds or actions; report what would need approval, not what to run now. Skills and roadmap examples are not approval.
-
-## Skill routing
-
-Read the matching `skill://<name>` first. Start at the failing boundary; load another only for a distinct question. Skip skills for unrelated tasks.
-
-| Task | Skill |
+| Boundary | Skill |
 |---|---|
-| System suspend/wake, USB-C plug not waking, `bananad` wake policy, AudioReach/PipeWire | `banana-audio-power` |
-| Stale packaged binary (including banana-retro), Buildroot, cross-build, kernel/DT integration | `banana-board-integration` |
-| Wayland/KMS, black frames or scanout failure after a successful wake | `banana-display-triage` |
-| Native session pause ownership, sleep handoff, checkpoints or saves | `banana-retro-lifecycle` |
-| Who may issue IPC commands, untrusted input, signed updates, archives or service exposure | `banana-trust-boundaries` |
+| Suspend/wake, audio, power | `banana-audio-power` |
+| Buildroot, stale binaries, kernel/DT | `banana-board-integration` |
+| Wayland/KMS, scanout, black frames | `banana-display-triage` |
+| Native lifecycle, pause, checkpoints, saves | `banana-retro-lifecycle` |
+| IPC authorization, input, updates, archives, services | `banana-trust-boundaries` |
 
-## Hardware and runtime
+## System Invariants
+- CPU: `banana-perf`, policy0 6x A55, policy6 2x A78. GPU: Adreno a613, MSM DRM, Freedreno/Turnip.
+- Display: CH13726A DSI-1 1080x1240, DT rotation 90°, logical 1240x1080. Preserve 640x557 canvas, dirty rectangles, register transpose, VBlank, buffer ownership, sync, import order and recovery. `banana-ui` owns DRM master; games primary plane, menus overlay. No Cage, secondary compositor or BFI.
+- Audio: AudioReach/q6apm routes while FE PCM closed, immediately before open. Preserve PipeWire UCM reapplication; shared switches only in `SectionVerb` `EnableSequence`. Sink suspend timeout zero; periods/headroom via `monitor.alsa.rules`. Clients use `/run/banana/asound.conf` and default PipeWire PCM/control. No client mixer writes, manual FE/BE handoffs or `amixer`/`alsaucm` forks. `bananad` owns AW88166 `0-0035` FL gain 0–511, persisted in `/data/banana/volume`; readable legacy `asound.state` fallback only when volume cannot open. RetroArch gain unity.
+- Input/power: rsinput buttons, FT5452 touch, EV_KEY power/volume, EV_SW headphones. No SW_LID, status LEDs or RTC wakealarm. Power-key wake on pinned kernel. Preserve wake swallowing, `/run/banana/screen-off`, `Sound::setScreenOn(false)` and battery/charging/thermal/suspend protections.
+- Storage: p1 FAT BANANA-BOOT; p2/p3 read-only LZ4 squashfs root-a/b; p4 exFAT BANANA `/data`; tmpfs `/run/banana`. Verify inactive slot before switching `extlinux.conf`; retain rollback/shared data. Host tests cannot qualify exFAT durability.
+- Init: BusyBox, inittab, rcS/rcK. No systemd, udev, PulseAudio, DBus, NetworkManager, fbcon or VTs.
+- Banana-retro: separate runtime; preserve stock RetroArch, UI display ownership and daemon power policy. Authenticated versioned IPC, per-peer authorization, independent pause holds, Libretro safe points, paused Wayland dispatch/releases, audio worker, bounded PCM queues, isolated atomic saves/recovery. Migration requires approval. Respect software/GLES/Vulkan boundaries; qualify profiles before promotion.
+- Resume: attempt count synced before start and never refunded; unsynced unlinks stay owed until a directory sync succeeds, even for absent or foreign markers, and replacements are never deleted. Launcher adopts the registered ROM spelling byte-exactly. Committed native runtime rejects all fresh mutations, replays exact requests.
 
-- `banana-perf` governs policy0 (6 Cortex-A55) and policy6 (2 Cortex-A78). Adreno a613 uses MSM DRM, Freedreno and Turnip.
-- CH13726A AMOLED on DSI-1 is 1080x1240 at DT rotation 90°, logical 1240x1080. Preserve the 640x557 canvas, dirty rectangles, register transpose and VBlank sync. `banana-ui` owns DRM master via `ui/src/compositor.cpp`. Wayland games use the primary plane and menus use the overlay plane. Preserve buffer ownership, sync, import order and recovery. No Cage, secondary compositor or Black Frame Insertion.
-- AudioReach/q6apm routes must be set while FE PCM is closed, immediately before open. Preserve PipeWire UCM verb reapplication. Shared switches belong only in `SectionVerb` `EnableSequence`. Keep sink suspend timeout at zero and set ALSA periods and headroom via `monitor.alsa.rules`. Clients use `/run/banana/asound.conf` and default PipeWire PCM/control. No client mixer writes, manual FE/BE handoffs or forks of `amixer`/`alsaucm`. `bananad` owns gain on mono AW88166 at `0-0035` (FL), range 0–511, and persists it in `/data/banana/volume`. If that file cannot be opened, `bananad` may restore a readable legacy `/data/banana/asound.state` before attempting to save the current gain. RetroArch software gain stays at unity.
-- Built-in navigation and gameplay use rsinput D-pad/buttons. FT5452 handles touch. Power/volume use EV_KEY and headphones use EV_SW. No SW_LID, status LEDs or RTC wakealarm. Use the Power key for wake on the pinned kernel; see [wake behavior](docs/ARCHITECTURE.md#wake-sources). Preserve wake-key swallowing, `/run/banana/screen-off`, `Sound::setScreenOn(false)`, and battery, charging, suspend and thermal protections.
-- Keep FAT BANANA-BOOT p1, read-only LZ4 squashfs banana-root-a/b p2/p3, exFAT BANANA p4 at `/data`, and tmpfs `/run/banana`. Verify inactive slot writes before switching `extlinux.conf`, retain rollback and shared data. Host fixtures cannot establish exFAT durability.
-- Preserve BusyBox init, inittab, rcS and rcK. No systemd, udev, PulseAudio, DBus, NetworkManager, fbcon or VTs.
-- Banana-retro stays separate. Preserve stock RetroArch behavior, `banana-ui` display ownership and `bananad` power policy. Require authenticated versioned IPC, per-peer authorization, independent pause ownership and Libretro safe points. Preserve paused Wayland dispatch/releases, audio worker and bounded PCM queues, native save isolation and atomic recovery. RetroArch save migration needs authorization. Respect software/GLES/Vulkan boundaries and qualify each profile before promotion.
+## Code and Verification
+- UI: C++17, `-fno-exceptions -fno-rtti`, preserve applicable ROCKNIXDS behavior. bananad: POSIX C99/C11. banana-retro: C99.
+- Preserve Buildroot host/target separation, incremental tracking and legal-source handling. Prefer blocking event APIs, contract-based error handling and incremental builds.
+- Inspect commands; use focused fail-before/pass-after tests and ASan/UBSan as appropriate. Create output dirs first; report LeakSanitizer restrictions.
+- Authorized checks: `make -s -C system/banana-retro check`, `make -s test`, `make -s retroid-pocket-classic`.
+- QEMU only by request; use `tools/qemu-boot.sh` or `tools/qemu-headless.sh`. Inspect serial/screenshots; boot alone cannot qualify presentation or atomic KMS/overlay support.
+- Physical audio: [SOUND-TEST.md](docs/SOUND-TEST.md), `BANANA_HOST`.
+- Assets: [icon workflow](docs/ENGINEERING-RULES.md#10-icon-generation), `tools/gen-icon.py`, `tools/fetch-ref.py`, ImageMagick; 128x128 RGBA overrides in `ui/assets/overrides/icons/`.
 
-## Code and verification
-
-- `ui/src/` uses C++17 with `-fno-exceptions -fno-rtti` and preserves applicable ROCKNIXDS UI behavior. `system/bananad/` uses strict POSIX C99/C11 and `system/banana-retro/` strict C99. Preserve Buildroot host/target separation, incremental tracking and legal-source handling. Prefer blocking event APIs and handle errors per contract.
-- Inspect commands before running them. Report commands, statuses, results and limitations. Use focused ASan/UBSan when appropriate, create output dirs first and report confirmed LeakSanitizer restrictions. Prefer incremental package builds.
-- Runtime host suite: `make -s -C system/banana-retro check`. Relevant authorized repo suite: `make -s test`. Board image: `make -s retroid-pocket-classic`.
-- QEMU only when explicitly required. Inspect serial logs/screenshots. Boot alone cannot qualify native presentation. Virtio may lack atomic KMS and overlay planes.
-
-```sh
-image=output/retroid-pocket-classic/images/banana-retroid-pocket-classic.img.gz
-sh tools/qemu-boot.sh "$image" qemu-out
-sh tools/qemu-boot.sh "$image" --interactive
-sh tools/qemu-headless.sh "$image" qemu-headless
-```
-
-- For the physical `make sound-test` procedure, see [docs/SOUND-TEST.md](docs/SOUND-TEST.md) and `BANANA_HOST`.
-- Use the linked [icon workflow](docs/ENGINEERING-RULES.md#10-icon-generation) for `tools/gen-icon.py`, `tools/fetch-ref.py` and ImageMagick checks. Ship 128×128 RGBA overrides under `ui/assets/overrides/icons/`.
-- Run `git diff --check`, verify tree status and report changed files, full commit and parent, verification and remaining gates. Stay within the authorized roadmap task.
+## Completion
+- Run `git diff --check`; verify repo, branch, HEAD, changed files and staged/untracked state.
+- Report commands, exit statuses, evidence, limitations, violations and remaining gates. Distinguish source inspection, host fixtures, production execution and hardware qualification.
+- If authorized commit created, report full hash and parent.
+- Preserve logs; stop at review/approval boundary.
