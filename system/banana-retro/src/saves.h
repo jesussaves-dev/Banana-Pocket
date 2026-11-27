@@ -55,6 +55,8 @@ bool saves_checkpoint_options_match(const struct saves *saves);
 bool saves_set_legacy_core_name(struct saves *saves, const char *library_name);
 void saves_close(struct saves *saves);
 bool saves_has_no_generation(struct saves *saves);
+/* sram_size is the core's current capacity. A saved SRAM that is not larger than it loads as a prefix
+ * and the rest of the core's buffer is left untouched; RTC size must match; a larger one fails. */
 bool saves_load_memory(struct saves *saves, void *sram, size_t sram_size,
 		       void *rtc, size_t rtc_size);
 /* Preview hashes the profile, coherent source set, file contents, and destination
@@ -77,10 +79,12 @@ bool saves_commit_checkpoint(struct saves *saves, const void *sram, size_t sram_
 		const void *rtc, size_t rtc_size, const void *checkpoint, size_t checkpoint_size,
 		char token[65]);
 enum saves_resume_result saves_resume_probe(struct saves *saves, char token[65]);
-/* Load only the exact token's verified checkpoint for the CURRENT generation. */
+/* Load only the exact token's verified checkpoint for the CURRENT generation. state_size and sram_size
+ * are the running core's capacities; the committed state and SRAM may be shorter (state_loaded and
+ * sram_loaded receive their lengths, the prefix of each buffer that was written) but never longer. */
 enum saves_resume_result saves_load_resume(struct saves *saves, const char *token,
-		void *state, size_t state_size,
-		void *sram, size_t sram_size, void *rtc, size_t rtc_size);
+		void *state, size_t state_size, size_t *state_loaded,
+		void *sram, size_t sram_size, size_t *sram_loaded, void *rtc, size_t rtc_size);
 bool saves_resume_clear_if(struct saves *saves, const char token[65]);
 /* Publish battery memory and supersede all older automatic resume markers. */
 bool saves_commit_battery_only(struct saves *saves, const void *sram, size_t sram_size,

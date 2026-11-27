@@ -848,27 +848,30 @@ enum core_checkpoint_result core_persistence_checkpoint(struct saves *saves, cha
     return result;
 }
 
+/* memory holds the saved SRAM (loaded bytes) followed, at offset capacity, by the RTC. The core's current
+ * SRAM size may differ from the committed one (mGBA reports a larger placeholder until its save type
+ * is known and switches when a state is unserialized), but it must still hold every saved byte. */
 static enum saves_resume_result restore_checkpoint_memory(const unsigned char *memory,
-                                                          size_t ss, size_t rs)
+                                                          size_t loaded, size_t capacity, size_t rs)
 {
     size_t sram_size, rtc_size;
     bool sizes_fit = core_save_memory_sizes(&sram_size, &rtc_size) &&
-        sram_size == ss && rtc_size == rs;
+        sram_size >= loaded && rtc_size == rs;
     if (session.state_options_uncertain) return SAVES_RESUME_RETRY;
     if (!sizes_fit)
         return SAVES_RESUME_INVALID;
     void *sram = session.api.retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
     void *rtc = session.api.retro_get_memory_data(RETRO_MEMORY_RTC);
     if (session.state_options_uncertain) return SAVES_RESUME_RETRY;
-    if ((!sram && ss) || (!rtc && rs)) return SAVES_RESUME_INVALID;
-    if (ss) memcpy(sram, memory, ss);
-    if (rs) memcpy(rtc, memory + ss, rs);
+    if ((!sram && loaded) || (!rtc && rs)) return SAVES_RESUME_INVALID;
+    if (loaded) memcpy(sram, memory, loaded);
+    if (rs) memcpy(rtc, memory + capacity, rs);
     return SAVES_RESUME_READY;
 }
 
 enum saves_resume_result core_persistence_restore_checkpoint(struct saves *saves, const char *token)
 {
-    size_t sram_size = 0, rtc_size = 0;
+    size_t sram_size = 0, rtc_size = 0, loaded = 0, state_loaded = 0;
     if (!saves || !session.loaded || !sync_state_options(saves)) return SAVES_RESUME_RETRY;
     if (!session.api.retro_serialize_size || !session.api.retro_unserialize)
         return SAVES_RESUME_INVALID;
@@ -882,18 +885,18 @@ enum saves_resume_result core_persistence_restore_checkpoint(struct saves *saves
     unsigned char *memory = malloc(sram_size + rtc_size + 1);
     enum saves_resume_result result = SAVES_RESUME_RETRY;
     if (state && memory)
-        result = saves_load_resume(saves, token, state, state_size, memory, sram_size,
+        result = saves_load_resume(saves, token, state, state_size, &state_loaded, memory, sram_size, &loaded,
                                    memory + sram_size, rtc_size);
     if (result == SAVES_RESUME_READY)
-        result = restore_checkpoint_memory(memory, sram_size, rtc_size);
+        result = restore_checkpoint_memory(memory, loaded, sram_size, rtc_size);
     if (result == SAVES_RESUME_READY) {
-        bool restored = saves_state_restore(persistence_unserialize, &session.api, state, state_size);
+        bool restored = saves_state_restore(persistence_unserialize, &session.api, state, state_loaded);
         /* The Libretro callback gives no reason for a failure. Keep the marker
          * and let startup discard the session, which may have been mutated. */
         if (!restored || session.state_options_uncertain) result = SAVES_RESUME_RETRY;
         else
             /* Unserializing can replace the memory regions or their contents. */
-            result = restore_checkpoint_memory(memory, sram_size, rtc_size);
+            result = restore_checkpoint_memory(memory, loaded, sram_size, rtc_size);
     }
     free(memory);
     free(state);

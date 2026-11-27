@@ -22,7 +22,11 @@ static retro_input_state_t read_input;
 static unsigned frame, effective_mode, serialize_calls, unserialize_calls;
 static bool initial_battery_checked;
 enum { FIXTURE_MODE_SHIFT = 24 };
-static uint8_t save_ram[4], save_rtc[2];
+/* Mirrors mGBA: the buffer is stable and 0xFF-filled, and its reported size is the
+ * 128 KiB flash maximum until save-type detection (first run or a state restore). */
+static uint8_t save_ram[131072], save_rtc[2];
+static size_t sram_size = 4;
+static bool dynamic_sram;
 static const char *content_bytes;
 static const char expected_content[] = "BRC1\n";
 
@@ -166,6 +170,11 @@ bool retro_load_game(const struct retro_game_info *game)
         content_bytes = game->data;
     }
 
+    dynamic_sram = getenv("BANANA_RETRO_TEST_DYNAMIC_SRAM") != NULL;
+    if (dynamic_sram) {
+        sram_size = sizeof(save_ram);
+        memset(save_ram, 0xff, sizeof(save_ram));
+    }
     stage = GAME_LOADED;
     return true;
 }
@@ -188,6 +197,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
 void retro_run(void)
 {
     require(stage == CONTROLLER_SET, "run order");
+    if (dynamic_sram) sram_size = 32768;
     const char *expected_battery = getenv("BANANA_RETRO_TEST_EXPECT_INITIAL_BATTERY");
     if (expected_battery && !initial_battery_checked) {
         unsigned sram, rtc;
@@ -274,8 +284,12 @@ bool retro_unserialize(const void *data, size_t len)
     memcpy(&state, data, sizeof(state));
     if ((state >> FIXTURE_MODE_SHIFT) != effective_mode) return false;
     frame = state;
+    if (dynamic_sram) {
+        const char *after = getenv("BANANA_RETRO_TEST_SRAM_AFTER_UNSERIALIZE");
+        sram_size = after ? (size_t)strtoul(after, NULL, 10) : 32768;
+    }
     if (mode_is("persistence-options")) {
-        memset(save_ram, 0, sizeof(save_ram));
+        memset(save_ram, 0, sram_size);
         memset(save_rtc, 0, sizeof(save_rtc));
         frame &= (1u << FIXTURE_MODE_SHIFT) - 1u;
         if (getenv("BANANA_RETRO_TEST_SET_OPTION_DURING_UNSERIALIZE")) {
@@ -326,7 +340,7 @@ void *retro_get_memory_data(unsigned id)
 #ifndef FIXTURE_MISSING_EXPORT
 size_t retro_get_memory_size(unsigned id)
 {
-    if (id == RETRO_MEMORY_SAVE_RAM) return sizeof(save_ram);
+    if (id == RETRO_MEMORY_SAVE_RAM) return sram_size;
     if (id == RETRO_MEMORY_RTC) return sizeof(save_rtc);
     return 0;
 }

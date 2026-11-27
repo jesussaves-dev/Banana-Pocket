@@ -501,7 +501,22 @@ static bool find_generation_payload(struct saves *s,struct manifest *m,
 	for(size_t i=0;i<count;i++){
 		/* The payload loaded below is hash-checked; other payloads in the generation do not matter. */
 		if(!load_manifest(s,candidates[i],m))continue;
-		if(strcmp(name,"memory")==0&&(m->sram_size!=sram_size||m->rtc_size!=rtc_size))continue;
+		if(strcmp(name,"memory")==0){
+			/* sram_size is the capacity the core reports now, not the size of the saved memory: a core
+			 * may report a larger placeholder until it identifies its save type (mGBA: 131072 before
+			 * detection, 32768 after), and RetroArch likewise loads a short save as a prefix. RTC must
+			 * match exactly. A saved SRAM that does not fit would lose data, so a verified one ends
+			 * the search rather than letting an older generation be loaded in its place. */
+			if(m->rtc_size!=rtc_size||(m->sram_size==0&&sram_size!=0))continue;
+			size=(size_t)(m->sram_size+m->rtc_size);
+			if(m->sram_size>sram_size){
+				unsigned char *oversized=NULL;
+				bool intact=load_candidate_payload(s,m,name,size,m->memory_hash,&oversized)==FILE_OK;
+				free(oversized);
+				if(intact)return false;
+				continue;
+			}
+		}
 		if(name[0]=='s'){
 			unsigned slot=(unsigned)(name[6]-'0')*10u+(unsigned)(name[7]-'0');
 			if(m->state_size[slot]&&memcmp(m->state_options[slot],s->state_options,HASH_SIZE))
@@ -1029,10 +1044,11 @@ bool saves_load_memory(struct saves *s,void *sram,size_t ss,void *rtc,size_t rs)
 {
 	if(!s||(!sram&&ss)||(!rtc&&rs))return false;
 	if(ss>MAX_MEMORY||rs>MAX_MEMORY||ss+rs>MAX_MEMORY)return false;
-	struct manifest m={0};unsigned char *b=NULL;size_t n=ss+rs;
-	if(!find_generation_payload(s,&m,"memory",n,ss,rs,&b)){free(b);return false;}
-	if(ss)memcpy(sram,b,ss);
-	if(rs)memcpy(rtc,b+ss,rs);
+	struct manifest m={0};unsigned char *b=NULL;
+	if(!find_generation_payload(s,&m,"memory",0,ss,rs,&b)){free(b);return false;}
+	/* Only the saved prefix is written; the core keeps its own initial contents for the rest. */
+	if(m.sram_size)memcpy(sram,b,(size_t)m.sram_size);
+	if(rs)memcpy(rtc,b+m.sram_size,rs);
 	free(b);return true;
 }
 bool saves_load_state(struct saves *s,unsigned slot,void *data,size_t size)
@@ -1283,9 +1299,9 @@ enum saves_resume_result saves_resume_probe(struct saves *s,char token[65])
 }
 
 enum saves_resume_result saves_load_resume(struct saves *s,const char *expected_token,void *state,size_t size,
-					  void *sram,size_t ss,void *rtc,size_t rs)
+					  size_t *state_loaded,void *sram,size_t ss,size_t *sram_loaded,void *rtc,size_t rs)
 {
-	if(!s||!expected_token||!state||!size||size>MAX_STATE||(!sram&&ss)||(!rtc&&rs)||
+	if(!s||!expected_token||!state||!size||size>MAX_STATE||!state_loaded||!sram_loaded||(!sram&&ss)||(!rtc&&rs)||
 	   ss>MAX_MEMORY||rs>MAX_MEMORY-ss||flock(s->directory_fd,LOCK_SH)<0)
 		return SAVES_RESUME_RETRY;
 	struct manifest m;
@@ -1294,13 +1310,17 @@ enum saves_resume_result saves_load_resume(struct saves *s,const char *expected_
 	enum saves_resume_result result=resume_generation(s,&m,token);
 	if(strcmp(expected_token,token))result=SAVES_RESUME_RETRY;
 	if(result==SAVES_RESUME_READY){
-		result=m.checkpoint_size==size&&m.sram_size==ss&&m.rtc_size==rs ?
+		/* size and ss are capacities of the running core; what was committed may be shorter (mGBA's
+		 * state grows and shrinks with its save type) but never longer. */
+		result=m.checkpoint_size<=size&&m.sram_size<=ss&&(m.sram_size!=0||ss==0)&&m.rtc_size==rs ?
 			load_resume_payloads(s,&m,&memory,&checkpoint) : SAVES_RESUME_INVALID;
 	}
 	if(result==SAVES_RESUME_READY){
-		memcpy(state,checkpoint,size);
-		if(ss)memcpy(sram,memory,ss);
-		if(rs)memcpy(rtc,memory+ss,rs);
+		*state_loaded=(size_t)m.checkpoint_size;
+		memcpy(state,checkpoint,(size_t)m.checkpoint_size);
+		*sram_loaded=(size_t)m.sram_size;
+		if(m.sram_size)memcpy(sram,memory,(size_t)m.sram_size);
+		if(rs)memcpy(rtc,memory+m.sram_size,rs);
 	}
 	free(checkpoint);
 	free(memory);

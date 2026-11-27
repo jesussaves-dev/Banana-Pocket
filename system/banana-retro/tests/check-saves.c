@@ -223,9 +223,9 @@ static void assert_resume_snapshot(struct saves *s,const char *expected_token,
                                    uint8_t state,uint8_t sram,uint8_t rtc)
 {
 	char token[65];
-	uint8_t saved_state=0,saved_sram=0,saved_rtc=0;
+	uint8_t saved_state=0,saved_sram=0,saved_rtc=0;size_t loaded=0,state_loaded=0;
 	assert(saves_resume_probe(s,token)==SAVES_RESUME_READY&&strcmp(token,expected_token)==0);
-	assert(saves_load_resume(s,token,&saved_state,1,&saved_sram,1,&saved_rtc,1)==SAVES_RESUME_READY);
+	assert(saves_load_resume(s,token,&saved_state,1,&state_loaded,&saved_sram,1,&loaded,&saved_rtc,1)==SAVES_RESUME_READY&&loaded==1&&state_loaded==1);
 	assert(saved_state==state&&saved_sram==sram&&saved_rtc==rtc);
 }
 
@@ -279,7 +279,7 @@ static void check_resume_publication(const char *root,const char *core,const cha
 	assert(saves_resume_probe(s,replacement)==SAVES_RESUME_READY&&strcmp(token,replacement)!=0);
 	assert_resume_snapshot(s,replacement,'c','n','o');
 	uint8_t unused=0;
-	assert(saves_load_resume(s,token,&unused,1,&unused,1,&unused,1)==SAVES_RESUME_RETRY);
+	size_t unused_loaded=0;assert(saves_load_resume(s,token,&unused,1,&unused_loaded,&unused,1,&unused_loaded,&unused,1)==SAVES_RESUME_RETRY);
 
 	assert(saves_commit_checkpoint(s,"p",1,"q",1,"r",1,NULL));
 	assert(saves_resume_probe(s,replacement)==SAVES_RESUME_READY);
@@ -333,8 +333,9 @@ static void check_resume_publication(const char *root,const char *core,const cha
 		(unsigned long long)current(identity))>0);
 	assert(unlink(exact_floor)==0);
 	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_INVALID&&!strcmp(replacement,exact));
-	assert(saves_load_resume(other,exact,&exact_state,1,&exact_sram,1,&exact_rtc,1)==SAVES_RESUME_INVALID);
-	assert(saves_load_resume(other,unrelated,&exact_state,1,&exact_sram,1,&exact_rtc,1)==SAVES_RESUME_RETRY);
+	size_t exact_loaded=0;
+	assert(saves_load_resume(other,exact,&exact_state,1,&exact_loaded,&exact_sram,1,&exact_loaded,&exact_rtc,1)==SAVES_RESUME_INVALID);
+	assert(saves_load_resume(other,unrelated,&exact_state,1,&exact_loaded,&exact_sram,1,&exact_loaded,&exact_rtc,1)==SAVES_RESUME_RETRY);
 	assert(saves_resume_clear_if(other,exact));
 	assert(saves_resume_probe(other,replacement)==SAVES_RESUME_NONE);
 	assert(saves_commit_checkpoint(other,"D",1,"E",1,"F",1,exact));
@@ -919,6 +920,62 @@ static bool baseline_reader_would_resume(const char *identity)
 	}
 	return strtoull(generation,NULL,16)>floor;
 }
+/* The core reports its SRAM size at load time, which may exceed (mGBA: 128 KiB before
+ * save-type detection) or later differ from the committed length. Smaller or equal data
+ * loads as a prefix and leaves the core's own bytes beyond it; larger data is never
+ * truncated and, while it is the newest generation, is never bypassed for an older one. */
+static void check_sram_capacity(const char *base,const char *core,const char *content)
+{
+	enum{BIG=131072,SMALL=32768};
+	static uint8_t big[BIG],small[SMALL],out[BIG];
+	const uint8_t rtc_in[2]={0x41,0x42};uint8_t rtc_out[2];
+	memset(big,0xaa,sizeof(big));memset(small,0x11,sizeof(small));
+	char root[4096];assert(snprintf(root,sizeof(root),"%s/capacity",base)>0);
+	struct saves *s=saves_open(root,core,content);assert(s);
+	assert(saves_commit(s,small,SMALL,rtc_in,2,-1,NULL,0));
+	/* Saved 32 KiB into a 128 KiB core: prefix replaced, tail keeps the core's 0xFF. */
+	memset(out,0xff,sizeof(out));memset(rtc_out,0,sizeof(rtc_out));
+	assert(saves_load_memory(s,out,BIG,rtc_out,2));
+	for(size_t i=0;i<SMALL;i++)assert(out[i]==0x11);
+	for(size_t i=SMALL;i<BIG;i++)assert(out[i]==0xff);
+	assert(memcmp(rtc_out,rtc_in,2)==0);
+	/* Equal capacity. */
+	memset(out,0,sizeof(out));
+	assert(saves_load_memory(s,out,SMALL,rtc_out,2)&&out[0]==0x11&&out[SMALL-1]==0x11);
+	/* The RTC length is not a capacity: a mismatch is still refused. */
+	memset(out,0xcd,sizeof(out));
+	assert(!saves_load_memory(s,out,SMALL,rtc_out,1)&&out[0]==0xcd);
+	/* Reverse mismatch: 128 KiB newest, 32 KiB core. Refused, nothing written, and the
+	 * older 32 KiB generation is not substituted for it. */
+	assert(saves_commit(s,big,BIG,rtc_in,2,-1,NULL,0));
+	memset(out,0xcd,sizeof(out));
+	assert(!saves_load_memory(s,out,SMALL,rtc_out,2));
+	for(size_t i=0;i<BIG;i++)assert(out[i]==0xcd);
+	assert(saves_load_memory(s,out,BIG,rtc_out,2)&&out[0]==0xaa&&out[BIG-1]==0xaa);
+	saves_close(s);
+	/* Zero-length saved SRAM does not satisfy a core that exposes SRAM. */
+	assert(snprintf(root,sizeof(root),"%s/capacity-zero",base)>0);
+	s=saves_open(root,core,content);assert(s);
+	assert(saves_commit(s,NULL,0,rtc_in,2,-1,NULL,0));
+	memset(out,0xcd,sizeof(out));
+	assert(!saves_load_memory(s,out,SMALL,rtc_out,2)&&out[0]==0xcd);
+	assert(saves_load_memory(s,out,0,rtc_out,2)&&out[0]==0xcd);
+	saves_close(s);
+	/* A checkpoint committed at 32 KiB resumes into a 128 KiB core and reports the prefix length;
+	 * a shorter committed state fits a larger state capacity and reports its own length. */
+	assert(snprintf(root,sizeof(root),"%s/capacity-resume",base)>0);
+	s=saves_open(root,core,content);assert(s);
+	const uint8_t checkpoint[4]={1,2,3,4};uint8_t state[8];char token[65];size_t loaded=0,state_loaded=0;
+	assert(saves_commit_checkpoint(s,small,SMALL,rtc_in,2,checkpoint,sizeof(checkpoint),token));
+	memset(out,0xff,sizeof(out));memset(state,0xee,sizeof(state));
+	assert(saves_load_resume(s,token,state,sizeof(state),&state_loaded,out,BIG,&loaded,rtc_out,2)==SAVES_RESUME_READY&&loaded==SMALL&&state_loaded==sizeof(checkpoint));
+	assert(memcmp(state,checkpoint,sizeof(checkpoint))==0&&state[4]==0xee&&out[0]==0x11&&out[SMALL-1]==0x11&&out[SMALL]==0xff&&memcmp(rtc_out,rtc_in,2)==0);
+	/* A core smaller than the committed state or SRAM refuses the checkpoint without writing. */
+	memset(out,0xcd,sizeof(out));memset(state,0xee,sizeof(state));
+	assert(saves_load_resume(s,token,state,sizeof(state),&state_loaded,out,SMALL/2,&loaded,rtc_out,2)==SAVES_RESUME_INVALID&&out[0]==0xcd);
+	assert(saves_load_resume(s,token,state,sizeof(checkpoint)-1,&state_loaded,out,BIG,&loaded,rtc_out,2)==SAVES_RESUME_INVALID&&out[0]==0xcd&&state[0]==0xee);
+	saves_close(s);
+}
 /* Any commit that is not a checkpoint carries newer battery memory. A downgraded runtime must
  * find the cutoff, whether the commit saved a slot or only flushed memory. */
 static void check_superseded_checkpoint_downgrade(const char *root,const char *core,const char *content)
@@ -1137,6 +1194,7 @@ int main(int argc,char **argv)
 	check_legacy_prune_protection(base,core,content);
 	check_orphan_generations(base,core,content);
 	assert(snprintf(downgrade_root,sizeof(downgrade_root),"%s/downgrade-cutoff",base)>0);
+	check_sram_capacity(base,core,content);
 	check_superseded_checkpoint_downgrade(downgrade_root,core,content);
 	assert(snprintf(binding_root,sizeof(binding_root),"%s/content-binding",base)>0);
 	assert(snprintf(binding_rom,sizeof(binding_rom),"%s/a/binding.rom",base)>0);
@@ -1207,7 +1265,8 @@ int main(int argc,char **argv)
 	run_persistence_callbacks(runtime,"quit",fixture,rom,rr);
 	const char *regressions[]={"battery-crash","battery-unlink","option-during-restore",
 		"options-ui","options-core","transient-resume","exit-persist","legacy-1","legacy-2","legacy-3",
-		"content-memory","content-path","content-mutated"};
+		"content-memory","content-path","content-mutated","dynamic-detected","dynamic-predetect",
+		"dynamic-checkpoint","dynamic-checkpoint-shrink"};
 	for(size_t i=0;i<sizeof(regressions)/sizeof(regressions[0]);i++){
 		assert(snprintf(rr,sizeof(rr),"%s/runtime-%s",base,regressions[i])>0);
 		run_persistence_callbacks(runtime,regressions[i],fixture,rom,rr);

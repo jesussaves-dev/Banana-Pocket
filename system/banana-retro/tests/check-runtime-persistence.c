@@ -446,12 +446,143 @@ static void check_content_identity(const char *mode, char **argv)
     assert(core_release());
 }
 
+/* Invariant P1: whatever a launch commits, the next launch of the same core and content
+ * loads, byte for byte, up to the committed length, while the core's own initial bytes
+ * remain beyond it. mGBA reports 128 KiB until save-type detection and 32 KiB afterwards. */
+enum { DYN_PRE = 131072, DYN_POST = 32768 };
+
+struct dyn_launch {
+    void *library;
+    uint8_t *sram;
+    struct saves *saves;
+};
+
+static void dyn_start(struct dyn_launch *launch, char **argv, size_t expected_size)
+{
+    assert(setenv("BANANA_RETRO_TEST_DYNAMIC_SRAM", "1", 1) == 0);
+    assert(core_load(argv[3], argv[4], NULL));
+    launch->library = dlopen(argv[3], RTLD_NOW | RTLD_LOCAL);
+    assert(launch->library);
+    void *(*memory)(unsigned) = NULL;
+    fixture_export(launch->library, "retro_get_memory_data", &memory, sizeof(memory));
+    launch->sram = memory(RETRO_MEMORY_SAVE_RAM);
+    assert(launch->sram);
+    size_t sram_size, rtc_size;
+    assert(core_save_memory_sizes(&sram_size, &rtc_size) && sram_size == expected_size);
+    launch->saves = open_saves_profile(argv[5], argv[3], argv[4]);
+    assert(launch->saves);
+}
+
+static void dyn_stop(struct dyn_launch *launch)
+{
+    saves_close(launch->saves);
+    assert(core_release());
+    assert(dlclose(launch->library) == 0);
+}
+
+static void dyn_pattern(uint8_t *bytes, size_t size, unsigned seed)
+{
+    for (size_t i = 0; i < size; ++i) bytes[i] = (uint8_t)(i * 7u + seed);
+}
+
+static void dyn_assert_core_init(const uint8_t *sram, size_t from, size_t to)
+{
+    for (size_t i = from; i < to; ++i) assert(sram[i] == 0xff);
+}
+
+static void dyn_load(struct dyn_launch *launch, const char *token)
+{
+    bool rejected = false;
+    assert(load_persistence(launch->saves, -1, token, &rejected) && !rejected);
+}
+
+static void check_dynamic_sram(const char *mode, char **argv)
+{
+    struct dyn_launch launch;
+    uint8_t expected[DYN_PRE], snapshot[DYN_POST];
+    size_t sram_size, rtc_size;
+
+    if (strcmp(mode, "dynamic-detected") == 0) {
+        /* Commit after detection (32 KiB) and relaunch repeatedly; every launch starts at 128 KiB. */
+        for (unsigned launch_index = 0; launch_index < 3; ++launch_index) {
+            dyn_start(&launch, argv, DYN_PRE);
+            dyn_load(&launch, NULL);
+            if (launch_index) {
+                assert(memcmp(launch.sram, expected, DYN_POST) == 0);
+                dyn_assert_core_init(launch.sram, DYN_POST, DYN_PRE);
+            }
+            assert(core_step(1));
+            assert(core_save_memory_sizes(&sram_size, &rtc_size) && sram_size == DYN_POST);
+            dyn_pattern(expected, DYN_POST, 3 + launch_index);
+            memcpy(launch.sram, expected, DYN_POST);
+            assert(core_persistence_flush(launch.saves, true));
+            dyn_stop(&launch);
+        }
+        dyn_start(&launch, argv, DYN_PRE);
+        dyn_load(&launch, NULL);
+        assert(memcmp(launch.sram, expected, DYN_POST) == 0);
+        dyn_stop(&launch);
+    } else if (strcmp(mode, "dynamic-predetect") == 0) {
+        /* A commit before detection stores 128 KiB; the relaunch loads it, and a later
+         * 32 KiB commit supersedes it without losing the prefix. */
+        dyn_start(&launch, argv, DYN_PRE);
+        dyn_load(&launch, NULL);
+        dyn_pattern(expected, DYN_PRE, 5);
+        memcpy(launch.sram, expected, DYN_PRE);
+        assert(core_persistence_flush(launch.saves, true));
+        dyn_stop(&launch);
+
+        dyn_start(&launch, argv, DYN_PRE);
+        dyn_load(&launch, NULL);
+        assert(memcmp(launch.sram, expected, DYN_PRE) == 0);
+        assert(core_step(1));
+        memcpy(snapshot, launch.sram, sizeof(snapshot));
+        assert(core_persistence_flush(launch.saves, true));
+        dyn_stop(&launch);
+
+        dyn_start(&launch, argv, DYN_PRE);
+        dyn_load(&launch, NULL);
+        assert(memcmp(launch.sram, snapshot, sizeof(snapshot)) == 0);
+        dyn_assert_core_init(launch.sram, DYN_POST, DYN_PRE);
+        dyn_stop(&launch);
+    } else {
+        /* A checkpoint taken after detection restores into a fresh, still-undetected core. */
+        const bool shrink = strcmp(mode, "dynamic-checkpoint-shrink") == 0;
+        if (shrink) assert(setenv("BANANA_RETRO_TEST_SRAM_AFTER_UNSERIALIZE", "16384", 1) == 0);
+        dyn_start(&launch, argv, DYN_PRE);
+        dyn_load(&launch, NULL);
+        assert(core_step(1));
+        dyn_pattern(expected, DYN_POST, 9);
+        memcpy(launch.sram, expected, DYN_POST);
+        char token[65];
+        assert(core_persistence_checkpoint(launch.saves, token) == CORE_CHECKPOINT_OK);
+        assert(saves_resume_probe(launch.saves, token) == SAVES_RESUME_READY);
+        dyn_stop(&launch);
+
+        dyn_start(&launch, argv, DYN_PRE);
+        if (shrink) {
+            /* The core shrinks below the committed 32 KiB after unserialize: refuse, keep the marker. */
+            assert(core_persistence_restore_checkpoint(launch.saves, token) == SAVES_RESUME_INVALID);
+            assert(saves_resume_probe(launch.saves, token) == SAVES_RESUME_READY);
+        } else {
+            dyn_load(&launch, token);
+            assert(memcmp(launch.sram, expected, DYN_POST) == 0);
+            assert(core_save_memory_sizes(&sram_size, &rtc_size) && sram_size == DYN_POST);
+        }
+        dyn_stop(&launch);
+    }
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 6 || strcmp(argv[1], "--check-persistence") != 0)
         return banana_retro_main(argc, argv);
 
     const char *mode = argv[2];
+    if (strncmp(mode, "dynamic-", 8) == 0) {
+        check_dynamic_sram(mode, argv);
+        return EXIT_SUCCESS;
+    }
     if (strncmp(mode, "content-", 8) == 0) {
         check_content_identity(mode, argv);
         return EXIT_SUCCESS;
